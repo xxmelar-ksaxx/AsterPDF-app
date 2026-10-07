@@ -3,10 +3,12 @@ export {};
 declare global {
   interface Window {
     aster: {
-      openDialog(): Promise<OpenedPdf | null>;
-      openPath(path: string): Promise<OpenedPdf | null>;
+      openDialog(): Promise<OpenedFile | null>;
+      addDialog(): Promise<OpenedFile[] | null>;
+      openPath(path: string): Promise<OpenedFile | null>;
       pathForFile(file: File): string;
       save(bytes: Uint8Array, saveAs: boolean, expectedPath: string): Promise<{ path: string; name: string } | null>;
+      printDocx(): Promise<Uint8Array>;
       getRecentPdfs(): Promise<RecentPdf[]>;
       setRecentPreview(path: string, preview: string): Promise<void>;
       getSettings(): Promise<{ authorName: string }>;
@@ -22,6 +24,11 @@ export interface OpenedPdf {
   name: string;
   path: string;
   bytes: Uint8Array;
+  needsSave?: boolean;
+}
+
+export interface OpenedFile extends OpenedPdf {
+  kind: 'pdf' | 'docx' | 'png' | 'jpg' | 'jpeg' | 'webp';
 }
 
 export interface RecentPdf {

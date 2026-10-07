@@ -15,12 +15,13 @@ async function main() {
     page.drawText(`AsterPDF page ${number}`, { x: 80, y: 700, size: 22, font });
   }
   await fs.writeFile(fixture, await sample.save());
-  const executablePath = process.env.ASTERPDF_SMOKE_PACKAGED === '1'
+  const executablePath = process.env.ASTERPDF_SMOKE_EXECUTABLE || (process.env.ASTERPDF_SMOKE_PACKAGED === '1'
     ? path.join(project, 'release', 'win-unpacked', 'AsterPDF.exe')
-    : require('electron');
+    : require('electron'));
   const electron = await _electron.launch({
     executablePath,
-    args: process.env.ASTERPDF_SMOKE_PACKAGED === '1' ? [] : [project],
+    args: process.env.ASTERPDF_SMOKE_PACKAGED === '1'
+      ? [`--user-data-dir=${temporary}`] : [project, `--user-data-dir=${temporary}`],
     env: { ...process.env, APPDATA: temporary, LOCALAPPDATA: temporary },
     timeout: 60000
   });
@@ -35,7 +36,7 @@ async function main() {
     await electron.evaluate(({ dialog }, filePath) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filePath] });
     }, fixture);
-    await window.getByRole('button', { name: 'Open PDF', exact: true }).first().click();
+    await window.getByRole('button', { name: 'Open a file', exact: true }).first().click();
     await window.locator('.page-sheet').last().waitFor({ timeout: 30000 });
     if (await window.locator('.page-sheet').count() !== 24) throw new Error('Continuous page flow did not mount all pages.');
     await window.locator('.page-sheet[data-page-number="1"] canvas').waitFor({ state: 'visible', timeout: 30000 });
@@ -71,7 +72,7 @@ async function main() {
       };
     });
     const addComment = async (text, x, y) => {
-      await window.getByRole('button', { name: 'Add comment', exact: true }).click();
+      await window.getByRole('button', { name: 'Comment', exact: true }).click();
       await window.locator('.page-sheet[data-page-number="3"] .page-stage').scrollIntoViewIfNeeded();
       await window.locator('.page-sheet[data-page-number="3"] canvas').waitFor({ state: 'visible', timeout: 30000 });
       await window.locator('.page-sheet[data-page-number="3"] .page-stage').click({ position: { x, y } });
@@ -108,7 +109,7 @@ async function main() {
     await window.locator('.unsaved-dot').waitFor({ state: 'visible', timeout: 10000 });
     const afterFailure = await PDFDocument.load(await fs.readFile(fixture));
     if (afterFailure.getPages()[2].node.Annots()?.size() !== 2) throw new Error('A failed save changed the original PDF.');
-    await window.getByRole('button', { name: 'Save', exact: true }).click();
+    await window.getByRole('button', { name: 'Save PDF', exact: true }).click();
     await window.waitForFunction(() => {
       const cards = [...document.querySelectorAll('.comment-card')];
       return cards.length === 3 && cards.every((item) => !item.textContent?.includes('Unsaved') && !item.textContent?.includes('Saving'))

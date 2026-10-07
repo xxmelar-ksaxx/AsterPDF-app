@@ -1,8 +1,8 @@
 {
   "name": "asterpdf-desktop",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
-  "description": "Offline PDF reading and commenting for Windows and macOS",
+  "description": "Offline PDF reading, editing and conversion for Windows and macOS",
   "author": "AsterPDF Contributors",
   "license": "MIT",
   "main": "electron/main.cjs",
@@ -11,6 +11,7 @@
     "desktop": "electron .",
     "test": "node --import tsx --test tests/*.test.ts",
     "smoke": "node scripts/smoke-electron.cjs",
+    "smoke:editor": "node scripts/smoke-editor.cjs",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "build:win": "npm run build && electron-builder --win nsis --x64 --publish never",
@@ -19,6 +20,7 @@
     "checksum:mac": "node scripts/write-checksums.cjs mac"
   },
   "dependencies": {
+    "docx-preview": "0.4.1",
     "lucide-react": "^0.468.0",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "6.4.299",

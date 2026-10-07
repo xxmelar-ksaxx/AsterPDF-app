@@ -14,6 +14,7 @@ let writing = false;
 let saving = false;
 let recentStore;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
+const SUPPORTED = new Set(['.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp']);
 
 function appOrigin(event) {
   return Boolean(mainWindow && event.sender === mainWindow.webContents &&
@@ -36,31 +37,45 @@ function confirmDiscard() {
     buttons: ['Keep editing', 'Discard changes'],
     defaultId: 0,
     cancelId: 0,
-    message: 'Discard unsaved comments?',
+    message: 'Discard unsaved changes?',
     detail: 'Save your PDF before opening another file or closing AsterPDF.'
   }) === 1;
 }
 
-async function readPdf(filePath) {
+async function readFile(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  if (!SUPPORTED.has(extension)) throw new Error('Open a PDF, DOCX, PNG, JPEG, or WebP file.');
   const stats = await fs.stat(filePath);
   if (!stats.isFile() || stats.size > MAX_FILE_BYTES) throw new Error('This file is too large or is not a regular file.');
   const bytes = await fs.readFile(filePath);
-  if (!bytes.subarray(0, 1024).includes(Buffer.from('%PDF-'))) throw new Error('This is not a PDF file.');
+  if (extension === '.pdf' && !bytes.subarray(0, 1024).includes(Buffer.from('%PDF-'))) throw new Error('This is not a PDF file.');
+  if (extension === '.docx' && !(bytes[0] === 0x50 && bytes[1] === 0x4b)) throw new Error('This is not a DOCX file.');
   currentPath = filePath;
   dirty = false;
-  await recentStore.record(filePath, stats.mtimeMs).catch(() => {});
-  return { name: path.basename(filePath), path: filePath, bytes: new Uint8Array(bytes) };
+  if (extension === '.pdf') await recentStore.record(filePath, stats.mtimeMs).catch(() => {});
+  return { name: path.basename(filePath), path: filePath, bytes: new Uint8Array(bytes), kind: extension.slice(1) };
 }
 
-async function selectPdf() {
-  if (!confirmDiscard()) return null;
+async function selectFiles(append = false) {
+  if (!append && !confirmDiscard()) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Open PDF',
-    properties: ['openFile'],
-    filters: [{ name: 'PDF files', extensions: ['pdf'] }]
+    title: append ? 'Add files to PDF' : 'Open a file',
+    properties: append ? ['openFile', 'multiSelections'] : ['openFile'],
+    filters: [{ name: 'PDF, Word and image files', extensions: ['pdf', 'docx', 'png', 'jpg', 'jpeg', 'webp'] }]
   });
   if (result.canceled || !result.filePaths[0]) return null;
-  return readPdf(result.filePaths[0]);
+  if (append) {
+    const files = [];
+    for (const filePath of result.filePaths) {
+      const stats = await fs.stat(filePath);
+      if (!stats.isFile() || stats.size > MAX_FILE_BYTES) throw new Error('A selected file is too large.');
+      const extension = path.extname(filePath).toLowerCase();
+      if (!SUPPORTED.has(extension)) throw new Error('A selected file type is unsupported.');
+      files.push({ path: filePath, name: path.basename(filePath), kind: extension.slice(1), bytes: new Uint8Array(await fs.readFile(filePath)) });
+    }
+    return files;
+  }
+  return readFile(result.filePaths[0]);
 }
 
 async function settingsFile() {
@@ -96,17 +111,19 @@ async function savePdf(rawBytes, saveAs, expectedPath) {
   const bytes = Buffer.from(rawBytes);
   if (!bytes.subarray(0, 1024).includes(Buffer.from('%PDF-'))) throw new Error('Invalid PDF data.');
   let target = currentPath;
-  if (saveAs || !target) {
+  if (saveAs || !target || path.extname(target).toLowerCase() !== '.pdf') {
     const suggested = currentPath
-      ? path.join(path.dirname(currentPath), `${path.parse(currentPath).name}-commented.pdf`)
-      : 'AsterPDF-commented.pdf';
+      ? path.join(path.dirname(currentPath), `${path.parse(currentPath).name}${path.extname(currentPath).toLowerCase() === '.pdf' ? '-copy' : ''}.pdf`)
+      : 'AsterPDF.pdf';
     const result = await dialog.showSaveDialog(mainWindow, {
       title: 'Save PDF',
       defaultPath: suggested,
       filters: [{ name: 'PDF files', extensions: ['pdf'] }]
     });
     if (result.canceled || !result.filePath) return null;
-    target = result.filePath;
+    target = path.extname(result.filePath) ? result.filePath : `${result.filePath}.pdf`;
+    if (path.extname(target).toLowerCase() !== '.pdf') throw new Error('Choose a .pdf filename.');
+    if (path.resolve(target) === path.resolve(currentPath || '')) throw new Error('Save As needs a different filename to keep the original.');
   }
   const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.tmp`);
   writing = true;
@@ -150,7 +167,7 @@ function createWindow() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: 'File', submenu: [
-        { label: 'Open PDF…', accelerator: 'CmdOrCtrl+O', click: () => send('menu:open') },
+        { label: 'Open File…', accelerator: 'CmdOrCtrl+O', click: () => send('menu:open') },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => send('menu:save') },
         { label: 'Save As…', accelerator: 'CmdOrCtrl+Shift+S', click: () => send('menu:save-as') },
         { type: 'separator' },
@@ -186,14 +203,23 @@ app.whenReady().then(() => {
     callback({ cancel: !allowed });
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  ipcMain.handle('pdf:open-dialog', (event) => { requireApp(event); return selectPdf(); });
+  ipcMain.handle('pdf:open-dialog', (event) => { requireApp(event); return selectFiles(); });
+  ipcMain.handle('pdf:add-dialog', (event) => { requireApp(event); return selectFiles(true); });
   ipcMain.handle('pdf:open-path', (event, filePath) => {
     requireApp(event);
-    if (typeof filePath !== 'string' || !filePath.toLowerCase().endsWith('.pdf')) throw new Error('Select a PDF file.');
+    if (typeof filePath !== 'string' || !SUPPORTED.has(path.extname(filePath).toLowerCase())) throw new Error('Select a PDF, DOCX, or image file.');
     if (!confirmDiscard()) return null;
-    return readPdf(filePath);
+    return readFile(filePath);
   });
   ipcMain.handle('pdf:save', (event, bytes, saveAs, expectedPath) => { requireApp(event); return savePdf(bytes, Boolean(saveAs), expectedPath); });
+  ipcMain.handle('docx:print', async (event) => {
+    requireApp(event);
+    const bytes = await mainWindow.webContents.printToPDF({
+      printBackground: true, preferCSSPageSize: true, pageSize: 'A4',
+      margins: { top: 0, right: 0, bottom: 0, left: 0 }
+    });
+    return new Uint8Array(bytes);
+  });
   ipcMain.handle('recent:list', (event) => { requireApp(event); return recentStore.list(); });
   ipcMain.handle('recent:set-preview', (event, filePath, preview) => {
     requireApp(event);

@@ -2,9 +2,11 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('aster', {
   openDialog: () => ipcRenderer.invoke('pdf:open-dialog'),
+  addDialog: () => ipcRenderer.invoke('pdf:add-dialog'),
   openPath: (filePath) => ipcRenderer.invoke('pdf:open-path', filePath),
   pathForFile: (file) => webUtils.getPathForFile(file),
   save: (bytes, saveAs, expectedPath) => ipcRenderer.invoke('pdf:save', bytes, saveAs, expectedPath),
+  printDocx: () => ipcRenderer.invoke('docx:print'),
   getRecentPdfs: () => ipcRenderer.invoke('recent:list'),
   setRecentPreview: (filePath, preview) => ipcRenderer.invoke('recent:set-preview', filePath, preview),
   getSettings: () => ipcRenderer.invoke('settings:get'),
