@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
   FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X,
-  ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2
+  ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical
 } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
@@ -21,6 +21,7 @@ import { signatureDrawFromViewport } from './signatures/placement';
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
 type SidebarTab = 'comments' | 'pages';
+type ActiveTool = SidebarTab | 'sign' | 'compress' | 'files';
 const DEFAULT_PAGE_SIZE: PageSize = { width: 612, height: 792 };
 const EMPTY_COMMENTS: PdfComment[] = [];
 const MAX_HISTORY_BYTES = 128 * 1024 * 1024;
@@ -77,6 +78,10 @@ export default function App() {
   const [pageNumber, setPageNumber] = useState(1);
   const [zoom, setZoom] = useState<Zoom>('fit');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('comments');
+  const [activeTool, setActiveTool] = useState<ActiveTool>('comments');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [pageGridOpen, setPageGridOpen] = useState(false);
+  const [gridDragOver, setGridDragOver] = useState<number | null>(null);
   const [comments, setComments] = useState<PdfComment[]>([]);
   const [drafts, setDrafts] = useState<NewNote[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -114,6 +119,8 @@ export default function App() {
   const signatureImportRef = useRef<HTMLInputElement>(null);
   const savedBytesRef = useRef<Uint8Array | null>(null);
   const dragPageRef = useRef<number | null>(null);
+  const gridReturnScrollRef = useRef<number | null>(null);
+  const gridJumpPageRef = useRef<number | null>(null);
   const [autoSaveRevision, setAutoSaveRevision] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState('');
@@ -168,7 +175,7 @@ export default function App() {
     observer.observe(element);
     setViewerWidth(element.clientWidth);
     return () => observer.disconnect();
-  }, [source]);
+  }, [source, pageGridOpen]);
 
   useEffect(() => {
     if (!source) return;
@@ -316,7 +323,23 @@ export default function App() {
       observer.disconnect();
       if (frame) cancelAnimationFrame(frame);
     };
-  }, [document, effectivePages.length]);
+  }, [document, effectivePages.length, pageGridOpen]);
+
+  useLayoutEffect(() => {
+    if (pageGridOpen || !viewerRef.current) return;
+    const position = gridReturnScrollRef.current;
+    const target = gridJumpPageRef.current;
+    if (position === null && target === null) return;
+    gridReturnScrollRef.current = null;
+    gridJumpPageRef.current = null;
+    const frame = requestAnimationFrame(() => {
+      const viewer = viewerRef.current;
+      if (!viewer) return;
+      const sheet = target === null ? null : pageRefs.current.get(target);
+      viewer.scrollTop = sheet ? Math.max(0, sheet.offsetTop - 20) : (position ?? 0);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pageGridOpen]);
 
   const scrollToPage = useCallback((target: number) => {
     const viewer = viewerRef.current;
@@ -351,6 +374,10 @@ export default function App() {
     try {
       const bytes = await convertToPdf(opened);
       restoreScrollRef.current = null;
+      gridReturnScrollRef.current = null;
+      gridJumpPageRef.current = null;
+      setPageGridOpen(false);
+      setGridDragOver(null);
       setDrafts([]);
       setEditingDirty(false);
       setPagePlan(null);
@@ -379,6 +406,7 @@ export default function App() {
       setDrafts([]);
       setEditingDirty(false);
       setPagePlan(null);
+      setPageGridOpen(false);
       setPlacedSignatures([]);
       setSelectedSignatureId(null);
       setPendingSignatureRemoval(null);
@@ -470,6 +498,7 @@ export default function App() {
       setPagePlan(next);
       setPageNumber((page) => Math.min(page, next.length));
       setSidebarTab('pages');
+      setActiveTool('pages');
       setError('');
     } catch (cause) { setError(`Could not edit pages: ${messageOf(cause)}`); }
   }, [source, document, pagePlan, selectedPages, busy, drafts, pendingPoint]);
@@ -497,6 +526,8 @@ export default function App() {
       restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes });
       setSidebarTab('pages');
+      setActiveTool('pages');
+      setSidebarCollapsed(false);
       setError('');
     } catch (cause) { setError(`Could not add files: ${messageOf(cause)}`); }
     finally { setBusy(false); }
@@ -660,13 +691,41 @@ export default function App() {
     if (editingDirty || placedSignatures.length) { setError('Save your edits before adding a comment so only the comment is auto-saved.'); return; }
     if (!authorName) { setSettingsOpen(true); return; }
     setSidebarTab('comments');
+    setActiveTool('comments');
+    setSidebarCollapsed(false);
     setPlacingSignatureId(null);
     setPlacing((value) => !value);
     setPendingPoint(null);
     setNoteText('');
   };
 
-  const startSignature = () => { setSignatureMenuOpen((open) => !open); setPlacing(false); };
+  const startSignature = () => { setActiveTool('sign'); setSignatureMenuOpen((open) => !open); setPlacing(false); };
+
+  const openPageGrid = () => {
+    gridReturnScrollRef.current = viewerRef.current?.scrollTop ?? 0;
+    gridJumpPageRef.current = null;
+    setPageGridOpen(true);
+    setSidebarCollapsed(true);
+  };
+
+  const closePageGrid = (page?: number) => {
+    gridJumpPageRef.current = page ?? null;
+    setPageGridOpen(false);
+    setGridDragOver(null);
+    setSidebarCollapsed(false);
+  };
+
+  const selectTool = (tool: ActiveTool) => {
+    if (pageGridOpen) setPageGridOpen(false);
+    setActiveTool(tool);
+    setSignatureMenuOpen(false);
+    if (tool !== 'comments') setPlacing(false);
+    if (tool !== 'sign') setPlacingSignatureId(null);
+    if (tool === 'comments' || tool === 'pages') {
+      setSidebarTab(tool);
+      setSidebarCollapsed(false);
+    } else setSidebarCollapsed(true);
+  };
 
   const openNewSignature = () => {
     setSignatureMenuOpen(false);
@@ -882,14 +941,26 @@ export default function App() {
     </main> : <main className="workspace">
       <section className="viewer-column">
         <div className="viewer-toolbar">
-          <div className="toolbar-group page-control"><button className="icon-button" onClick={() => scrollToPage(Math.max(1, pageNumber - 1))} disabled={pageNumber <= 1} aria-label="Previous page"><ChevronLeft size={18} /></button><span><strong>{pageNumber}</strong><i>/</i>{document ? effectivePages.length : '…'}</span><button className="icon-button" onClick={() => scrollToPage(Math.min(effectivePages.length, pageNumber + 1))} disabled={pageNumber >= effectivePages.length} aria-label="Next page"><ChevronRight size={18} /></button></div>
-          <div className="toolbar-group zoom-control"><button className="icon-button" onClick={() => adjustZoom(-1)} aria-label="Zoom out"><Minus size={17} /></button><button className="zoom-label" onClick={() => changeZoom('fit')}>{zoomValue}</button><button className="icon-button" onClick={() => adjustZoom(1)} aria-label="Zoom in"><Plus size={17} /></button></div>
-          <div className="toolbar-spacer" />
-          {placedSignatures.length === 0 && <>
-            <button className="button outline tool-action" onClick={() => void addFiles()} disabled={!document || busy || drafts.length > 0}><Files size={16} />Add files</button>
-            <button className="button outline tool-action" onClick={() => { setCompressionError(''); setCompressionOpen(true); }} disabled={!document || busy || drafts.length > 0}><Shrink size={16} />Compress</button>
+          {pageGridOpen ? <div className="grid-toolbar-heading"><button className="button outline" onClick={() => closePageGrid()} aria-label="Return to PDF view"><ChevronLeft size={16} />PDF view</button><span>{effectivePages.length} {effectivePages.length === 1 ? 'page' : 'pages'}</span></div> : <>
+            <div className="toolbar-group page-control"><button className="icon-button" onClick={() => scrollToPage(Math.max(1, pageNumber - 1))} disabled={pageNumber <= 1} aria-label="Previous page"><ChevronLeft size={18} /></button><span><strong>{pageNumber}</strong><i>/</i>{document ? effectivePages.length : '…'}</span><button className="icon-button" onClick={() => scrollToPage(Math.min(effectivePages.length, pageNumber + 1))} disabled={pageNumber >= effectivePages.length} aria-label="Next page"><ChevronRight size={18} /></button></div>
+            <div className="toolbar-group zoom-control"><button className="icon-button" onClick={() => adjustZoom(-1)} aria-label="Zoom out"><Minus size={17} /></button><button className="zoom-label" onClick={() => changeZoom('fit')}>{zoomValue}</button><button className="icon-button" onClick={() => adjustZoom(1)} aria-label="Zoom in"><Plus size={17} /></button></div>
           </>}
-          <div className="signature-picker"><button className={`button ${placingSignatureId ? 'placing-button' : 'outline'} tool-action`} onClick={startSignature} disabled={!document || busy || drafts.length > 0} aria-expanded={signatureMenuOpen} aria-haspopup="menu"><PenLine size={16} />{placingSignatureId ? 'Place signature…' : 'Sign'}</button>
+          <div className="toolbar-spacer" />
+          {placedSignatures.length > 0 ? <div className="signature-review" role="group" aria-label="Pending signatures">
+            <span className="signature-review-label" role="status">{placedSignatures.length} {placedSignatures.length === 1 ? 'signature' : 'signatures'} pending · confirm to comment</span>
+            <button className="button signature-confirm-action" onClick={() => void save()} disabled={busy} title="Confirm and save signatures" aria-label="Confirm and save signatures"><Check size={18} /><span>Confirm</span></button>
+            <button className="button signature-discard-action" onClick={() => setPendingSignatureDiscard(true)} disabled={busy} title="Discard pending signatures" aria-label="Discard pending signatures"><X size={18} /><span>Discard</span></button>
+          </div> : activeTool === 'comments' ? <button className={`button ${placing ? 'placing-button' : 'outline'} tool-action context-action`} onClick={startComment} disabled={!document || busy || editingDirty} title={editingDirty ? 'Save edits before adding comments' : 'Add comment'}><MessageSquare size={17} />{placing ? 'Click on page…' : 'Comment'}</button>
+          : activeTool === 'pages' ? <div className="page-tools toolbar-page-tools" aria-label="Selected page actions">
+            <button title="Undo edit" aria-label="Undo edit" disabled={busy || drafts.length > 0 || !historyPast.length} onClick={undoEdit}><Undo2 size={16} /></button>
+            <button title="Redo edit" aria-label="Redo edit" disabled={busy || drafts.length > 0 || !historyFuture.length} onClick={redoEdit}><Redo2 size={16} /></button>
+            <button title="Move page up" aria-label="Move page up" disabled={busy || drafts.length > 0 || selectedIndices.every((index) => index === 0)} onClick={() => applySelection('move-up')}><ArrowUp size={16} /></button>
+            <button title="Move page down" aria-label="Move page down" disabled={busy || drafts.length > 0 || selectedIndices.every((index) => index === effectivePages.length - 1)} onClick={() => applySelection('move-down')}><ArrowDown size={16} /></button>
+            <button title="Rotate left" aria-label="Rotate left" disabled={busy || drafts.length > 0} onClick={() => applySelection('rotate-left')}><RotateCcw size={16} /></button>
+            <button title="Rotate right" aria-label="Rotate right" disabled={busy || drafts.length > 0} onClick={() => applySelection('rotate-right')}><RotateCw size={16} /></button>
+            <button title="Duplicate page" aria-label="Duplicate page" disabled={busy || drafts.length > 0} onClick={() => applySelection('duplicate')}><Copy size={16} /></button>
+            <button title="Delete page" aria-label="Delete page" disabled={busy || drafts.length > 0 || selectedIndices.length >= effectivePages.length} onClick={() => applySelection('delete')}><Trash2 size={16} /></button>
+          </div> : activeTool === 'sign' ? <div className="signature-picker"><button className={`button ${placingSignatureId ? 'placing-button' : 'outline'} tool-action context-action`} onClick={startSignature} disabled={!document || busy || drafts.length > 0} aria-expanded={signatureMenuOpen} aria-haspopup="menu"><PenLine size={16} />{placingSignatureId ? 'Place signature…' : 'Sign'}</button>
             {signatureMenuOpen && <div className="signature-dropdown" role="menu" aria-label="Saved signatures">
               {savedSignatures.length ? savedSignatures.map((signature) => <div className="signature-option" key={signature.id}>
                 <button role="menuitem" onClick={() => chooseSignature(signature.id)}><img src={signature.dataUrl} alt="" /><span>{signature.name}</span></button>
@@ -897,14 +968,21 @@ export default function App() {
               </div>) : <p className="signature-empty">No saved signatures yet</p>}
               <button className="signature-add" role="menuitem" onClick={openNewSignature}>+ Signature</button>
             </div>}
-          </div>
-          {placedSignatures.length > 0 ? <div className="signature-review" role="group" aria-label="Pending signatures">
-            <span className="signature-review-label" role="status">{placedSignatures.length} {placedSignatures.length === 1 ? 'signature' : 'signatures'} pending · confirm to comment</span>
-            <button className="button signature-confirm-action" onClick={() => void save()} disabled={busy} title="Confirm and save signatures" aria-label="Confirm and save signatures"><Check size={18} /><span>Confirm</span></button>
-            <button className="button signature-discard-action" onClick={() => setPendingSignatureDiscard(true)} disabled={busy} title="Discard pending signatures" aria-label="Discard pending signatures"><X size={18} /><span>Discard</span></button>
-          </div> : <button className={`button ${placing ? 'placing-button' : 'outline'} tool-action`} onClick={startComment} disabled={!document || busy || editingDirty} title={editingDirty ? 'Save edits before adding comments' : 'Add comment'}><MessageSquare size={17} />{placing ? 'Click on page…' : 'Comment'}</button>}
+          </div> : activeTool === 'compress' ? <button className="button outline tool-action context-action" onClick={() => { setCompressionError(''); setCompressionOpen(true); }} disabled={!document || busy || drafts.length > 0}><Shrink size={16} />Compress</button>
+          : <button className="button outline tool-action context-action" onClick={() => void addFiles()} disabled={!document || busy || drafts.length > 0}><Files size={16} />Add files</button>}
         </div>
-        <div className="viewer-scroll" ref={viewerRef}>
+        {pageGridOpen ? <div className="page-grid-scroll">
+          <div className="page-grid-intro"><div><h2>Organize pages</h2><p>Drag a page to reorder it. Select pages to use the actions above.</p></div><span>{selectedPages.size ? `${selectedPages.size} selected` : `${effectivePages.length} pages`}</span></div>
+          <div className="page-grid" aria-label="Pages grid">{effectivePages.map((planned, index) => <article key={planned.id} className={`page-grid-card${selectedPages.has(index) ? ' selected' : ''}${gridDragOver === index ? ' drag-target' : ''}`} draggable={!busy && !drafts.length}
+            onDragStart={(event) => { dragPageRef.current = index; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(index)); }}
+            onDragOver={(event) => { if (dragPageRef.current !== null) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setGridDragOver(index); } }}
+            onDrop={(event) => { event.preventDefault(); event.stopPropagation(); const from = dragPageRef.current; dragPageRef.current = null; setGridDragOver(null); if (from !== null && from !== index) void applyEdit({ type: 'move', from, to: index }); }}
+            onDragEnd={() => { dragPageRef.current = null; setGridDragOver(null); }}>
+            <div className="page-grid-card-head"><label><input type="checkbox" aria-label={`Select page ${index + 1}`} checked={selectedPages.has(index)} onChange={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })} /><strong>Page {index + 1}</strong></label><GripVertical size={18} aria-hidden="true" /></div>
+            <button className="page-grid-preview" aria-label={`Select page ${index + 1} preview`} aria-pressed={selectedPages.has(index)} onClick={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })}>{document && <PageThumbnail document={document} page={planned.sourceIndex + 1} rotation={planned.turns * 90} size="large" />}</button>
+            <div className="page-grid-card-foot"><span>{pagePlan ? `Original page ${planned.sourceIndex + 1}` : 'Drag to reorder'}</span><button onClick={() => closePageGrid(index + 1)} aria-label={`View page ${index + 1} in PDF`}>View page <ChevronRight size={14} /></button></div>
+          </article>)}</div>
+        </div> : <div className="viewer-scroll" ref={viewerRef}>
           <div className="page-wrap">
             {!document && <div className="loading-page">Opening PDF…</div>}
             {document && effectivePages.map((planned, index) => {
@@ -917,16 +995,16 @@ export default function App() {
                 signatures={placedSignatures.filter((signature) => signature.pageId === planned.id)} selectedSignatureId={selectedSignatureId} placingSignature={activeSignature}
                 registerPage={registerPage} onMeasure={measurePage} onPlace={choosePoint}
                 onAddSignature={addSignatureAt} onUpdateSignature={updateSignature} onSelectSignature={setSelectedSignatureId} onDeleteSignature={requestSignatureRemoval}
-                onSelectComment={(id) => { setSelectedId(id); setSidebarTab('comments'); }}
+                onSelectComment={(id) => { setSelectedId(id); selectTool('comments'); }}
                 onError={reportPageError} />;
             })}
           </div>
-        </div>
+        </div>}
         <div className="viewer-footer"><span>{compressionProgress || source.path}</span><span>{document ? effectivePages.length : '…'} pages · Offline</span></div>
       </section>
 
-      <aside className="sidebar">
-        <div className="sidebar-tabs"><button className={sidebarTab === 'comments' ? 'active' : ''} onClick={() => setSidebarTab('comments')}><MessageSquare size={17} /> Comments <span>{allComments.length}</span></button><button className={sidebarTab === 'pages' ? 'active' : ''} onClick={() => setSidebarTab('pages')}><FileText size={17} /> Pages</button></div>
+      <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`} aria-label="Document sidebar">
+        {!sidebarCollapsed && <div className="sidebar-content">
         {sidebarTab === 'comments' ? <>
           <div className="sidebar-heading"><div><h2>Comments</h2><p>{scanning ? 'Reading comments…' : allComments.length ? `${allComments.length} in this document` : 'No comments yet'}</p></div><button className="icon-button" title="Save a copy" aria-label="Save a copy" disabled={busy} onClick={() => void save(true)}><FilePlus2 size={19} /></button></div>
           <div className="comment-list">
@@ -940,29 +1018,29 @@ export default function App() {
           </div>
           {pendingPoint && <div className="compose"><div className="compose-title"><span className="avatar">{authorName.charAt(0).toUpperCase()}</span><strong>New comment</strong><button onClick={() => setPendingPoint(null)} aria-label="Cancel comment"><X size={17} /></button></div><textarea autoFocus placeholder="Write your comment…" value={noteText} onChange={(event) => setNoteText(event.target.value)} maxLength={10000} /><div className="compose-footer"><span>Page {pendingPoint.page} · {authorName}</span><button className="button primary" onClick={addComment} disabled={!noteText.trim()}>Add comment</button></div></div>}
           <div className="sidebar-bottom"><CircleHelp size={16} /><span>Comments are saved inside the PDF.</span></div>
-        </> : <div className="pages-panel"><div className="sidebar-heading"><div><h2>Pages</h2><p>{selectedPages.size ? `${selectedPages.size} selected` : 'Drag pages to sort, or use the arrows.'}</p></div></div>
+        </> : <div className="pages-panel"><div className="sidebar-heading"><div><h2>Pages</h2><p>{selectedPages.size ? `${selectedPages.size} selected` : 'Drag pages to sort, or use the arrows.'}</p></div><button className="icon-button" onClick={openPageGrid} aria-label="Expand pages to grid" title="Expand pages to grid"><Maximize2 size={18} /></button></div>
           <div className="page-selection"><button onClick={() => setSelectedPages(new Set(Array.from({ length: effectivePages.length }, (_, index) => index)))}>Select all</button><button onClick={() => setSelectedPages(new Set())} disabled={!selectedPages.size}>Clear</button></div>
-          <div className="page-tools" aria-label="Selected page actions">
-            <button title="Undo edit" aria-label="Undo edit" disabled={busy || drafts.length > 0 || !historyPast.length} onClick={undoEdit}><Undo2 size={16} /></button>
-            <button title="Redo edit" aria-label="Redo edit" disabled={busy || drafts.length > 0 || !historyFuture.length} onClick={redoEdit}><Redo2 size={16} /></button>
-            <button title="Move page up" aria-label="Move page up" disabled={busy || drafts.length > 0 || selectedIndices.every((index) => index === 0)} onClick={() => applySelection('move-up')}><ArrowUp size={16} /></button>
-            <button title="Move page down" aria-label="Move page down" disabled={busy || drafts.length > 0 || selectedIndices.every((index) => index === effectivePages.length - 1)} onClick={() => applySelection('move-down')}><ArrowDown size={16} /></button>
-            <button title="Rotate left" aria-label="Rotate left" disabled={busy || drafts.length > 0} onClick={() => applySelection('rotate-left')}><RotateCcw size={16} /></button>
-            <button title="Rotate right" aria-label="Rotate right" disabled={busy || drafts.length > 0} onClick={() => applySelection('rotate-right')}><RotateCw size={16} /></button>
-            <button title="Duplicate page" aria-label="Duplicate page" disabled={busy || drafts.length > 0} onClick={() => applySelection('duplicate')}><Copy size={16} /></button>
-            <button title="Delete page" aria-label="Delete page" disabled={busy || drafts.length > 0 || selectedIndices.length >= effectivePages.length} onClick={() => applySelection('delete')}><Trash2 size={16} /></button>
-          </div>
           <div className="page-list">{effectivePages.map((planned, index) => <div key={planned.id} draggable={!busy && !drafts.length} className={`page-row ${pageNumber === index + 1 ? 'active' : ''}`}
             onDragStart={(event) => { dragPageRef.current = index; event.dataTransfer.effectAllowed = 'move'; }}
             onDragOver={(event) => { if (dragPageRef.current !== null) { event.preventDefault(); event.stopPropagation(); } }}
             onDrop={(event) => { event.preventDefault(); event.stopPropagation(); const from = dragPageRef.current; dragPageRef.current = null; if (from !== null && from !== index) void applyEdit({ type: 'move', from, to: index }); }}
             onDragEnd={() => { dragPageRef.current = null; }}>
             <input type="checkbox" aria-label={`Select page ${index + 1}`} checked={selectedPages.has(index)} onChange={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })} />
-            <button onClick={() => scrollToPage(index + 1)}>{document && <PageThumbnail document={document} page={planned.sourceIndex + 1} rotation={planned.turns * 90} />}<span>Page {index + 1}</span><small>{commentsByPage.get(index + 1)?.length || ''}</small></button>
+            <button onClick={() => scrollToPage(index + 1)}>{document && <PageThumbnail document={document} page={planned.sourceIndex + 1} rotation={planned.turns * 90} />}<span className="page-row-label"><strong>Page {index + 1}</strong>{pagePlan && <em>Original page {planned.sourceIndex + 1}</em>}</span><small className="page-comment-count">{commentsByPage.get(index + 1)?.length || ''}</small></button>
             <button className="page-insert" aria-label={`Add files after page ${index + 1}`} title="Add files after this page" disabled={busy || drafts.length > 0} onClick={() => void addFiles(index)}><FilePlus2 size={15} /></button>
           </div>)}</div>
           <div className="sidebar-bottom"><Files size={16} /><button className="text-button" onClick={() => void addFiles()} disabled={busy || drafts.length > 0}>Add PDF, Word, or images</button></div>
         </div>}
+        </div>}
+        <div className="sidebar-rail" role="toolbar" aria-label="PDF tools" aria-orientation="vertical">
+          <button className="sidebar-toggle" onClick={() => sidebarCollapsed ? selectTool(sidebarTab) : setSidebarCollapsed(true)} aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-expanded={!sidebarCollapsed}>{sidebarCollapsed ? <ChevronLeft size={19} /> : <ChevronRight size={19} />}</button>
+          <button className={activeTool === 'comments' ? 'active' : ''} onClick={() => selectTool('comments')} aria-label="Comments" title="Comments" aria-pressed={activeTool === 'comments'}><MessageSquare size={18} />{allComments.length > 0 && <span className="sidebar-rail-count">{allComments.length}</span>}</button>
+          <button className={activeTool === 'pages' ? 'active' : ''} onClick={() => selectTool('pages')} aria-label="Pages" title="Pages" aria-pressed={activeTool === 'pages'}><FileText size={18} /></button>
+          <span className="sidebar-rail-divider" aria-hidden="true" />
+          <button className={activeTool === 'sign' ? 'active' : ''} onClick={() => selectTool('sign')} aria-label="Sign tool" title="Sign" aria-pressed={activeTool === 'sign'}><PenLine size={18} /></button>
+          <button className={activeTool === 'compress' ? 'active' : ''} onClick={() => selectTool('compress')} disabled={placedSignatures.length > 0} aria-label="Compress tool" title={placedSignatures.length ? 'Confirm signatures first' : 'Compress'} aria-pressed={activeTool === 'compress'}><Shrink size={18} /></button>
+          <button className={activeTool === 'files' ? 'active' : ''} onClick={() => selectTool('files')} disabled={placedSignatures.length > 0} aria-label="Add files tool" title={placedSignatures.length ? 'Confirm signatures first' : 'Add files'} aria-pressed={activeTool === 'files'}><Files size={18} /></button>
+        </div>
       </aside>
     </main>}
 

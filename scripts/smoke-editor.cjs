@@ -1,5 +1,5 @@
 const { _electron } = require('playwright');
-const { PDFDocument, PDFName, PDFRawStream } = require('pdf-lib');
+const { PDFDocument, PDFName, PDFRawStream, StandardFonts, rgb } = require('pdf-lib');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -11,8 +11,13 @@ async function main() {
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'asterpdf-editor-'));
   const pdfPath = path.join(temporary, 'pages.pdf');
   const pdf = await PDFDocument.create();
-  pdf.addPage([300, 400]);
-  pdf.addPage([500, 700]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const firstPage = pdf.addPage([300, 400]);
+  firstPage.drawRectangle({ x: 35, y: 250, width: 230, height: 90, color: rgb(0.87, 0.93, 0.78) });
+  firstPage.drawText('First source page', { x: 45, y: 285, size: 18, font });
+  const secondPage = pdf.addPage([500, 700]);
+  secondPage.drawRectangle({ x: 40, y: 510, width: 420, height: 120, color: rgb(0.82, 0.89, 0.95) });
+  secondPage.drawText('Second source page', { x: 55, y: 555, size: 25, font });
   await fs.writeFile(pdfPath, await pdf.save());
   const compressible = await PDFDocument.create();
   const noisy = await compressible.embedPng(await fs.readFile(path.join(project, 'tests', 'fixtures', 'noise.png')));
@@ -72,6 +77,30 @@ async function main() {
     await window.getByRole('button', { name: 'Open file' }).click();
     await window.waitForFunction(() => document.querySelectorAll('.page-sheet').length === 2, null, { timeout: 30000 });
     await window.getByRole('button', { name: 'Pages', exact: true }).click();
+    await window.getByRole('button', { name: 'Expand pages to grid' }).click();
+    await window.locator('.page-grid-card').first().waitFor();
+    await window.waitForFunction(() => document.querySelector('.page-grid-card canvas')?.width >= 150, null, { timeout: 30000 });
+    await window.locator('.page-grid-card').nth(0).dragTo(window.locator('.page-grid-card').nth(1));
+    await window.waitForFunction(() => document.querySelector('.page-grid-card')?.textContent?.includes('Original page 2'), null, { timeout: 30000 });
+    if ((await PDFDocument.load(await fs.readFile(pdfPath))).getPageCount() !== 2) throw new Error('Grid sorting wrote to disk before Save PDF.');
+    await window.locator('.page-grid-card').nth(1).dragTo(window.locator('.page-grid-card').nth(0));
+    await window.waitForFunction(() => document.querySelector('.page-grid-card')?.textContent?.includes('Original page 1'), null, { timeout: 30000 });
+    await window.getByRole('checkbox', { name: 'Select page 1' }).check();
+    await window.screenshot({ path: path.join(project, 'release', 'smoke-pages-grid.png'), fullPage: true });
+    await window.getByRole('button', { name: 'View page 2 in PDF' }).click();
+    await window.waitForFunction(() => document.querySelector('.page-control strong')?.textContent === '2', null, { timeout: 30000 });
+    await window.getByRole('button', { name: 'Expand pages to grid' }).click();
+    await window.getByRole('button', { name: 'Return to PDF view' }).click();
+    if (!await window.getByRole('checkbox', { name: 'Select page 1' }).isChecked()) throw new Error('Grid selection was lost when returning to the page list.');
+    await window.getByText('Original page 1').first().waitFor();
+    await window.setViewportSize({ width: 940, height: 800 });
+    const narrowToolbar = await window.locator('.viewer-toolbar').evaluate((toolbar) => {
+      const edge = toolbar.getBoundingClientRect().right;
+      const deleteButton = toolbar.querySelector('[aria-label="Delete page"]');
+      return { edge, deleteEdge: deleteButton.getBoundingClientRect().right };
+    });
+    if (narrowToolbar.deleteEdge > narrowToolbar.edge - 4) throw new Error(`Page tools overflowed the viewer toolbar at the minimum window width: ${JSON.stringify(narrowToolbar)}`);
+    await window.setViewportSize({ width: 1420, height: 900 });
     await window.getByRole('checkbox', { name: 'Select page 1' }).check();
     await window.getByRole('button', { name: 'Duplicate page' }).click();
     await window.waitForFunction(() => document.querySelectorAll('.page-sheet').length === 3, null, { timeout: 30000 });
@@ -94,6 +123,7 @@ async function main() {
     const edited = await PDFDocument.load(await fs.readFile(pdfPath));
     if (edited.getPageCount() !== 3 || edited.getPage(0).getRotation().angle !== 90) throw new Error('Page actions did not save.');
     const beforeSignatureSize = (await fs.stat(pdfPath)).size;
+    await window.getByRole('button', { name: 'Sign tool' }).click();
     await window.getByRole('button', { name: 'Sign', exact: true }).click();
     await window.getByRole('menuitem', { name: '+ Signature' }).click();
     const pad = window.locator('.signature-canvas');
@@ -131,6 +161,8 @@ async function main() {
     if (afterResize.width < afterMove.width + 15) throw new Error('Placed signature did not resize.');
     if (await window.getByRole('button', { name: 'Compress', exact: true }).count()) throw new Error('Compress stayed visible while a signature needs confirmation.');
     if (await window.getByRole('button', { name: 'Comment', exact: true }).count()) throw new Error('Comment stayed visible while a signature needs confirmation.');
+    if (await window.getByRole('button', { name: 'Compress tool' }).isEnabled()) throw new Error('Compress tool remained enabled while a signature needs confirmation.');
+    if (await window.getByRole('button', { name: 'Add files tool' }).isEnabled()) throw new Error('Add files tool remained enabled while a signature needs confirmation.');
     await window.getByRole('button', { name: 'Discard pending signatures' }).click();
     await window.getByRole('alertdialog', { name: 'Discard pending signatures?' }).waitFor({ state: 'visible' });
     await window.getByRole('button', { name: 'Keep signatures' }).click();
@@ -154,7 +186,9 @@ async function main() {
     await window.getByRole('alertdialog').getByRole('button', { name: 'Discard signatures' }).click();
     if (await firstStage.locator('.editable-signature').count()) throw new Error('Discard kept the pending signature.');
     if ((await fs.stat(pdfPath)).size !== beforeSignatureSize) throw new Error('Discard wrote to the PDF.');
+    await window.getByRole('button', { name: 'Comments', exact: true }).click();
     if (!await window.getByRole('button', { name: 'Comment', exact: true }).isEnabled()) throw new Error('Comment stayed blocked after discarding the signature.');
+    await window.getByRole('button', { name: 'Sign tool' }).click();
     await window.getByRole('button', { name: 'Sign', exact: true }).click();
     await window.getByRole('menuitem', { name: 'Signature 1' }).click();
     await firstStage.click({ position: { x: 110, y: 110 } });
@@ -163,6 +197,7 @@ async function main() {
     await window.getByRole('button', { name: 'Confirm and save signatures' }).click();
     await window.locator('.saving-spinner').waitFor({ state: 'hidden', timeout: 30000 });
     if (await window.locator('.editable-signature').count()) throw new Error('Saved signature remained editable.');
+    await window.getByRole('button', { name: 'Comments', exact: true }).click();
     await window.waitForFunction(() => {
       const comment = Array.from(document.querySelectorAll('button')).find((button) => button.textContent?.trim() === 'Comment');
       return comment && !comment.disabled;
@@ -172,6 +207,7 @@ async function main() {
     await window.waitForFunction(() => { const canvas = document.querySelector('.page-sheet[data-page-number="1"] .page-stage canvas');
       return canvas && getComputedStyle(canvas).display !== 'none' && canvas.width > 0; }, null, { timeout: 30000 });
     await window.screenshot({ path: path.join(project, 'release', 'smoke-signed.png'), fullPage: true });
+    await window.getByRole('button', { name: 'Sign tool' }).click();
     await window.getByRole('button', { name: 'Sign', exact: true }).click();
     await window.getByRole('menuitem', { name: 'Signature 1' }).waitFor({ state: 'visible' });
     const svgPath = path.join(temporary, 'imported-signature.svg');
@@ -202,6 +238,7 @@ async function main() {
     await window.getByRole('button', { name: 'Open file' }).click();
     await window.getByText('large.pdf', { exact: true }).waitFor({ timeout: 30000 });
     const originalSize = (await fs.stat(compressiblePath)).size;
+    await window.getByRole('button', { name: 'Compress tool' }).click();
     await window.getByRole('button', { name: 'Compress', exact: true }).click();
     await window.waitForFunction(() => (document.querySelector('.compression-estimate-status')?.textContent || '').includes('Current PDF:'), null, { timeout: 30000 });
     await window.getByRole('button', { name: /Smallest/ }).click();
@@ -220,7 +257,7 @@ async function main() {
     await window.locator('.saving-spinner').waitFor({ state: 'hidden', timeout: 30000 });
     if ((await fs.stat(compressedPath)).size >= (await fs.stat(compressiblePath)).size) throw new Error('Compression did not reduce size.');
     if ((await fs.stat(compressiblePath)).size !== originalSize) throw new Error('Compression changed the original PDF.');
-    process.stdout.write('DOCX/image conversion, page edits, signature, and offline compression passed.\n');
+    process.stdout.write('DOCX/image conversion, grid sorting, page edits, signature, and offline compression passed.\n');
   } finally {
     await electron.firstWindow().then((window) => window.evaluate(() => window.aster.setDirty(false))).catch(() => {});
     await electron.close();

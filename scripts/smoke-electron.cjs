@@ -40,6 +40,26 @@ async function main() {
     await window.locator('.page-sheet').last().waitFor({ timeout: 30000 });
     if (await window.locator('.page-sheet').count() !== 24) throw new Error('Continuous page flow did not mount all pages.');
     await window.locator('.page-sheet[data-page-number="1"] canvas').waitFor({ state: 'visible', timeout: 30000 });
+    const originalViewerWidth = await window.locator('.viewer-column').evaluate((element) => element.getBoundingClientRect().width);
+    await window.getByRole('button', { name: 'Hide sidebar' }).click();
+    await window.waitForFunction((originalWidth) => document.querySelector('.viewer-column').getBoundingClientRect().width > originalWidth + 200, originalViewerWidth);
+    await window.getByRole('button', { name: 'Pages', exact: true }).click();
+    await window.getByRole('heading', { name: 'Pages' }).waitFor();
+    await window.getByRole('button', { name: 'Hide sidebar' }).click();
+    await window.getByRole('button', { name: 'Comments', exact: true }).click();
+    await window.getByRole('heading', { name: 'Comments' }).waitFor();
+    await window.getByRole('button', { name: 'Hide sidebar' }).click();
+    await window.getByRole('button', { name: 'Comment', exact: true }).click();
+    await window.getByRole('button', { name: 'Hide sidebar' }).waitFor();
+    await window.getByRole('button', { name: 'Click on page…' }).click();
+    await window.getByRole('button', { name: 'Sign tool' }).click();
+    await window.getByRole('button', { name: 'Sign', exact: true }).waitFor();
+    if (await window.locator('.sidebar-content').count()) throw new Error('Sign tool did not return to the compact rail.');
+    await window.getByRole('button', { name: 'Compress tool' }).click();
+    await window.getByRole('button', { name: 'Compress', exact: true }).waitFor();
+    await window.getByRole('button', { name: 'Add files tool' }).click();
+    await window.getByRole('button', { name: 'Add files', exact: true }).waitFor();
+    await window.getByRole('button', { name: 'Comments', exact: true }).click();
     const distantCanvasWidth = await window.locator('.page-sheet[data-page-number="24"] canvas').evaluate((canvas) => canvas.width);
     if (distantCanvasWidth !== 0) throw new Error('A distant page rendered before it entered the viewport buffer.');
     await window.evaluate(() => {
@@ -121,7 +141,7 @@ async function main() {
     await window.getByRole('button', { name: 'Pages', exact: true }).click();
     await window.getByRole('button', { name: 'Page 1', exact: true }).click();
     await window.waitForFunction(() => document.querySelector('.page-control strong')?.textContent === '1', null, { timeout: 30000 });
-    await window.getByRole('button', { name: 'Comments', exact: false }).first().click();
+    await window.getByRole('button', { name: 'Comments', exact: true }).click();
     await window.locator('.comment-card').first().click();
     await window.waitForFunction(() => document.querySelector('.page-control strong')?.textContent === '3', null, { timeout: 30000 });
     await window.screenshot({ path: path.join(project, 'release', 'smoke.png'), fullPage: true });
