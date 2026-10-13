@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { randomUUID } = require('node:crypto');
 const { createRecentStore } = require('./recent.cjs');
 
 protocol.registerSchemesAsPrivileged([
@@ -12,6 +13,7 @@ let currentPath = null;
 let dirty = false;
 let writing = false;
 let saving = false;
+let preparedCompressedSave = null;
 let recentStore;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const SUPPORTED = new Set(['.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp']);
@@ -102,14 +104,46 @@ async function storeSettings(name) {
   return { authorName };
 }
 
-async function savePdf(rawBytes, saveAs, expectedPath) {
-  if (writing) throw new Error('A PDF save is already in progress.');
-  if (typeof expectedPath !== 'string' || currentPath !== expectedPath) throw new Error('The open PDF changed before saving.');
+function validatePdfBytes(rawBytes) {
   if (!(rawBytes instanceof Uint8Array) || rawBytes.byteLength < 8 || rawBytes.byteLength > MAX_FILE_BYTES) {
     throw new Error('Invalid PDF data.');
   }
   const bytes = Buffer.from(rawBytes);
   if (!bytes.subarray(0, 1024).includes(Buffer.from('%PDF-'))) throw new Error('Invalid PDF data.');
+  return bytes;
+}
+
+async function sameFile(first, second) {
+  const resolvedFirst = path.resolve(first);
+  const resolvedSecond = path.resolve(second);
+  if ((process.platform === 'win32' ? resolvedFirst.toLowerCase() : resolvedFirst) ===
+      (process.platform === 'win32' ? resolvedSecond.toLowerCase() : resolvedSecond)) return true;
+  try {
+    const [firstStat, secondStat] = await Promise.all([fs.stat(first), fs.stat(second)]);
+    return firstStat.dev === secondStat.dev && firstStat.ino === secondStat.ino;
+  } catch { return false; }
+}
+
+async function writePdfBytes(rawBytes, target) {
+  if (writing) throw new Error('A PDF save is already in progress.');
+  const bytes = validatePdfBytes(rawBytes);
+  const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.tmp`);
+  writing = true;
+  try {
+    await fs.writeFile(temporary, bytes);
+    await fs.rename(temporary, target);
+  } finally {
+    await fs.rm(temporary, { force: true }).catch(() => {});
+    writing = false;
+  }
+  currentPath = target;
+  await fs.stat(target).then((stats) => recentStore.record(target, stats.mtimeMs)).catch(() => {});
+  return { path: target, name: path.basename(target) };
+}
+
+async function savePdf(rawBytes, saveAs, expectedPath) {
+  if (typeof expectedPath !== 'string' || currentPath !== expectedPath) throw new Error('The open PDF changed before saving.');
+  validatePdfBytes(rawBytes);
   let target = currentPath;
   if (saveAs || !target || path.extname(target).toLowerCase() !== '.pdf') {
     const suggested = currentPath
@@ -123,20 +157,36 @@ async function savePdf(rawBytes, saveAs, expectedPath) {
     if (result.canceled || !result.filePath) return null;
     target = path.extname(result.filePath) ? result.filePath : `${result.filePath}.pdf`;
     if (path.extname(target).toLowerCase() !== '.pdf') throw new Error('Choose a .pdf filename.');
-    if (path.resolve(target) === path.resolve(currentPath || '')) throw new Error('Save As needs a different filename to keep the original.');
+    if (currentPath && await sameFile(target, currentPath)) throw new Error('Save As needs a different filename to keep the original.');
   }
-  const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.tmp`);
-  writing = true;
-  try {
-    await fs.writeFile(temporary, bytes);
-    await fs.rename(temporary, target);
-  } finally {
-    await fs.rm(temporary, { force: true }).catch(() => {});
-    writing = false;
+  return writePdfBytes(rawBytes, target);
+}
+
+async function prepareCompressedSave(expectedPath) {
+  if (writing || preparedCompressedSave) throw new Error('A PDF save is already in progress.');
+  if (typeof expectedPath !== 'string' || currentPath !== expectedPath) throw new Error('The open PDF changed before saving.');
+  const suggested = currentPath
+    ? path.join(path.dirname(currentPath), `${path.parse(currentPath).name}-compressed.pdf`)
+    : 'AsterPDF-compressed.pdf';
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save compressed PDF', defaultPath: suggested,
+    filters: [{ name: 'PDF files', extensions: ['pdf'] }]
+  });
+  if (result.canceled || !result.filePath) return null;
+  const target = path.extname(result.filePath) ? result.filePath : `${result.filePath}.pdf`;
+  if (path.extname(target).toLowerCase() !== '.pdf') throw new Error('Choose a .pdf filename.');
+  if (await sameFile(target, currentPath)) throw new Error('Choose a different filename to keep the original.');
+  preparedCompressedSave = { token: randomUUID(), target, expectedPath };
+  return { token: preparedCompressedSave.token, path: target };
+}
+
+async function finishCompressedSave(rawBytes, token, expectedPath) {
+  const prepared = preparedCompressedSave;
+  if (!prepared || token !== prepared.token || expectedPath !== prepared.expectedPath || currentPath !== expectedPath) {
+    throw new Error('The compressed save location is no longer valid.');
   }
-  currentPath = target;
-  await fs.stat(target).then((stats) => recentStore.record(target, stats.mtimeMs)).catch(() => {});
-  return { path: target, name: path.basename(target) };
+  preparedCompressedSave = null;
+  return writePdfBytes(rawBytes, prepared.target);
 }
 
 function createWindow() {
@@ -212,6 +262,14 @@ app.whenReady().then(() => {
     return readFile(filePath);
   });
   ipcMain.handle('pdf:save', (event, bytes, saveAs, expectedPath) => { requireApp(event); return savePdf(bytes, Boolean(saveAs), expectedPath); });
+  ipcMain.handle('pdf:prepare-compressed-save', (event, expectedPath) => { requireApp(event); return prepareCompressedSave(expectedPath); });
+  ipcMain.handle('pdf:finish-compressed-save', (event, bytes, token, expectedPath) => {
+    requireApp(event); return finishCompressedSave(bytes, token, expectedPath);
+  });
+  ipcMain.handle('pdf:discard-compressed-save', (event, token) => {
+    requireApp(event);
+    if (preparedCompressedSave?.token === token) preparedCompressedSave = null;
+  });
   ipcMain.handle('docx:print', async (event) => {
     requireApp(event);
     const bytes = await mainWindow.webContents.printToPDF({

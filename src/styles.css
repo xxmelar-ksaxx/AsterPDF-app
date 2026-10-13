@@ -52,12 +52,28 @@
 .pages-panel .page-list{flex:1;min-height:0}
 .pages-panel .sidebar-bottom .text-button{font-size:11px}
 .feature-modal{width:min(560px,100%)}
+.compression-estimate-status{display:flex;align-items:center;gap:8px;min-height:25px;margin:-10px 0 12px;color:#65766b;font-size:11px}
+.inline-spinner{display:inline-block;width:13px;height:13px;flex:none;border:2px solid #d9e6bd;border-top-color:#6b952c;border-radius:50%;animation:saving-spin .7s linear infinite}
+@media(prefers-reduced-motion:reduce){.inline-spinner{animation:none;border-top-color:#6b952c;border-right-color:#6b952c}}
 .compression-options{display:grid;gap:9px;margin-bottom:17px}
 .compression-options button{border:1px solid #dce7d8;background:#fbfdf9;border-radius:10px;padding:13px;text-align:left;color:#25342c;display:grid;gap:5px}
 .compression-options button:hover{border-color:#98bf54;background:#f4fae9}
+.compression-options button.selected{border-color:#7dab36;background:#f2f9e7;box-shadow:0 0 0 2px #a9cf7040}
+.compression-option-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.compression-options .compression-option-heading b{color:#517c24;font-size:12px;white-space:nowrap}
 .compression-options button strong{font-size:13px}
 .compression-options button span{font-size:12px;color:#748077;line-height:1.5}
 .feature-modal .compression-warning{font-size:11px;color:#8c5c3c;background:#fff6ed;border:1px solid #f0d9c1;padding:10px;border-radius:8px;margin:0}
+.feature-modal .compression-running{display:flex;align-items:center;gap:8px;margin:14px 0 0;color:#527a2b;font-size:12px}
+.feature-modal .compression-error{margin:14px 0 0;color:#a13d35;font-size:12px}
+.signature-review{display:flex;align-items:center;gap:8px}
+.signature-review-label{color:#5d763f;font-size:11px;font-weight:650;white-space:nowrap}
+.button.signature-confirm-action{background:#e8f8d2;border-color:#a5ce73;color:#315e24}
+.button.signature-confirm-action:hover:not(:disabled){background:#d9f2b9}
+.button.signature-discard-action{background:#fff0ed;border-color:#e8bcb4;color:#ab3e36}
+.button.signature-discard-action:hover:not(:disabled){background:#ffe1dc}
+@media(max-width:1260px){.signature-review-label{display:none}}
+@media(max-width:900px){.signature-review .button{width:36px;padding:0}.signature-review .button span{display:none}}
 .signature-canvas{display:block;width:100%;height:170px;background:#fff;border:1px solid #dce7d8;border-radius:10px;touch-action:none;cursor:crosshair}
 .signature-controls{display:flex;gap:8px;margin:10px 0 20px}
 .signature-controls button{border:1px solid #dce7d8;background:#fff;padding:6px 10px;border-radius:7px;font-size:12px;color:#586b58}

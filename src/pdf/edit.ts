@@ -152,7 +152,8 @@ export async function embedSignatures(bytes: Uint8Array, placements: SignatureDr
 
 export type CompressionLevel = 'lossless' | 'balanced' | 'small';
 
-export async function compressPdf(bytes: Uint8Array, level: CompressionLevel, onProgress?: (page: number, total: number) => void): Promise<Uint8Array> {
+export async function compressPdf(bytes: Uint8Array, level: CompressionLevel,
+  onProgress?: (page: number, total: number, stage: 'starting' | 'finished') => void): Promise<Uint8Array> {
   if (level === 'lossless') {
     const pdf = await PDFDocument.load(bytes);
     const optimized = new Uint8Array(await pdf.save({ useObjectStreams: true, objectsPerTick: 50 }));
@@ -165,6 +166,7 @@ export async function compressPdf(bytes: Uint8Array, level: CompressionLevel, on
     const dpi = level === 'small' ? 90 : 140;
     const quality = level === 'small' ? 0.5 : 0.75;
     for (let index = 1; index <= input.numPages; index += 1) {
+      onProgress?.(index, input.numPages, 'starting');
       const sourcePage = await input.getPage(index);
       const natural = sourcePage.getViewport({ scale: 1 });
       const viewport = sourcePage.getViewport({ scale: dpi / 72 });
@@ -179,7 +181,7 @@ export async function compressPdf(bytes: Uint8Array, level: CompressionLevel, on
       const image = await output.embedJpg(imageBytes);
       output.addPage([natural.width, natural.height]).drawImage(image, { x: 0, y: 0, width: natural.width, height: natural.height });
       canvas.width = canvas.height = 1;
-      onProgress?.(index, input.numPages);
+      onProgress?.(index, input.numPages, 'finished');
     }
     return new Uint8Array(await output.save());
   } finally { await task.destroy(); }

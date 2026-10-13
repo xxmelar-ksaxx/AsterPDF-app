@@ -8,6 +8,9 @@ declare global {
       openPath(path: string): Promise<OpenedFile | null>;
       pathForFile(file: File): string;
       save(bytes: Uint8Array, saveAs: boolean, expectedPath: string): Promise<{ path: string; name: string } | null>;
+      prepareCompressedSave(expectedPath: string): Promise<{ token: string; path: string } | null>;
+      finishCompressedSave(bytes: Uint8Array, token: string, expectedPath: string): Promise<{ path: string; name: string }>;
+      discardCompressedSave(token: string): Promise<void>;
       printDocx(): Promise<Uint8Array>;
       getRecentPdfs(): Promise<RecentPdf[]>;
       setRecentPreview(path: string, preview: string): Promise<void>;
