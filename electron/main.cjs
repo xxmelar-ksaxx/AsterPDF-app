@@ -15,6 +15,10 @@ let writing = false;
 let saving = false;
 let preparedCompressedSave = null;
 let recentStore;
+let discardPrompt = null;
+let closeApproved = false;
+let closePromptRunning = false;
+let quitRequested = false;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const SUPPORTED = new Set(['.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp']);
 
@@ -31,17 +35,17 @@ function requireApp(event) {
 function confirmDiscard() {
   if (saving || writing) {
     dialog.showMessageBoxSync(mainWindow, { type: 'info', message: 'AsterPDF is saving the PDF.', detail: 'Please wait for the save to finish.' });
-    return false;
+    return Promise.resolve(false);
   }
-  if (!dirty) return true;
-  return dialog.showMessageBoxSync(mainWindow, {
-    type: 'warning',
-    buttons: ['Keep editing', 'Discard changes'],
-    defaultId: 0,
-    cancelId: 0,
-    message: 'Discard unsaved changes?',
-    detail: 'Save your PDF before opening another file or closing AsterPDF.'
-  }) === 1;
+  if (!dirty) return Promise.resolve(true);
+  if (!mainWindow || mainWindow.isDestroyed()) return Promise.resolve(false);
+  if (discardPrompt) return discardPrompt.promise;
+  const id = randomUUID();
+  let resolvePrompt;
+  const promise = new Promise((resolve) => { resolvePrompt = resolve; });
+  discardPrompt = { id, promise, resolve: resolvePrompt };
+  mainWindow.webContents.send('pdf:confirm-discard', id);
+  return promise;
 }
 
 async function readFile(filePath) {
@@ -59,13 +63,13 @@ async function readFile(filePath) {
 }
 
 async function selectFiles(append = false) {
-  if (!append && !confirmDiscard()) return null;
   const result = await dialog.showOpenDialog(mainWindow, {
     title: append ? 'Add files to PDF' : 'Open a file',
     properties: append ? ['openFile', 'multiSelections'] : ['openFile'],
     filters: [{ name: 'PDF, Word and image files', extensions: ['pdf', 'docx', 'png', 'jpg', 'jpeg', 'webp'] }]
   });
   if (result.canceled || !result.filePaths[0]) return null;
+  if (!append && (!(await confirmDiscard()) || closePromptRunning)) return null;
   if (append) {
     const files = [];
     for (const filePath of result.filePaths) {
@@ -190,6 +194,8 @@ async function finishCompressedSave(rawBytes, token, expectedPath) {
 }
 
 function createWindow() {
+  closeApproved = false;
+  closePromptRunning = false;
   mainWindow = new BrowserWindow({
     width: 1420,
     height: 900,
@@ -207,7 +213,23 @@ function createWindow() {
     }
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
-  mainWindow.on('close', (event) => { if (!confirmDiscard()) event.preventDefault(); });
+  mainWindow.on('close', (event) => {
+    if (closeApproved || (!dirty && !saving && !writing)) return;
+    event.preventDefault();
+    if (closePromptRunning) return;
+    closePromptRunning = true;
+    void confirmDiscard().then((discard) => {
+      closePromptRunning = false;
+      if (!discard || !mainWindow || mainWindow.isDestroyed()) { quitRequested = false; return; }
+      closeApproved = true;
+      if (quitRequested) app.quit();
+      else mainWindow.close();
+    }).catch(() => { closePromptRunning = false; quitRequested = false; });
+  });
+  mainWindow.on('closed', () => {
+    if (discardPrompt) { discardPrompt.resolve(false); discardPrompt = null; }
+    mainWindow = null;
+  });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
   if (process.env.ASTERPDF_DEV_URL) mainWindow.loadURL(process.env.ASTERPDF_DEV_URL);
@@ -253,12 +275,18 @@ app.whenReady().then(() => {
     callback({ cancel: !allowed });
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  ipcMain.on('pdf:confirm-discard-result', (event, id, discard) => {
+    if (!appOrigin(event) || !discardPrompt || discardPrompt.id !== id) return;
+    const prompt = discardPrompt;
+    discardPrompt = null;
+    prompt.resolve(discard === true);
+  });
   ipcMain.handle('pdf:open-dialog', (event) => { requireApp(event); return selectFiles(); });
   ipcMain.handle('pdf:add-dialog', (event) => { requireApp(event); return selectFiles(true); });
-  ipcMain.handle('pdf:open-path', (event, filePath) => {
+  ipcMain.handle('pdf:open-path', async (event, filePath) => {
     requireApp(event);
     if (typeof filePath !== 'string' || !SUPPORTED.has(path.extname(filePath).toLowerCase())) throw new Error('Select a PDF, DOCX, or image file.');
-    if (!confirmDiscard()) return null;
+    if (!(await confirmDiscard()) || closePromptRunning) return null;
     return readFile(filePath);
   });
   ipcMain.handle('pdf:save', (event, bytes, saveAs, expectedPath) => { requireApp(event); return savePdf(bytes, Boolean(saveAs), expectedPath); });
@@ -293,3 +321,4 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('before-quit', () => { quitRequested = true; });

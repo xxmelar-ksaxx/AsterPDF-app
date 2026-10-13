@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import {
   ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
   FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X,
-  ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical
+  ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical, TriangleAlert
 } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
@@ -91,6 +91,7 @@ export default function App() {
   const [authorName, setAuthorName] = useState('');
   const [authorInput, setAuthorInput] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [discardRequestId, setDiscardRequestId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editingDirty, setEditingDirty] = useState(false);
   const [pagePlan, setPagePlan] = useState<PlannedPage[] | null>(null);
@@ -155,6 +156,25 @@ export default function App() {
   }, []);
 
   useEffect(() => { void refreshRecent(); }, [refreshRecent]);
+  useEffect(() => window.aster.onDiscardRequest(setDiscardRequestId), []);
+  useEffect(() => {
+    if (!discardRequestId) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        window.aster.answerDiscardRequest(discardRequestId, false);
+        setDiscardRequestId(null);
+      } else if (event.key === 'Tab') {
+        const buttons = window.document.querySelectorAll<HTMLButtonElement>('.discard-actions button');
+        if (buttons.length !== 2) return;
+        if (event.shiftKey && window.document.activeElement === buttons[0]) { event.preventDefault(); buttons[1].focus(); }
+        else if (!event.shiftKey && window.document.activeElement === buttons[1]) { event.preventDefault(); buttons[0].focus(); }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [discardRequestId]);
   useEffect(() => { setSavedSignatures(loadSignatures()); }, []);
 
   useEffect(() => {
@@ -687,6 +707,12 @@ export default function App() {
     } catch (cause) { setError(messageOf(cause)); }
   };
 
+  const answerDiscard = (discard: boolean) => {
+    if (!discardRequestId) return;
+    window.aster.answerDiscardRequest(discardRequestId, discard);
+    setDiscardRequestId(null);
+  };
+
   const startComment = () => {
     if (editingDirty || placedSignatures.length) { setError('Save your edits before adding a comment so only the comment is auto-saved.'); return; }
     if (!authorName) { setSettingsOpen(true); return; }
@@ -1075,5 +1101,11 @@ export default function App() {
       <div className="modal-actions"><button className="button subtle" autoFocus onClick={() => setPendingSignatureDiscard(false)}>Keep signatures</button><button className="button danger" onClick={discardPendingSignatures}>Discard signatures</button></div>
     </div></div>}
     {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><div className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="modal-head"><div className="modal-icon"><Settings2 size={21} /></div><button onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={19} /></button></div><h2 id="settings-title">Comment author</h2><p>This name appears on comments you add to PDF files. It is saved only on this computer.</p><label htmlFor="author-name">Your name</label><input id="author-name" autoFocus value={authorInput} onChange={(event) => setAuthorInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void saveSettings(); }} placeholder="Enter your name" maxLength={80} /><div className="modal-actions"><button className="button subtle" onClick={() => setSettingsOpen(false)}>Cancel</button><button className="button primary" onClick={() => void saveSettings()} disabled={!authorInput.trim()}>Save settings</button></div></div></div>}
+    {discardRequestId && <div className="modal-backdrop discard-backdrop"><div className="settings-modal discard-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-description">
+      <div className="discard-icon"><TriangleAlert size={23} /></div>
+      <h2 id="discard-title">Discard unsaved changes?</h2>
+      <p id="discard-description">Your changes to this PDF have not been saved. Save the PDF first if you want to keep them.</p>
+      <div className="discard-actions"><button className="button confirm-keep" autoFocus onClick={() => answerDiscard(false)}><Check size={17} />Keep editing</button><button className="button danger" onClick={() => answerDiscard(true)}><Trash2 size={16} />Discard changes</button></div>
+    </div></div>}
   </div>;
 }

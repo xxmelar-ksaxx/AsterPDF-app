@@ -173,6 +173,18 @@
 .page-grid-card-foot button{display:inline-flex;align-items:center;gap:2px;border:0;background:transparent;color:#668c3f;font-size:10px;font-weight:700;white-space:nowrap}
 .page-grid-card-foot button:hover{text-decoration:underline}
 @media(max-width:1120px){.page-grid{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}.page-grid-preview{height:235px}}
+.discard-backdrop{z-index:40}
+.discard-modal{width:min(440px,100%);padding:27px}
+.discard-icon{display:grid;place-items:center;width:43px;height:43px;border-radius:12px;background:#fff0d5;color:#ae6c18}
+.discard-modal h2{margin:18px 0 8px}
+.discard-modal p{margin:0;color:#6d7b74}
+.discard-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:24px}
+.discard-actions .button{width:100%;height:43px;padding:0 10px}
+.button.confirm-keep{background:#dcf4cd;border-color:#a3d388;color:#285c27}
+.button.confirm-keep:hover{background:#cef0b8}
+.discard-actions .button.danger{background:#c94740;border-color:#c94740;color:#fff}
+.discard-actions .button.danger:hover{background:#b13933}
+.discard-actions .button:focus-visible{outline:3px solid #283c3680;outline-offset:2px}
 @media print{
   #root{display:none!important}
   .docx-print-root{position:static;display:block;width:100%;pointer-events:auto}

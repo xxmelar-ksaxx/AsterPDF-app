@@ -18,6 +18,8 @@ declare global {
       setAuthorName(name: string): Promise<{ authorName: string }>;
       setDirty(value: boolean): void;
       setSaving(value: boolean): void;
+      onDiscardRequest(handler: (id: string) => void): () => void;
+      answerDiscardRequest(id: string, discard: boolean): void;
       onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings', handler: () => void): () => void;
     };
   }

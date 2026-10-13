@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('aster', {
   setAuthorName: (name) => ipcRenderer.invoke('settings:set', name),
   setDirty: (value) => ipcRenderer.send('pdf:set-dirty', value),
   setSaving: (value) => ipcRenderer.send('pdf:set-saving', value),
+  onDiscardRequest: (handler) => {
+    const listener = (_event, id) => handler(id);
+    ipcRenderer.on('pdf:confirm-discard', listener);
+    return () => ipcRenderer.removeListener('pdf:confirm-discard', listener);
+  },
+  answerDiscardRequest: (id, discard) => ipcRenderer.send('pdf:confirm-discard-result', id, discard),
   onMenu: (channel, handler) => {
     if (!['menu:open', 'menu:save', 'menu:save-as', 'menu:settings'].includes(channel)) return () => {};
     const listener = () => handler();

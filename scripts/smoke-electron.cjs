@@ -159,9 +159,40 @@ async function main() {
     await window.screenshot({ path: path.join(project, 'release', 'smoke-recent.png'), fullPage: true });
     await recent.click();
     await window.locator('.page-sheet[data-page-number="1"] canvas').waitFor({ state: 'visible', timeout: 30000 });
-    process.stdout.write('Recent PDF preview and reopen, automatic saves, queued comments, failed-save retry, and PDF annotations passed.\n');
+    await window.getByRole('button', { name: 'Pages', exact: true }).click();
+    await window.getByRole('button', { name: 'Rotate right' }).click();
+    await window.locator('.unsaved-dot').waitFor({ state: 'visible' });
+    await window.getByRole('button', { name: 'Open file' }).click();
+    await window.getByRole('alertdialog', { name: 'Discard unsaved changes?' }).waitFor();
+    if (!await window.getByRole('button', { name: 'Keep editing' }).evaluate((button) => document.activeElement === button)) throw new Error('The safe discard choice did not receive focus.');
+    await window.keyboard.press('Shift+Tab');
+    if (!await window.getByRole('button', { name: 'Discard changes' }).evaluate((button) => document.activeElement === button)) throw new Error('Keyboard focus escaped the discard dialog.');
+    await window.keyboard.press('Tab');
+    await window.screenshot({ path: path.join(project, 'release', 'smoke-discard.png'), fullPage: true });
+    await window.getByRole('button', { name: 'Keep editing' }).click();
+    await window.getByRole('alertdialog', { name: 'Discard unsaved changes?' }).waitFor({ state: 'hidden' });
+    await window.locator('.unsaved-dot').waitFor({ state: 'visible' });
+    await window.getByRole('button', { name: 'Open file' }).click();
+    await window.getByRole('button', { name: 'Discard changes' }).click();
+    await window.locator('.unsaved-dot').waitFor({ state: 'hidden', timeout: 30000 });
+    await window.locator('.page-sheet[data-page-number="1"] canvas').waitFor({ state: 'visible', timeout: 30000 });
+    await window.getByRole('button', { name: 'Pages', exact: true }).click();
+    await window.getByRole('button', { name: 'Rotate right' }).click();
+    await window.locator('.unsaved-dot').waitFor({ state: 'visible' });
+    await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await window.getByRole('alertdialog', { name: 'Discard unsaved changes?' }).waitFor();
+    await window.getByRole('button', { name: 'Keep editing' }).click();
+    await window.locator('.unsaved-dot').waitFor({ state: 'visible' });
+    await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await window.getByRole('alertdialog', { name: 'Discard unsaved changes?' }).waitFor();
+    const closed = window.waitForEvent('close');
+    await window.getByRole('button', { name: 'Discard changes' }).click().catch((error) => {
+      if (!/Target page, context or browser has been closed/.test(String(error))) throw error;
+    });
+    await closed;
+    process.stdout.write('Recent PDF preview, automatic saves, comments, and unsaved-change decisions passed.\n');
   } finally {
-    await electron.close();
+    await electron.close().catch(() => {});
     await fs.rm(temporary, { recursive: true, force: true });
   }
 }
