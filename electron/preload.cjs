@@ -21,6 +21,15 @@ embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-tex
   getRecentPdfs: () => ipcRenderer.invoke('recent:list'),
   setRecentPreview: (filePath, preview) => ipcRenderer.invoke('recent:set-preview', filePath, preview),
   getSettings: () => ipcRenderer.invoke('settings:get'),
+  getUpdateStatus: () => ipcRenderer.invoke('updates:status'),
+  checkForUpdates: () => ipcRenderer.invoke('updates:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updates:download'),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
+  onUpdateStatus: (handler) => {
+    const listener = (_event, state) => handler(state);
+    ipcRenderer.on('updates:changed', listener);
+    return () => ipcRenderer.removeListener('updates:changed', listener);
+  },
   setAuthorName: (name) => ipcRenderer.invoke('settings:set', name),
   setDirty: (value) => ipcRenderer.send('pdf:set-dirty', value),
   setSaving: (value) => ipcRenderer.send('pdf:set-saving', value),

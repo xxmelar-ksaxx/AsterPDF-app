@@ -227,6 +227,22 @@
 .image-context-menu{position:fixed;z-index:60;min-width:164px;padding:5px;border:1px solid #dce5dc;border-radius:9px;background:white;box-shadow:0 9px 24px #1a302b33}
 .image-context-menu button{display:flex;align-items:center;gap:9px;width:100%;padding:9px;border:0;border-radius:5px;background:transparent;color:#a13d35;font-size:12px;text-align:left}
 .image-context-menu button:hover,.image-context-menu button:focus-visible{background:#fff0ed;outline:none}
+.topbar-actions .update-button{background:#edf7d9;border-color:#c4db9f;color:#416823}
+.topbar-actions .update-button:hover{background:#e1f0c2}
+.application-settings{width:min(500px,100%);max-height:calc(100vh - 40px);overflow-y:auto}
+.application-settings h3{font-size:14px;margin:20px 0 8px}
+.application-settings>p{margin-bottom:14px}
+.update-settings{border-top:1px solid #e4eae0;margin-top:23px;padding-top:19px}
+.update-settings-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.update-settings-heading h3{margin:0}
+.update-settings-heading span{font-size:12px;color:#74817c}
+.update-settings p{margin:0 0 10px}
+.update-settings .update-status{display:flex;align-items:center;gap:8px;color:#344439;font-weight:600}
+.update-settings-actions{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+.update-settings-actions .button{padding:0 12px}
+.update-settings .update-error{color:#a13d35}
+.update-settings .update-check-note,.update-settings .update-last-checked{font-size:11px;color:#849187}
+.update-settings .update-message{font-size:12px;color:#496c31}
 .overlay-layer .image-resize-edge{fill:transparent;pointer-events:all}
 .overlay-layer .image-resize-handle{fill:white;stroke:#5c922c;stroke-width:1.5;pointer-events:all}
 .overlay-layer .resize-n,.overlay-layer .resize-s{cursor:ns-resize}
@@ -280,3 +296,9 @@
 @font-face{font-family:AsterNaskh;src:url('../assets/fonts/NotoNaskhArabic.ttf') format('truetype')}
 @font-face{font-family:AsterSans;src:url('../assets/fonts/NotoSans.ttf') format('truetype')}
 @font-face{font-family:AsterSerif;src:url('../assets/fonts/NotoSerif.ttf') format('truetype')}
+.update-download-progress{display:flex;flex-direction:column;gap:7px;margin:14px 0;color:#607267;font-size:12px;font-variant-numeric:tabular-nums}
+.update-progress-track{width:100%;height:9px;border-radius:6px;overflow:hidden;background:#e8efdf}
+.update-progress-track>span{display:block;height:100%;border-radius:6px;background:#659634}
+.update-progress-track.is-preparing>span{animation:update-progress-wait 1.3s ease-in-out infinite alternate}
+@keyframes update-progress-wait{from{transform:translateX(0)}to{transform:translateX(230%)}}
+.update-install-backdrop{z-index:2000;cursor:wait}

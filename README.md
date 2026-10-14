@@ -17,7 +17,9 @@ An offline PDF workspace for Windows and Apple Silicon Macs. It opens PDFs, DOCX
 - Place new text notes on a page. Set your comment author name in **Settings** before adding a note.
 - Each new comment is saved into the open PDF automatically. A spinner beside the filename shows a save in progress; an unsaved dot remains if writing fails, and **Save PDF** retries it. Page changes and imports are saved with **Save PDF**; pending signatures can be saved with **Confirm** in the toolbar. Compression uses its own **Save compressed copy…** action. Save pending page changes before adding a comment. Use **File → Save As…** to make a copy. The notes use standard PDF `/Text` annotations with `/T` (author) and `/Contents` (comment), so other PDF readers can read them.
 
-The application makes no network requests at runtime. PDF parsing, DOCX and image conversion, editing, compression, file access, and settings all stay on the local machine. Dependencies are downloaded only when building from source.
+PDF parsing, DOCX and image conversion, editing, compression, file access, and settings all stay on the local machine and work without an internet connection. Update checks contact the public GitHub Releases API every 24 hours while AsterPDF is running, or on the next launch after a check is due. The check time and latest release are cached locally across restarts. **Settings → Check for updates** runs a manual check. When a newer stable version is found, an **Update** button appears beside Settings. Clicking it downloads the update inside AsterPDF with a progress bar, percentage, and downloaded size. You can close Settings and keep working while it downloads; the header continues showing progress.
+
+After download verification, choose **Restart and install** in Settings. AsterPDF saves pending document changes (including placed signatures and a composed comment) first. Converted files prompt for a PDF location. Canceling that dialog or a save error keeps the application open and leaves the update ready to install. Updates never install automatically on normal exit. Download failures offer a retry. An interrupted download can be retried on the next launch; completed cached downloads are revalidated before reuse. In-app installation is available in packaged builds; development builds display an explanation. Update requests contain no PDF content, file paths, comments, or author settings. Failed checks and downloads leave document work available offline.
 
 ## Build from source
 
@@ -36,11 +38,22 @@ chmod +x build-macos.command
 ./build-macos.command
 ```
 
-The script creates an arm64 DMG installer and ZIP in `release/`, with a `.sha256` checksum file for each. For a public macOS release, provide a **Developer ID Application** signing certificate and Apple notarization credentials in the build environment. The script enables notarization when credentials are present. Without those credentials, it produces an unsigned local build that macOS Gatekeeper may block. See [electron-builder's notarization guide](https://www.electron.build/v26/docs/notarization/) for the supported certificate and credential variables. The installed application remains fully offline; signing and notarization occur only during the build.
+The script creates an arm64 DMG installer and ZIP in `release/`, with a `.sha256` checksum file for each. For a public macOS release, provide a **Developer ID Application** signing certificate and Apple notarization credentials in the build environment. The script enables notarization when credentials are present. Without those credentials, it produces an unsigned local build that macOS Gatekeeper may block. See [electron-builder's notarization guide](https://www.electron.build/v26/docs/notarization/) for the supported certificate and credential variables. Document features work offline; signing and notarization occur only during the build.
 
 The Windows installer built without a code signing certificate is also unsigned and may show a SmartScreen warning. Electron Builder can sign it when a Windows signing certificate is supplied to the build environment.
 
 Build outputs and checksum files stay under `release/`, which `.gitignore` excludes from the source repository. If distributing builds through GitHub, attach the installers and their matching `.sha256` files to a GitHub Release; they are not source-code commits. On macOS, verify a downloaded file with `shasum -a 256 -c <checksum-file>.sha256`. On Windows, compare `Get-FileHash <installer> -Algorithm SHA256` with the hash in its `.sha256` file.
+
+### GitHub release files for in-app updates
+
+Both build scripts generate updater metadata for the public `xxmelar-ksaxx/AsterPDF-app` repository. For each new version, set `package.json` to that version, build both platforms, and attach these files to the matching stable `v<version>` release:
+
+- **Windows:** `AsterPDF-<version>-Windows-x64-Setup.exe`, its `.sha256` and `.exe.blockmap`, and `latest.yml`.
+- **macOS:** `AsterPDF-<version>-macOS-arm64.dmg`, `AsterPDF-<version>-macOS-arm64.zip`, their `.sha256` files, `latest-mac.yml`, and any generated `.blockmap` files.
+
+Keep generated filenames and metadata unchanged. Upload the complete set to a draft release, then publish it once both platforms are ready. The YAML files contain SHA-512 integrity hashes used by the updater; `.sha256` files are for manual verification. `app-update.yml` is bundled inside the installed app and does not need a separate release upload. Older releases without the YAML metadata cannot be installed through this flow. Users on versions without this feature need to install the first supporting version manually.
+
+macOS in-app installation requires a properly signed app and ZIP, with the same signing identity across releases; use notarized builds for public distribution. The DMG alone is insufficient. Windows uses the bundled NSIS installer. See [electron-builder v26 auto-update requirements](https://www.electron.build/v26/docs/features/auto-update/). No publishing or signing credentials are embedded in the app.
 
 ## Development and verification
 
@@ -53,11 +66,11 @@ npm run desktop
 
 `npm run desktop` starts the built app. During development, run `npm run dev` in one terminal, then start Electron with `ASTERPDF_DEV_URL=http://127.0.0.1:5173` in another terminal. On Windows PowerShell set the variable with `$env:ASTERPDF_DEV_URL='http://127.0.0.1:5173'` before `npm run desktop`.
 
-`npm run smoke` exercises the reader, recent-file previews, automatic saves, failed-save retry, and PDF annotations. `npm run smoke:editor` checks DOCX and image conversion, searchable DOCX text, page edits, signatures, and offline compression. `ASTERPDF_SMOKE_PACKAGED=1` runs the reader smoke test against `release/win-unpacked/AsterPDF.exe` after a Windows build.
+`npm run smoke` exercises the reader, recent-file previews, automatic saves, failed-save retry, and PDF annotations. `npm run smoke:editor` checks DOCX and image conversion, searchable DOCX text, page edits, signatures, and offline compression. `npm run smoke:updates` checks update progress, retry, and save-before-install with mocked network/installer operations and real PDF writes, including canceled Save As and failed writes. It never installs an update. `ASTERPDF_SMOKE_PACKAGED=1` runs the reader smoke test against `release/win-unpacked/AsterPDF.exe` after a Windows build.
 
 ## Implementation
 
-Electron hosts the same bundled React/TypeScript UI on both platforms. PDF.js renders pages and reads annotations; pdf-lib edits PDFs and writes standard text annotations. DOCX Preview renders Word documents locally, then Electron prints the result to a searchable PDF. Electron's isolated preload exposes only file, print, recent-file, and settings operations. The renderer has no Node.js access, remote navigation and windows are blocked, and the packaged UI is served through a local custom protocol with a restrictive content security policy. Author settings and small recent-file previews are stored in the operating system's per-user app data directory.
+Electron hosts the same bundled React/TypeScript UI on both platforms. PDF.js renders pages and reads annotations; pdf-lib edits PDFs and writes standard text annotations. DOCX Preview renders Word documents locally, then Electron prints the result to a searchable PDF. Electron's isolated preload exposes file, print, recent-file, settings, and update operations. Update checks run in the main process against the fixed public GitHub repository. `electron-updater` downloads and verifies the platform package using its separate network session; the renderer cannot supply update URLs or installer paths. The main process independently refuses installation while document changes or a save remain pending. The renderer has no Node.js access, remote navigation and windows are blocked, and the packaged UI is served through a local custom protocol with a restrictive content security policy. Author settings, update-check state, and small recent-file previews are stored in the operating system's per-user app data directory.
 
 ## Current scope
 

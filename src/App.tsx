@@ -22,6 +22,8 @@ import { attachOverlayPackage, embedOverlays, readOverlayPackage, textSize, type
 import type { OverlayTool, PendingImage } from './components/OverlayLayer';
 import FontPicker, { type ColorCommand, type FontCommand, type FontSelection, type InstalledFont } from './components/FontPicker';
 import ColorPicker from './components/ColorPicker';
+import UpdateSettings from './components/UpdateSettings';
+import { useUpdates } from './updates';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
@@ -81,6 +83,19 @@ function commentLabel(comment: PdfComment): string {
 }
 
 export default function App() {
+  const updates = useUpdates();
+  const [preparingInstall, setPreparingInstall] = useState(false);
+  const [installError, setInstallError] = useState('');
+  const installLockRef = useRef(false);
+  const installing = updates.state?.transfer.phase === 'installing';
+  useEffect(() => {
+    installLockRef.current = preparingInstall || installing;
+    const blockKeys = (event: KeyboardEvent) => {
+      if (installLockRef.current) { event.preventDefault(); event.stopImmediatePropagation(); }
+    };
+    window.addEventListener('keydown', blockKeys, true);
+    return () => window.removeEventListener('keydown', blockKeys, true);
+  }, [preparingInstall, installing]);
   const [source, setSource] = useState<OpenedPdf | null>(null);
   const [recentPdfs, setRecentPdfs] = useState<RecentPdf[]>([]);
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
@@ -520,7 +535,7 @@ export default function App() {
     } catch (cause) { setError(messageOf(cause)); }
   }, [installOpened]);
 
-  const buildPendingPdf = useCallback(async (): Promise<{ bytes: Uint8Array; base: Uint8Array; objects: OverlayObject[] }> => {
+  const buildPendingPdf = useCallback(async (additionalNotes: NewNote[] = []): Promise<{ bytes: Uint8Array; base: Uint8Array; objects: OverlayObject[] }> => {
     if (!source) throw new Error('Open a PDF first.');
     const arranged = pagePlan ? await composePagePlan(source.bytes, pagePlan) : source.bytes;
     const draws: SignatureDraw[] = [];
@@ -540,7 +555,8 @@ export default function App() {
       const natural = page.getViewport({ scale: 1 });
       return { pageId: planned.id, index, viewport: page.getViewport({ scale: 1, rotation: natural.rotation + planned.turns * 90 }) };
     }));
-    const base = drafts.length ? await addTextNotes(signed, drafts) : signed;
+    const notes = [...drafts, ...additionalNotes];
+    const base = notes.length ? await addTextNotes(signed, notes) : signed;
     const visibleIds = new Map(effectivePages.map((planned, index) => [planned.id, `source-${index}`]));
     const objects = overlays.flatMap((item) => visibleIds.has(item.pageId) ? [{ ...item, pageId: visibleIds.get(item.pageId)! }] : []);
     let annotated = await embedOverlays(base, overlays, overlayPages);
@@ -561,14 +577,15 @@ export default function App() {
     return { bytes: await attachOverlayPackage(annotated, base, objects), base, objects };
   }, [source, pagePlan, placedSignatures, effectivePages, document, drafts, overlays]);
 
-  const save = useCallback(async (saveAs = false) => {
-    if (!source || savingRef.current || (!saveAs && drafts.length === 0 && !editingDirty && !placedSignatures.length && !source.needsSave)) return;
+  const save = useCallback(async (saveAs = false, additionalNotes: NewNote[] = []): Promise<boolean> => {
+    if (savingRef.current) return false;
+    if (!source || (!saveAs && drafts.length === 0 && !additionalNotes.length && !editingDirty && !placedSignatures.length && !source.needsSave)) return true;
     const savedIds = new Set(drafts.map((note) => note.id));
     savingRef.current = true;
     window.aster.setSaving(true);
     setBusy(true);
     try {
-      const { bytes, base, objects } = await buildPendingPdf();
+      const { bytes, base, objects } = await buildPendingPdf(additionalNotes);
       const saved = await window.aster.save(bytes, saveAs || Boolean(source.needsSave), source.path);
       if (saved) {
         restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
@@ -584,17 +601,41 @@ export default function App() {
         setHistoryFuture([]);
         savedBytesRef.current = base;
         setSource({ ...saved, bytes: base });
+        if (additionalNotes.length) { setPendingPoint(null); setNoteText(''); }
+        window.aster.setDirty(false);
         setError('');
         void refreshRecent();
+        return true;
       }
+      return false;
     } catch (cause) {
       setError(`Could not save PDF: ${messageOf(cause)}`);
+      return false;
     } finally {
       savingRef.current = false;
       window.aster.setSaving(false);
       setBusy(false);
     }
   }, [source, drafts, editingDirty, placedSignatures.length, buildPendingPdf, refreshRecent]);
+
+  const restartAndInstall = async () => {
+    if (busy || savingRef.current || installLockRef.current) return;
+    installLockRef.current = true;
+    setPreparingInstall(true); setInstallError('');
+    try {
+      const pendingNotes: NewNote[] = pendingPoint && noteText.trim() ? [{
+        id: crypto.randomUUID(), page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
+        author: authorName, text: noteText.trim(), date: new Date().toISOString()
+      }] : [];
+      if (pendingNotes.length && !authorName) throw new Error('Set your comment author name before saving this comment.');
+      if (!(await save(false, pendingNotes))) {
+        setInstallError('The PDF was not saved. AsterPDF will stay open. Save your changes, then try again.');
+        return;
+      }
+      await window.aster.installUpdate();
+    } catch (cause) { setInstallError(messageOf(cause)); }
+    finally { installLockRef.current = false; setPreparingInstall(false); }
+  };
 
   const applyEdit = useCallback(async (edit: PageEdit) => {
     if (!source || !document || busy || drafts.length || pendingPoint) return;
@@ -787,6 +828,7 @@ export default function App() {
 
   useEffect(() => {
     const historyAction = (direction: 'undo' | 'redo') => {
+      if (installLockRef.current) return;
       const focused = window.document.activeElement;
       if (focused instanceof HTMLElement && (focused.isContentEditable || focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)) {
         window.document.execCommand(direction);
@@ -899,10 +941,10 @@ export default function App() {
 
   useEffect(() => {
     const subscriptions = [
-      window.aster.onMenu('menu:open', () => void openSelected()),
-      window.aster.onMenu('menu:save', () => void save()),
-      window.aster.onMenu('menu:save-as', () => void save(true)),
-      window.aster.onMenu('menu:settings', () => setSettingsOpen(true))
+      window.aster.onMenu('menu:open', () => { if (!installLockRef.current) void openSelected(); }),
+      window.aster.onMenu('menu:save', () => { if (!installLockRef.current) void save(); }),
+      window.aster.onMenu('menu:save-as', () => { if (!installLockRef.current) void save(true); }),
+      window.aster.onMenu('menu:settings', () => { if (!installLockRef.current) setSettingsOpen(true); })
     ];
     return () => subscriptions.forEach((unsubscribe) => unsubscribe());
   }, [openSelected, save]);
@@ -1145,6 +1187,7 @@ export default function App() {
   return <div className="app-shell" onDragOver={(event) => {
     if (event.dataTransfer.types.includes('Files')) event.preventDefault();
   }} onDrop={(event) => {
+    if (installLockRef.current) { event.preventDefault(); return; }
     if (event.defaultPrevented) return;
     if (!event.dataTransfer.files.length) return;
     event.preventDefault();
@@ -1157,7 +1200,10 @@ export default function App() {
       <div className="topbar-divider" />
       <div className="document-title" title={source?.path}>{source ? <><FileText size={17} /><strong>{source.name}</strong>{busy ? <span className="saving-spinner" role="status" aria-label={compressionProgress || 'Working'} title={compressionProgress || 'Working'} /> : (drafts.length > 0 || editingDirty || source.needsSave) && <span className="unsaved-dot" title="Unsaved changes" />}</> : <span>No document open</span>}</div>
       <div className="topbar-actions">
-        <button className="button subtle" onClick={() => setSettingsOpen(true)} title="Comment author settings"><Settings2 size={18} /><span>Settings</span></button>
+        <button className="button subtle" onClick={() => setSettingsOpen(true)} title="Application settings"><Settings2 size={18} /><span>Settings</span></button>
+        {(updates.state?.available || updates.state?.transfer.phase === 'ready') && <button className="button update-button" aria-label="Update AsterPDF" title="View update progress and installation"
+          onClick={() => { setSettingsOpen(true); if (!updates.downloading && updates.state?.transfer.phase !== 'ready') void updates.download(); }}>
+          {updates.downloading ? <span className="inline-spinner" /> : <ArrowDownToLine size={17} />}<span>{updates.downloading ? `Downloading ${Math.floor(updates.state?.transfer.percent || 0)}%` : updates.state?.transfer.phase === 'ready' ? 'Restart and install…' : 'Update'}</span></button>}
         <button className="button subtle" onClick={() => void openSelected()} disabled={busy}><FolderOpen size={18} /><span>Open file</span></button>
         <button className="button primary" onClick={() => void save()} disabled={!source || (!drafts.length && !editingDirty && !source.needsSave) || busy}><Save size={17} /><span>{busy ? 'Working…' : 'Save PDF'}</span></button>
       </div>
@@ -1364,7 +1410,22 @@ export default function App() {
       <p id="discard-signatures-description">Remove {placedSignatures.length} {placedSignatures.length === 1 ? 'signature' : 'signatures'} placed since the last save? Your saved signature list stays on this computer.</p>
       <div className="modal-actions"><button className="button subtle" autoFocus onClick={() => setPendingSignatureDiscard(false)}>Keep signatures</button><button className="button danger" onClick={discardPendingSignatures}>Discard signatures</button></div>
     </div></div>}
-    {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}><div className="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title"><div className="modal-head"><div className="modal-icon"><Settings2 size={21} /></div><button onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={19} /></button></div><h2 id="settings-title">Comment author</h2><p>This name appears on comments you add to PDF files. It is saved only on this computer.</p><label htmlFor="author-name">Your name</label><input id="author-name" autoFocus value={authorInput} onChange={(event) => setAuthorInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void saveSettings(); }} placeholder="Enter your name" maxLength={80} /><div className="modal-actions"><button className="button subtle" onClick={() => setSettingsOpen(false)}>Cancel</button><button className="button primary" onClick={() => void saveSettings()} disabled={!authorInput.trim()}>Save settings</button></div></div></div>}
+    {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
+      <div className="settings-modal application-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div className="modal-head"><div className="modal-icon"><Settings2 size={21} /></div><button onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={19} /></button></div>
+        <h2 id="settings-title">Settings</h2>
+        <h3>Comment author</h3><p>This name appears on comments you add to PDF files. It is saved only on this computer.</p>
+        <label htmlFor="author-name">Your name</label><input id="author-name" autoFocus value={authorInput} onChange={(event) => setAuthorInput(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Enter') void saveSettings(); }} placeholder="Enter your name" maxLength={80} />
+        <UpdateSettings updates={updates} onInstall={() => void restartAndInstall()} busy={busy || preparingInstall || installing} installError={installError} />
+        <div className="modal-actions"><button className="button subtle" onClick={() => setSettingsOpen(false)}>Close</button>
+          <button className="button primary" onClick={() => void saveSettings()} disabled={!authorInput.trim()}>Save settings</button></div>
+      </div>
+    </div>}
+    {(preparingInstall || installing) && <div className="modal-backdrop update-install-backdrop"><div className="settings-modal" role="alertdialog" aria-modal="true" aria-labelledby="install-title">
+      <h2 id="install-title">{preparingInstall ? 'Saving before restart…' : 'Restarting to install…'}</h2>
+      <p role="status"><span className="inline-spinner" /> {preparingInstall ? 'Please wait while your PDF changes are saved.' : 'Your changes are saved. AsterPDF will reopen after the update.'}</p>
+    </div></div>}
     {discardRequestId && <div className="modal-backdrop discard-backdrop"><div className="settings-modal discard-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-description">
       <div className="discard-icon"><TriangleAlert size={23} /></div>
       <h2 id="discard-title">Discard unsaved changes?</h2>

@@ -1,10 +1,12 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, powerMonitor } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { createRecentStore } = require('./recent.cjs');
 const { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays } = require('./original-text.cjs');
 const { listInstalledFonts, getInstalledFont } = require('./installed-fonts.cjs');
+const { createUpdateService } = require('./updates.cjs');
+const { createUpdateInstaller } = require('./update-installer.cjs');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'aster', privileges: { standard: true, secure: true, supportFetchAPI: true } }
@@ -17,6 +19,12 @@ let writing = false;
 let saving = false;
 let preparedCompressedSave = null;
 let recentStore;
+let updateService;
+let updateInstaller;
+const updateState = () => ({ ...updateService.getState(), transfer: updateInstaller.getState() });
+const publishUpdate = () => {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('updates:changed', updateState());
+};
 let discardPrompt = null;
 let closeApproved = false;
 let closePromptRunning = false;
@@ -32,6 +40,7 @@ function appOrigin(event) {
 
 function requireApp(event) {
   if (!appOrigin(event)) throw new Error('Untrusted window');
+  if (updateInstaller?.getState().phase === 'installing') throw new Error('AsterPDF is restarting to install the update.');
 }
 
 function confirmDiscard() {
@@ -262,12 +271,17 @@ function createWindow() {
       { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }
     ] },
     { label: 'View', submenu: [{ role: 'togglefullscreen' }] },
-    { label: 'Settings', submenu: [{ label: 'Comment author…', click: () => send('menu:settings') }] }
+    { label: 'Settings', submenu: [{ label: 'Settings…', click: () => send('menu:settings') }] }
   ]));
 }
 
 app.whenReady().then(() => {
   recentStore = createRecentStore(app.getPath('userData'));
+  updateInstaller = createUpdateInstaller({ updater: require('electron-updater').autoUpdater,
+    isPackaged: app.isPackaged, onChange: publishUpdate });
+  updateService = createUpdateService({ userDataPath: app.getPath('userData'), currentVersion: app.getVersion(),
+    openExternal: (url) => shell.openExternal(url),
+    onChange: publishUpdate });
   const dist = path.join(__dirname, '..', 'dist');
   protocol.handle('aster', async (request) => {
     try {
@@ -350,11 +364,31 @@ ipcMain.handle('pdf:embed-shaped-text', (event, bytes, placements) => {
   });
   ipcMain.handle('settings:get', (event) => { requireApp(event); return loadSettings(); });
   ipcMain.handle('settings:set', (event, name) => { requireApp(event); return storeSettings(name); });
+  ipcMain.handle('updates:status', (event) => { requireApp(event); return updateState(); });
+  ipcMain.handle('updates:check', async (event) => { requireApp(event); await updateService.check(true); return updateState(); });
+  ipcMain.handle('updates:download', async (event) => {
+    requireApp(event);
+    const state = updateService.getState();
+    if (!state.available) throw new Error('Check for updates first.');
+    await updateInstaller.download(state.latestVersion);
+    return updateState();
+  });
+  ipcMain.handle('updates:install', (event) => {
+    requireApp(event);
+    // The renderer awaits a successful PDF save first. Refuse to exit if any
+    // document work is still outstanding, even if this IPC is called directly.
+    if (dirty || saving || writing || preparedCompressedSave || discardPrompt || closePromptRunning)
+      throw new Error('Save your changes and wait for the save to finish before installing.');
+    updateInstaller.install();
+  });
   ipcMain.on('pdf:set-dirty', (event, value) => { if (appOrigin(event)) dirty = value === true; });
   ipcMain.on('pdf:set-saving', (event, value) => { if (appOrigin(event)) saving = value === true; });
   createWindow();
+  void updateService.start();
+  powerMonitor.on('resume', () => { void updateService.check(false); });
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', () => { quitRequested = true; });
+app.on('will-quit', () => { updateService?.stop(); });

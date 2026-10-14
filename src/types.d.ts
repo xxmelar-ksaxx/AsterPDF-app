@@ -21,6 +21,11 @@ declare global {
       getRecentPdfs(): Promise<RecentPdf[]>;
       setRecentPreview(path: string, preview: string): Promise<void>;
       getSettings(): Promise<{ authorName: string }>;
+      getUpdateStatus(): Promise<UpdateStatus>;
+      checkForUpdates(): Promise<UpdateStatus>;
+      downloadUpdate(): Promise<UpdateStatus>;
+      installUpdate(): Promise<void>;
+      onUpdateStatus(handler: (state: UpdateStatus) => void): () => void;
       setAuthorName(name: string): Promise<{ authorName: string }>;
       setDirty(value: boolean): void;
       setSaving(value: boolean): void;
@@ -36,6 +41,24 @@ export interface OpenedPdf {
   path: string;
   bytes: Uint8Array;
   needsSave?: boolean;
+}
+
+export interface UpdateStatus {
+  transfer: {
+    phase: 'idle' | 'preparing' | 'downloading' | 'ready' | 'installing' | 'error';
+    version: string | null;
+    percent: number;
+    transferred: number;
+    total: number;
+    error: string | null;
+  };
+  status: 'idle' | 'checking' | 'current' | 'available' | 'error';
+  currentVersion: string;
+  latestVersion: string | null;
+  available: boolean;
+  downloadAvailable: boolean;
+  lastCheckedAt: number | null;
+  error: string | null;
 }
 
 export interface OriginalPdfText {
