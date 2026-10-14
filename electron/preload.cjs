@@ -6,6 +6,14 @@ contextBridge.exposeInMainWorld('aster', {
   openPath: (filePath) => ipcRenderer.invoke('pdf:open-path', filePath),
   pathForFile: (file) => webUtils.getPathForFile(file),
   save: (bytes, saveAs, expectedPath) => ipcRenderer.invoke('pdf:save', bytes, saveAs, expectedPath),
+  listOriginalText: (bytes, pageIndex) => ipcRenderer.invoke('pdf:list-original-text', bytes, pageIndex),
+  listInstalledFonts: () => ipcRenderer.invoke('fonts:list-installed'),
+  readInstalledFont: (id, text) => ipcRenderer.invoke('fonts:read-installed', id, text),
+replaceOriginalText: (bytes, pageIndex, objectIndex, expectedText, replacement, fontChoice, color) =>
+ipcRenderer.invoke('pdf:replace-original-text', bytes, pageIndex, objectIndex, expectedText, replacement, fontChoice, color),
+moveOriginalText: (bytes, pageIndex, objectIndex, expectedText, dx, dy) =>
+  ipcRenderer.invoke('pdf:move-original-text', bytes, pageIndex, objectIndex, expectedText, dx, dy),
+embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-text', bytes, placements),
   prepareCompressedSave: (expectedPath) => ipcRenderer.invoke('pdf:prepare-compressed-save', expectedPath),
   finishCompressedSave: (bytes, token, expectedPath) => ipcRenderer.invoke('pdf:finish-compressed-save', bytes, token, expectedPath),
   discardCompressedSave: (token) => ipcRenderer.invoke('pdf:discard-compressed-save', token),
@@ -23,7 +31,7 @@ contextBridge.exposeInMainWorld('aster', {
   },
   answerDiscardRequest: (id, discard) => ipcRenderer.send('pdf:confirm-discard-result', id, discard),
   onMenu: (channel, handler) => {
-    if (!['menu:open', 'menu:save', 'menu:save-as', 'menu:settings'].includes(channel)) return () => {};
+    if (!['menu:open', 'menu:save', 'menu:save-as', 'menu:settings', 'menu:undo', 'menu:redo'].includes(channel)) return () => {};
     const listener = () => handler();
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);

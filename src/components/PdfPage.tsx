@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { MessageSquare } from 'lucide-react';
 import type { PDFDocumentProxy, PageViewport } from 'pdfjs-dist';
 import type { PdfComment } from '../pdf/comments';
 import type { PlacedSignature, SavedSignature } from '../signatures/library';
+import OverlayLayer, { type OverlayTool, type PendingImage } from './OverlayLayer';
+import type { OverlayObject } from '../pdf/overlays';
+import TextFrame from './TextFrame';
+import type { ColorCommand, FontCommand, FontSelection, InstalledFont } from './FontPicker';
+import type { OriginalPdfText } from '../types';
+import OriginalTextEditor, { type TextEdit } from './OriginalTextEditor';
 
 export type Zoom = 'fit' | number;
 export type PageSize = { width: number; height: number };
@@ -16,6 +22,14 @@ export function pageScale(size: PageSize, zoom: Zoom, viewerWidth: number): numb
 
 type Props = {
   document: PDFDocumentProxy;
+  sourceBytes: Uint8Array;
+  inspectOriginalText: boolean;
+  onCommitOriginalText: (pageIndex: number, objectIndex: number, oldText: string, nextText: string, fontChoice: string, color?: number[]) => Promise<void>;
+  onFontEditChange: (selection: FontSelection | null) => void;
+  fontCommand: FontCommand | null;
+  colorCommand: ColorCommand | null;
+  installedFonts: InstalledFont[];
+  onMoveOriginalText: (pageIndex: number, objectIndex: number, text: string, dx: number, dy: number) => Promise<void>;
   pageNumber: number;
   sourcePageNumber: number;
   rotation: number;
@@ -39,13 +53,27 @@ type Props = {
   onUpdateSignature: (id: string, placement: Pick<PlacedSignature, 'x' | 'y' | 'width' | 'height'>) => void;
   onSelectSignature: (id: string | null) => void;
   onDeleteSignature: (id: string) => void;
+  overlayTool: OverlayTool | null;
+  overlayColor: string;
+  overlayLineWidth: number;
+  overlayFontSize: number;
+  overlayFontChoice: OverlayObject['fontChoice'];
+  overlayImage: PendingImage | null;
+  overlays: OverlayObject[];
+  selectedOverlayId: string | null;
+  onAddOverlay: (object: OverlayObject) => void;
+  onUpdateOverlay: (object: OverlayObject) => void;
+  onDeleteOverlay: (id: string) => void;
+  onSelectOverlay: (id: string | null) => void;
   onError: (message: string) => void;
 };
 
 export default function PdfPage({
-  document, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
+  document, sourceBytes, inspectOriginalText, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
-  registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature, onError
+  registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
+  overlayTool, overlayColor, overlayLineWidth, overlayFontSize, overlayFontChoice, overlayImage, overlays, selectedOverlayId,
+  onAddOverlay, onUpdateOverlay, onDeleteOverlay, onSelectOverlay, onError
 }: Props) {
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -53,11 +81,55 @@ export default function PdfPage({
   const [near, setNear] = useState(false);
   const [viewport, setViewport] = useState<PageViewport | null>(null);
   const [ready, setReady] = useState(false);
+  const [originalText, setOriginalText] = useState<OriginalPdfText[]>([]);
+  const [editingOriginal, setEditingOriginal] = useState<TextEdit | null>(null);
+  const editingOriginalRef = useRef<typeof editingOriginal>(null);
+  const originalDragRef = useRef<{ index: number; text: string; startX: number; startY: number } | null>(null);
+  const [originalDrag, setOriginalDrag] = useState<{ index: number; dx: number; dy: number } | null>(null);
   const [signatureCursor, setSignatureCursor] = useState<{ x: number; y: number } | null>(null);
   const [signatureMenu, setSignatureMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const dragRef = useRef<{ id: string; mode: 'move' | 'resize'; startX: number; startY: number; placement: PlacedSignature } | null>(null);
 
   useEffect(() => { if (signatureMenu && selectedSignatureId !== signatureMenu.id) setSignatureMenu(null); }, [signatureMenu, selectedSignatureId]);
+  useEffect(() => {
+    if (!inspectOriginalText || !near) { setOriginalText([]); return; }
+    let cancelled = false;
+    window.aster.listOriginalText(sourceBytes, sourcePageNumber - 1).then((objects) => {
+      if (!cancelled) setOriginalText(objects.filter((object) => !/[\r\n]/.test(object.text)));
+    }).catch((cause) => { if (!cancelled) onError(`Could not inspect original text on page ${pageNumber}: ${cause instanceof Error ? cause.message : String(cause)}`); });
+    return () => { cancelled = true; };
+  }, [inspectOriginalText, near, sourceBytes, sourcePageNumber, pageNumber, onError]);
+  const finishOriginalText = (commit: boolean) => {
+    const current = editingOriginalRef.current;
+    if (!current) return;
+    editingOriginalRef.current = null; setEditingOriginal(null); onFontEditChange(null);
+    const original = originalText.find((object) => object.index === current.index);
+    const colorChanged = original && current.color.some((value, index) => value !== original.color[index]);
+    if (commit && (current.value !== current.text || current.fontChoice !== 'original' || colorChanged))
+      void onCommitOriginalText(sourcePageNumber - 1, current.index, current.text, current.value, current.fontChoice,
+        colorChanged ? current.color.slice(0, 3) : undefined);
+  };
+  useLayoutEffect(() => {
+    const current = editingOriginalRef.current;
+    if (!current || !colorCommand || colorCommand.pageId !== pageId || colorCommand.index !== current.index) return;
+    const next = { ...current, color: [1, 3, 5].map((offset) => parseInt(colorCommand.color.slice(offset, offset + 2), 16)).concat(current.color[3]) };
+    editingOriginalRef.current = next; setEditingOriginal(next);
+  }, [colorCommand, pageId]);
+  useLayoutEffect(() => {
+    if (!fontCommand || fontCommand.pageId !== pageId || editingOriginalRef.current?.index !== fontCommand.index) return;
+    const next = { ...editingOriginalRef.current, fontChoice: fontCommand.choice };
+    editingOriginalRef.current = next; setEditingOriginal(next);
+  }, [fontCommand, pageId]);
+  useEffect(() => {
+    if (!editingOriginal) return;
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Element;
+      if (target.closest('.original-text-editor, [data-font-picker], [data-added-text-controls]')) return;
+      finishOriginalText(true);
+    };
+    window.document.addEventListener('pointerdown', outside);
+    return () => window.document.removeEventListener('pointerdown', outside);
+  }, [editingOriginal]);
 
   const setSheet = useCallback((element: HTMLDivElement | null) => {
     sheetRef.current = element;
@@ -80,12 +152,12 @@ export default function PdfPage({
     if (!near) {
       setReady(false);
       setViewport(null);
+      const canvas = canvasRef.current;
+      if (canvas) { canvas.width = 0; canvas.height = 0; }
       return;
     }
     let cancelled = false;
     let renderTask: ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | undefined;
-    setReady(false);
-    setViewport(null);
     (async () => {
       try {
         const page = await document.getPage(sourcePageNumber);
@@ -94,22 +166,28 @@ export default function PdfPage({
         onMeasure(sourcePageNumber, { width: natural.width, height: natural.height });
         const displaySize = rotation % 180 ? { width: natural.height, height: natural.width } : natural;
         const currentViewport = page.getViewport({ scale: pageScale(displaySize, zoom, viewerWidth), rotation: natural.rotation + rotation });
-        const canvas = canvasRef.current;
-        if (!canvas || cancelled) return;
+        // Render offscreen so PDF.js never clears or partially paints the
+        // visible page. Publish the complete bitmap in one browser frame.
+        const canvas = window.document.createElement('canvas');
         const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = Math.ceil(currentViewport.width * pixelRatio);
         canvas.height = Math.ceil(currentViewport.height * pixelRatio);
-        canvas.style.width = `${currentViewport.width}px`;
-        canvas.style.height = `${currentViewport.height}px`;
         const context = canvas.getContext('2d');
         if (!context) throw new Error('Canvas rendering is unavailable.');
-        setViewport(currentViewport);
         renderTask = page.render({
           canvas, canvasContext: context, viewport: currentViewport,
           transform: [pixelRatio, 0, 0, pixelRatio, 0, 0]
         });
         await renderTask.promise;
-        if (!cancelled) setReady(true);
+        if (cancelled || !canvasRef.current) return;
+        const visible = canvasRef.current;
+        const visibleContext = visible.getContext('2d');
+        if (!visibleContext) throw new Error('Canvas rendering is unavailable.');
+        visible.width = canvas.width;
+        visible.height = canvas.height;
+        visibleContext.drawImage(canvas, 0, 0);
+        setViewport(currentViewport);
+        setReady(true);
       } catch (cause) {
         if (!cancelled) onError(`Could not render page ${pageNumber}: ${cause instanceof Error ? cause.message : String(cause)}`);
       }
@@ -117,8 +195,6 @@ export default function PdfPage({
     return () => {
       cancelled = true;
       renderTask?.cancel();
-      const canvas = canvasRef.current;
-      if (canvas) { canvas.width = 0; canvas.height = 0; }
     };
   }, [document, sourcePageNumber, rotation, near, zoom, viewerWidth, onMeasure, onError]);
 
@@ -175,12 +251,50 @@ export default function PdfPage({
 
   return <div className="page-sheet" data-page-number={pageNumber} ref={setSheet}>
     <span className="page-label">Page {pageNumber}</span>
-    <div className={`page-stage ${placing || placingSignature ? 'is-placing' : ''}`} ref={stageRef} onClick={choosePoint}
+    <div className={`page-stage ${placing || placingSignature ? 'is-placing' : ''}${editingOriginal ? ' is-editing-text' : ''}`} ref={stageRef} onClick={choosePoint}
       onPointerMove={(event) => { if (placingSignature && activeViewport && stageRef.current) {
         const bounds = stageRef.current.getBoundingClientRect();
         setSignatureCursor({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
       } }} onPointerLeave={() => setSignatureCursor(null)} style={{ width, height }}>
-      <canvas ref={canvasRef} width={0} height={0} style={{ display: ready && activeViewport ? 'block' : 'none' }} />
+      <canvas ref={canvasRef} width={0} height={0} style={{ display: ready ? 'block' : 'none', width, height }} />
+      {inspectOriginalText && activeViewport && <div className="original-text-layer" aria-label="Original PDF text">
+        {originalText.map((object) => {
+          const a = activeViewport.convertToViewportPoint(object.box[0], object.box[1]);
+          const b = activeViewport.convertToViewportPoint(object.box[2], object.box[3]);
+          const offset = originalDrag?.index === object.index ? originalDrag : null;
+          const left = Math.min(a[0], b[0]) + (offset?.dx || 0); const top = Math.min(a[1], b[1]) + (offset?.dy || 0);
+          const boxWidth = Math.max(12, Math.abs(a[0] - b[0])); const boxHeight = Math.max(12, Math.abs(a[1] - b[1]));
+          return <svg key={object.index} className={`original-text-frames${editingOriginal?.index === object.index ? ' is-editing' : ''}`} width={width} height={height}
+            aria-label={`Original text frame: ${object.text}`}>
+            <TextFrame x={left} y={top} width={boxWidth} height={boxHeight} selected={editingOriginal?.index === object.index || offset !== null}
+              onInteriorClick={(event) => { event.stopPropagation(); const next = { ...object, value: object.text, fontChoice: 'original' as const };
+                editingOriginalRef.current = next; setEditingOriginal(next);
+                onFontEditChange({ pageId, index: object.index, fontName: object.fontName, choice: 'original',
+                  fontSize: object.fontSize * Math.hypot(object.matrix[0], object.matrix[1]),
+                  color: '#' + object.color.slice(0, 3).map((value) => value.toString(16).padStart(2, '0')).join('') }); }}
+              onBorderPointerDown={(event) => { event.stopPropagation(); if (event.button !== 0) return;
+                originalDragRef.current = { index: object.index, text: object.text, startX: event.clientX, startY: event.clientY };
+                event.currentTarget.setPointerCapture(event.pointerId); }}
+              onBorderPointerMove={(event) => { const drag = originalDragRef.current;
+                if (drag?.index === object.index) setOriginalDrag({ index: object.index, dx: event.clientX - drag.startX, dy: event.clientY - drag.startY }); }}
+              onBorderPointerUp={(event) => { const drag = originalDragRef.current; originalDragRef.current = null; setOriginalDrag(null);
+                if (!drag || drag.index !== object.index || !activeViewport) return;
+                const dx = event.clientX - drag.startX, dy = event.clientY - drag.startY;
+                if (Math.hypot(dx, dy) < 2) return;
+                const p0 = activeViewport.convertToPdfPoint(0, 0), p1 = activeViewport.convertToPdfPoint(dx, dy);
+                void onMoveOriginalText(sourcePageNumber - 1, object.index, object.text, p1[0] - p0[0], p1[1] - p0[1]); }}
+              onBorderPointerCancel={() => { originalDragRef.current = null; setOriginalDrag(null); }} />
+          </svg>;
+        })}
+        {editingOriginal && <OriginalTextEditor edit={editingOriginal} viewport={activeViewport} canvas={canvasRef.current} fonts={installedFonts}
+          onChange={(value) => { const next = { ...editingOriginalRef.current!, value };
+            editingOriginalRef.current = next; setEditingOriginal(next); }} onFinish={finishOriginalText} />}
+      </div>}
+      {activeViewport && <OverlayLayer pageId={pageId} width={width} height={height} scale={scale} tool={overlayTool}
+        fontSize={overlayFontSize} fontChoice={overlayFontChoice} viewport={activeViewport} fonts={installedFonts}
+        fontCommand={fontCommand} onFontEditChange={onFontEditChange}
+        color={overlayColor} lineWidth={overlayLineWidth} image={overlayImage} objects={overlays}
+        selectedId={selectedOverlayId} onAdd={onAddOverlay} onUpdate={onUpdateOverlay} onDelete={onDeleteOverlay} onSelect={onSelectOverlay} />}
       {near && !ready && <span className="page-rendering">Rendering page {pageNumber}…</span>}
       {activeViewport && comments.map((comment) => {
         const first = activeViewport.convertToViewportPoint(comment.rect[0], comment.rect[1]);

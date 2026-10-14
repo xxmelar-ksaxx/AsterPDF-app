@@ -3,6 +3,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { createRecentStore } = require('./recent.cjs');
+const { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays } = require('./original-text.cjs');
+const { listInstalledFonts, getInstalledFont } = require('./installed-fonts.cjs');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'aster', privileges: { standard: true, secure: true, supportFetchAPI: true } }
@@ -236,6 +238,14 @@ function createWindow() {
   else mainWindow.loadURL('aster://app/index.html');
 
   const send = (channel) => mainWindow.webContents.send(channel);
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    const modifier = process.platform === 'darwin' ? input.meta : input.control;
+    if (input.type !== 'keyDown' || !modifier || input.alt || (input.key.toLowerCase() !== 'z' && input.code !== 'KeyZ')) return;
+    // Route once before Chromium/native menu handling, including when focus is
+    // inside the PDF canvas. The renderer keeps text-field undo local.
+    event.preventDefault();
+    send(input.shift ? 'menu:redo' : 'menu:undo');
+  });
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     {
       label: 'File', submenu: [
@@ -246,7 +256,11 @@ function createWindow() {
         { role: 'quit' }
       ]
     },
-    { label: 'Edit', submenu: [{ role: 'undo' }, { role: 'redo' }, { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }] },
+    { label: 'Edit', submenu: [
+      { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: () => send('menu:undo') },
+      { label: 'Redo', accelerator: 'CmdOrCtrl+Shift+Z', click: () => send('menu:redo') },
+      { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }
+    ] },
     { label: 'View', submenu: [{ role: 'togglefullscreen' }] },
     { label: 'Settings', submenu: [{ label: 'Comment author…', click: () => send('menu:settings') }] }
   ]));
@@ -290,6 +304,28 @@ app.whenReady().then(() => {
     return readFile(filePath);
   });
   ipcMain.handle('pdf:save', (event, bytes, saveAs, expectedPath) => { requireApp(event); return savePdf(bytes, Boolean(saveAs), expectedPath); });
+  ipcMain.handle('pdf:list-original-text', (event, bytes, pageIndex) => {
+    requireApp(event); return listOriginalText(bytes, pageIndex);
+  });
+  ipcMain.handle('fonts:list-installed', async (event) => {
+    requireApp(event);
+    return (await listInstalledFonts()).map(({ id, family, style, postscriptName }) => ({ id, family, style, postscriptName }));
+  });
+  ipcMain.handle('fonts:read-installed', async (event, id, text) => {
+    requireApp(event);
+    if (typeof id !== 'string' || !/^[a-f0-9]{24}$/.test(id) || typeof text !== 'string' || text.length > 1000000)
+      throw new Error('Invalid installed font request.');
+    return (await getInstalledFont(id, text)).bytes;
+  });
+ipcMain.handle('pdf:replace-original-text', (event, bytes, pageIndex, objectIndex, expectedText, replacement, fontChoice, color) => {
+  requireApp(event); return replaceOriginalText(bytes, pageIndex, objectIndex, expectedText, replacement, fontChoice, color);
+  });
+ipcMain.handle('pdf:move-original-text', (event, bytes, pageIndex, objectIndex, expectedText, dx, dy) => {
+  requireApp(event); return moveOriginalText(bytes, pageIndex, objectIndex, expectedText, dx, dy);
+});
+ipcMain.handle('pdf:embed-shaped-text', (event, bytes, placements) => {
+  requireApp(event); return embedShapedOverlays(bytes, placements);
+});
   ipcMain.handle('pdf:prepare-compressed-save', (event, expectedPath) => { requireApp(event); return prepareCompressedSave(expectedPath); });
   ipcMain.handle('pdf:finish-compressed-save', (event, bytes, token, expectedPath) => {
     requireApp(event); return finishCompressedSave(bytes, token, expectedPath);

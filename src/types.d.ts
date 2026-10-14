@@ -8,6 +8,12 @@ declare global {
       openPath(path: string): Promise<OpenedFile | null>;
       pathForFile(file: File): string;
       save(bytes: Uint8Array, saveAs: boolean, expectedPath: string): Promise<{ path: string; name: string } | null>;
+      listOriginalText(bytes: Uint8Array, pageIndex: number): Promise<OriginalPdfText[]>;
+      listInstalledFonts(): Promise<{ id: string; family: string; style: string; postscriptName: string }[]>;
+      readInstalledFont(id: string, text: string): Promise<Uint8Array>;
+      replaceOriginalText(bytes: Uint8Array, pageIndex: number, objectIndex: number, expectedText: string, replacement: string, fontChoice?: string, color?: number[]): Promise<Uint8Array>;
+      moveOriginalText(bytes: Uint8Array, pageIndex: number, objectIndex: number, expectedText: string, dx: number, dy: number): Promise<Uint8Array>;
+      embedShapedText(bytes: Uint8Array, placements: { pageIndex: number; text: string; size: number; matrix: number[]; color: number[]; fontChoice?: string }[]): Promise<Uint8Array>;
       prepareCompressedSave(expectedPath: string): Promise<{ token: string; path: string } | null>;
       finishCompressedSave(bytes: Uint8Array, token: string, expectedPath: string): Promise<{ path: string; name: string }>;
       discardCompressedSave(token: string): Promise<void>;
@@ -20,7 +26,7 @@ declare global {
       setSaving(value: boolean): void;
       onDiscardRequest(handler: (id: string) => void): () => void;
       answerDiscardRequest(id: string, discard: boolean): void;
-      onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings', handler: () => void): () => void;
+      onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:undo' | 'menu:redo', handler: () => void): () => void;
     };
   }
 }
@@ -30,6 +36,16 @@ export interface OpenedPdf {
   path: string;
   bytes: Uint8Array;
   needsSave?: boolean;
+}
+
+export interface OriginalPdfText {
+  index: number;
+  text: string;
+  box: number[];
+  fontName: string;
+  matrix: number[];
+  fontSize: number;
+  color: number[];
 }
 
 export interface OpenedFile extends OpenedPdf {
