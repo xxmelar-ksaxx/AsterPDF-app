@@ -5,7 +5,7 @@ const { randomUUID } = require('node:crypto');
 const { createRecentStore } = require('./recent.cjs');
 const { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays } = require('./original-text.cjs');
 const { listInstalledFonts, getInstalledFont } = require('./installed-fonts.cjs');
-const { createUpdateService } = require('./updates.cjs');
+const { createUpdateService, updateArchitecture } = require('./updates.cjs');
 const { createUpdateInstaller } = require('./update-installer.cjs');
 const { pdfPathsFromArguments, createFileOpenQueue } = require('./file-open.cjs');
 
@@ -318,6 +318,7 @@ app.whenReady().then(() => {
   updateInstaller = createUpdateInstaller({ updater: require('electron-updater').autoUpdater,
     isPackaged: app.isPackaged, onChange: publishUpdate });
   updateService = createUpdateService({ userDataPath: app.getPath('userData'), currentVersion: app.getVersion(),
+    arch: updateArchitecture(process.platform, process.arch, app.runningUnderARM64Translation),
     openExternal: (url) => shell.openExternal(url),
     onChange: publishUpdate });
   const dist = path.join(__dirname, '..', 'dist');
@@ -410,7 +411,7 @@ ipcMain.handle('pdf:embed-shaped-text', (event, bytes, placements) => {
     requireApp(event);
     const state = updateService.getState();
     if (!state.available) throw new Error('Check for updates first.');
-    await updateInstaller.download(state.latestVersion);
+    await updateInstaller.download(updateService.getDownloadTarget());
     return updateState();
   });
   ipcMain.handle('updates:install', (event) => {

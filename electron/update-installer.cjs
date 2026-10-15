@@ -29,7 +29,8 @@ function createUpdateInstaller({ updater, isPackaged, onChange = () => {} }) {
   });
   return {
     getState: () => ({ ...state }),
-    download(version) {
+    download(target) {
+      const version = target.version;
       if (pending) return pending;
       if (state.phase === 'installing' || (state.phase === 'ready' && state.version === version)) return Promise.resolve();
       if (!isPackaged) {
@@ -39,6 +40,8 @@ function createUpdateInstaller({ updater, isPackaged, onChange = () => {} }) {
       publish({ phase: 'preparing', version, percent: 0, transferred: 0, total: 0, error: null });
       pending = (async () => {
         try {
+          const { ReleaseProvider } = require('./release-provider.cjs');
+          updater.setFeedURL({ provider: 'custom', updateProvider: ReleaseProvider, target });
           const result = await updater.checkForUpdates();
           if (!result?.isUpdateAvailable || result.updateInfo.version !== version) {
             publish({ phase: 'error', error: 'The release changed. Check for updates again before downloading.' });

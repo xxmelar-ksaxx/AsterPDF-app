@@ -18,10 +18,12 @@ async function main() {
   pdf.addPage([500, 700]).drawText('Before update', { x: 80, y: 400, size: 22, font: await pdf.embedFont(StandardFonts.Helvetica) });
   await fs.writeFile(fixture, await pdf.save());
   const release = (value) => ({ tag_name: `v${value}`, draft: false, prerelease: false,
-    assets: [`AsterPDF-${value}-Windows-x64-Setup.exe`, `AsterPDF-${value}-macOS-arm64.dmg`].map((name) =>
+    assets: [`AsterPDF-${value}-Windows-x64-Setup.exe`, 'latest.yml', 'latest-mac.yml',
+      ...['arm64', 'x64'].flatMap((arch) => ['dmg', 'zip'].map((ext) => `AsterPDF-${value}-macOS-${arch}.${ext}`))].map((name) =>
       ({ name, state: 'uploaded', browser_download_url: `https://github.com/xxmelar-ksaxx/AsterPDF-app/releases/download/v${value}/${name}` })) });
   const now = Date.now();
-  await fs.writeFile(path.join(directory, 'updates.json'), JSON.stringify({ lastAttemptAt: now, lastCheckedAt: now, release: release(version), failed: false }));
+  await fs.writeFile(path.join(directory, 'updates.json'), JSON.stringify({ cacheVersion: 2, platform: process.platform,
+    arch: process.arch, lastAttemptAt: now, lastCheckedAt: now, release: release(version), failed: false }));
   const bootstrap = path.join(directory, 'main.cjs');
   // All network and installer operations are mocked only in this temporary entry
   // point. The real app save path and filesystem writes are exercised below.
@@ -34,6 +36,7 @@ async function main() {
     const updater = global.__updater = new EventEmitter();
     global.__installs = 0; global.__updateCalls = 0; global.__updateMode = 'new';
     global.__failInstall = false; global.__failDownload = false;
+    updater.setFeedURL = (value) => { global.__selectedUpdateTarget = value.target; };
     updater.checkForUpdates = async () => ({ isUpdateAvailable: true, updateInfo: { version: '99.0.0' } });
     updater.downloadUpdate = async () => {
       if (global.__failDownload) throw new Error('sha512 checksum mismatch');
@@ -46,11 +49,11 @@ async function main() {
     };
     require.cache[${JSON.stringify(require.resolve('electron-updater'))}] = { exports: { autoUpdater: updater } };
     global.fetch = async (url) => {
-      if (url !== 'https://api.github.com/repos/xxmelar-ksaxx/AsterPDF-app/releases/latest') throw new Error('Unexpected network request');
+      if (url !== 'https://api.github.com/repos/xxmelar-ksaxx/AsterPDF-app/releases?per_page=100&page=1') throw new Error('Unexpected network request');
       global.__updateCalls++;
       if (global.__holdUpdate) await new Promise((resolve) => { global.__finishUpdate = resolve; });
       if (global.__updateMode === 'offline') throw new TypeError('fetch failed');
-      return new Response(JSON.stringify(global.__updateMode === 'current' ? ${JSON.stringify(release(version))} : ${JSON.stringify(release('99.0.0'))}), { status: 200 });
+      return new Response(JSON.stringify([global.__updateMode === 'current' ? ${JSON.stringify(release(version))} : ${JSON.stringify(release('99.0.0'))}]), { status: 200 });
     };
     require(${JSON.stringify(path.join(project, 'electron/main.cjs'))});
   `);
@@ -87,6 +90,8 @@ async function main() {
     assert.equal(await update.evaluate((element) => element.previousElementSibling?.textContent.includes('Settings')), true);
     await update.click();
     await window.getByRole('progressbar', { name: 'Update download progress' }).waitFor();
+    assert.equal((await electron.evaluate(() => global.__selectedUpdateTarget)).feedUrl,
+      'https://github.com/xxmelar-ksaxx/AsterPDF-app/releases/download/v99.0.0/');
     await electron.evaluate(() => global.__updater.emit('download-progress', { percent: 42, transferred: 44_040_192, total: 104_857_600 }));
     await window.getByText('42% · 42.0 MB / 100.0 MB', { exact: true }).waitFor();
     if (process.env.ASTERPDF_UPDATES_PREVIEW) await window.screenshot({ path: process.env.ASTERPDF_UPDATES_PREVIEW });

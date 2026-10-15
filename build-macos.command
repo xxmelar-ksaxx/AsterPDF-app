@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
-if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
-  echo "Run this script on an Apple Silicon Mac."
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  echo "Run this script on a Mac. It builds Apple Silicon and Intel installers."
   exit 1
 fi
 command -v node >/dev/null || { echo "Node.js 20 or newer is required."; exit 1; }
@@ -12,8 +12,9 @@ if [[ -n "${APPLE_ID:-}" || -n "${APPLE_API_KEY:-}" || -n "${APPLE_KEYCHAIN_PROF
   npm run build:mac -- --config.mac.notarize=true
 else
   npm run build:mac -- --config.mac.notarize=false
-  echo "Unsigned local build. Set Apple signing and notarization credentials for a public release."
+  echo "Notarization was skipped. An installed signing identity may still have been used."
+  echo "Use Developer ID Application signing and notarization credentials for a public release."
 fi
 npm run checksum:mac
-echo "macOS DMG, ZIP, SHA-256 checksums and latest-mac.yml are in $(pwd)/release"
+echo "Apple Silicon (arm64) and Intel (x64) DMGs, ZIPs, SHA-256 checksums and shared latest-mac.yml are in $(pwd)/release"
 echo "Upload these release files together. In-app installation requires signed macOS builds."

@@ -14,8 +14,8 @@ Maintainer GitHub profile: https://github.com/xxmelar-ksaxx
 Contact name/email: enter your own details in the application form.
 
 Project description (ready to paste):
-AsterPDF is an open-source desktop PDF workspace for Windows and Apple Silicon
-Macs. It provides local PDF viewing, comments, page organization, text and image
+AsterPDF is an open-source desktop PDF workspace for Windows, Apple Silicon,
+and Intel Macs. It provides local PDF viewing, comments, page organization, text and image
 editing, signatures, compression, and conversion of DOCX and common image formats
 to PDF. Document processing runs locally. Windows distribution uses an Electron
 application packaged as an NSIS installer, published through GitHub Releases.

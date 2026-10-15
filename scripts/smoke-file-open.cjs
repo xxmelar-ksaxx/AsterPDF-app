@@ -19,8 +19,8 @@ async function main() {
   }
   const version = require('../package.json').version;
   const now = Date.now();
-  await fs.writeFile(path.join(temporary, 'updates.json'), JSON.stringify({ lastAttemptAt: now, lastCheckedAt: now,
-    release: { tag_name: `v${version}`, draft: false, prerelease: false, assets: [] } }));
+  await fs.writeFile(path.join(temporary, 'updates.json'), JSON.stringify({ cacheVersion: 2, platform: process.platform,
+    arch: process.arch, lastAttemptAt: now, lastCheckedAt: now, release: null }));
   const executablePath = process.env.ASTERPDF_SMOKE_PACKAGED === '1'
     ? path.join(project, 'release', 'win-unpacked', 'AsterPDF.exe') : require('electron');
   const baseArgs = process.env.ASTERPDF_SMOKE_PACKAGED === '1' ? [] : [project];

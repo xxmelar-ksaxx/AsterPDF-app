@@ -10,7 +10,7 @@ async function main() {
   const artifacts = platform === 'win'
     ? [`AsterPDF-${version}-Windows-x64-Setup.exe`]
     : platform === 'mac'
-      ? [`AsterPDF-${version}-macOS-arm64.dmg`, `AsterPDF-${version}-macOS-arm64.zip`]
+      ? ['arm64', 'x64'].flatMap((arch) => ['dmg', 'zip'].map((ext) => `AsterPDF-${version}-macOS-${arch}.${ext}`))
       : null;
   if (!artifacts) throw new Error('Usage: node scripts/write-checksums.cjs win|mac');
 
