@@ -43,6 +43,18 @@ The script creates an arm64 DMG installer and ZIP in `release/`, with a `.sha256
 
 The Windows installer built without a code signing certificate is also unsigned and may show a SmartScreen warning. Electron Builder can sign it when a Windows signing certificate is supplied to the build environment.
 
+### Code signing policy
+
+**Windows signing status: preparation for a SignPath Foundation application. No approval or production signing is configured yet.** Local Windows builds remain unsigned unless a signing provider is explicitly configured.
+
+The proposed signing team is [xxmelar-ksaxx](https://github.com/xxmelar-ksaxx) as author, reviewer, and release approver. Production signing will require explicit maintainer approval of a reviewed source revision. Signing rules will cover AsterPDF's own release executables and installer, with restrictions on product identity and version. Third-party binaries must retain their upstream identity.
+
+The manual **Windows build for signing review** GitHub Actions workflow builds from the checked-out source on a GitHub-hosted Windows runner, runs tests, and uploads clearly labeled unsigned artifacts with a build-origin record. It uses no signing credentials and does not publish releases. Run it from the Actions tab after pushing the workflow. See [application preparation](signpath-application.txt) for the application text and remaining setup. Actual signing must be integrated into packaging after the Foundation approves the project and supplies its configuration; the review workflow is not a signed release pipeline.
+
+**Privacy:** document processing stays local. Automatic update checks contact GitHub Releases approximately every 24 hours while running, including a launch when a check is due. Manual checks and user-requested update downloads also contact GitHub and its download infrastructure. Those services receive connection metadata such as IP addresses; AsterPDF does not send documents, comments, signature images, author settings, or local file paths. See [GitHub's privacy statement](https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement). There is currently no setting to disable automatic checks. This behavior must be disclosed during SignPath onboarding so any required installer disclosure or opt-out can be resolved before signing is activated.
+
+After approval and activation, this policy and the release/download pages will identify the signing provider and certificate publisher. Until then, no SignPath sponsorship or signature is claimed.
+
 Build outputs and checksum files stay under `release/`, which `.gitignore` excludes from the source repository. If distributing builds through GitHub, attach the installers and their matching `.sha256` files to a GitHub Release; they are not source-code commits. On macOS, verify a downloaded file with `shasum -a 256 -c <checksum-file>.sha256`. On Windows, compare `Get-FileHash <installer> -Algorithm SHA256` with the hash in its `.sha256` file.
 
 ### GitHub release files for in-app updates

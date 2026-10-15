@@ -1,0 +1,85 @@
+name: Windows build for signing review
+
+# Preparation for SignPath Foundation onboarding. This produces UNSIGNED
+# artifacts; production signing is enabled only after SignPath approval.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 30
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build Windows installer
+        run: npm run build:win
+
+      - name: Generate checksums
+        run: npm run checksum:win
+
+      - name: Record build origin
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Get-Content -Raw package.json | ConvertFrom-Json
+          $installer = "release/AsterPDF-$($package.version)-Windows-x64-Setup.exe"
+          if (!(Test-Path -LiteralPath $installer)) { throw 'Installer is missing' }
+          if (!(Test-Path -LiteralPath "$installer.blockmap")) { throw 'Blockmap is missing' }
+          if (!(Test-Path -LiteralPath 'release/latest.yml')) { throw 'Update metadata is missing' }
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'NotSigned') { throw "Unexpected signing state: $($signature.Status)" }
+          @{
+            project = 'AsterPDF'
+            version = $package.version
+            repository = $env:GITHUB_REPOSITORY
+            commit = $env:GITHUB_SHA
+            ref = $env:GITHUB_REF
+            run = "$env:GITHUB_SERVER_URL/$env:GITHUB_REPOSITORY/actions/runs/$env:GITHUB_RUN_ID"
+            installer = [System.IO.Path]::GetFileName($installer)
+            sha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+            signing = 'unsigned; for SignPath onboarding review only'
+          } | ConvertTo-Json | Set-Content -Encoding utf8 release/build-origin.json
+          @"
+          ## Unsigned Windows build
+          Version: $($package.version)
+          Commit: $env:GITHUB_SHA
+
+          Download the workflow artifact for SignPath onboarding. Signing is not configured yet.
+          This workflow does not create or publish a GitHub release.
+          "@ >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload unsigned build for review
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: AsterPDF-Windows-UNSIGNED-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            release/*-Windows-x64-Setup.exe
+            release/*-Windows-x64-Setup.exe.sha256
+            release/*-Windows-x64-Setup.exe.blockmap
+            release/latest.yml
+            release/build-origin.json

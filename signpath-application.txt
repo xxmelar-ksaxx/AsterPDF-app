@@ -1,0 +1,76 @@
+AsterPDF — SignPath Foundation application preparation
+=====================================================
+
+Status: prepared locally; application has NOT been submitted or approved.
+Apply at https://signpath.org/apply
+
+Project name: AsterPDF
+Repository: https://github.com/xxmelar-ksaxx/AsterPDF-app
+Description/download page: https://github.com/xxmelar-ksaxx/AsterPDF-app#readme
+Releases: https://github.com/xxmelar-ksaxx/AsterPDF-app/releases
+License: MIT
+License URL: https://github.com/xxmelar-ksaxx/AsterPDF-app/blob/main/LICENSE
+Maintainer GitHub profile: https://github.com/xxmelar-ksaxx
+Contact name/email: enter your own details in the application form.
+
+Project description (ready to paste):
+AsterPDF is an open-source desktop PDF workspace for Windows and Apple Silicon
+Macs. It provides local PDF viewing, comments, page organization, text and image
+editing, signatures, compression, and conversion of DOCX and common image formats
+to PDF. Document processing runs locally. Windows distribution uses an Electron
+application packaged as an NSIS installer, published through GitHub Releases.
+
+Signing request (ready to paste):
+We would like to apply for SignPath Foundation Windows code signing for AsterPDF.
+Our public repository uses the MIT license and has downloadable Windows releases.
+We are preparing a GitHub-hosted Windows build workflow so builds can be traced
+to their source revision. Please advise on onboarding and the supported signing
+sequence for electron-builder 26 NSIS builds: the branded application executable,
+the generated uninstaller, and the final installer. Update metadata and checksums
+must describe the final signed installer. We intend to require maintainer approval
+for release signing and keep third-party binaries outside our project's signing
+rules. Please also review our update-network behavior described below.
+
+Network behavior to disclose:
+PDFs, document content, comments, signatures, and local filenames are not uploaded.
+The application automatically checks GitHub Releases roughly every 24 hours while
+running, including at startup when due. It also supports manual update checks and
+user-initiated update downloads. GitHub and its download infrastructure receive
+normal connection metadata, including the user's IP address. There is currently
+no in-app switch to disable automatic update checks. Confirm with SignPath what
+installer disclosure/consent or opt-out changes they require before approval.
+
+Before applying:
+- Push the prepared workflow and README policy to the public repository.
+- Confirm the license URL above uses the repository's actual default branch.
+- Run Actions > Windows build for signing review > Run workflow from the reviewed
+  branch, and retain the successful run URL. This workflow only builds UNSIGNED
+  artifacts; it does not submit anything to SignPath or publish a release.
+- Enable MFA for your GitHub and SignPath accounts.
+- Confirm the proposed team roles in the README and review all bundled dependency
+  and asset licenses. The MIT project license is not a complete dependency audit.
+- Supply accurate project adoption/reputation information if requested. Approval
+  is decided by SignPath; the project being open source does not guarantee it.
+
+After approval:
+- Install/configure SignPath's GitHub integration for this repository.
+- Obtain the organization ID, project slug, signing-policy slug, and artifact
+  configuration(s). Store the submitter API token in GitHub Actions secrets as
+  SIGNPATH_API_TOKEN; never paste it into source, this file, or a chat message.
+- Configure approved release sources and manual release approval in SignPath.
+- Confirm how the Electron application and NSIS uninstaller/installer will be
+  signed. Signing only the final installer does not sign the executable inside.
+- Integrate signing during packaging, then generate/verify latest.yml, blockmap,
+  and SHA-256 checksums against the final signed installer. Do not sign a finished
+  installer and publish stale metadata from the unsigned build.
+- Check the actual certificate publisher subject before configuring the Windows
+  updater's publisher verification. Do not guess it from the project name.
+- Update the README status and add the SignPath attribution after activation;
+  link the Code signing policy from the website and release/download pages.
+- Verify signatures on the app, uninstaller and installer, and test an update
+  from an older release before distributing the first signed release.
+
+References:
+https://signpath.org/terms
+https://docs.signpath.io/trusted-build-systems/github
+https://docs.signpath.io/artifact-configuration/
