@@ -4,6 +4,7 @@ An offline PDF workspace for Windows and Apple Silicon Macs. It opens PDFs, DOCX
 
 ## Features
 
+- Open PDFs from Finder or Explorer using **Open With → AsterPDF**. A request launches AsterPDF or restores its existing window. Requests wait for the interface and any active save; switching documents uses the existing unsaved-changes confirmation, including text currently being edited inline. Opening the same path again keeps the current edits in place.
 - Open a local PDF, DOCX, PNG, JPEG, or WebP file with the file picker or drag and drop it into the window. DOCX conversion uses a bundled browser renderer and Electron PDF printing; it does not require Word, LibreOffice, or a network connection. Text in a converted DOCX remains searchable.
 - Add more PDFs, DOCX files, and images to the open PDF to make one document. Append them or insert them after a chosen page.
 - Reorder pages by dragging, or use the move buttons. Select several pages to move, rotate, duplicate, or delete together. These page changes update the preview immediately and stay in memory until **Save PDF** is clicked. Undo and redo up to 20 edits within a 128 MB history limit.
@@ -55,6 +56,14 @@ Keep generated filenames and metadata unchanged. Upload the complete set to a dr
 
 macOS in-app installation requires a properly signed app and ZIP, with the same signing identity across releases; use notarized builds for public distribution. The DMG alone is insufficient. Windows uses the bundled NSIS installer. See [electron-builder v26 auto-update requirements](https://www.electron.build/v26/docs/features/auto-update/). No publishing or signing credentials are embedded in the app.
 
+### Registering PDF support with the operating system
+
+Install the rebuilt Windows installer to register AsterPDF in **Open With** and **Default apps**. The NSIS installer adds AsterPDF's PDF handler and removes its registrations during uninstall; it does not replace the user's chosen default PDF application. Running the unpacked EXE alone does not install these registrations.
+
+On macOS, rebuild with `build-macos.command`, copy **AsterPDF.app** from the DMG into **Applications**, and open it once. The app bundle declares PDF editing support so Finder can offer **Open With → AsterPDF**. Existing app bundles need to be replaced with the rebuilt version. Signing/notarization is a separate requirement for Gatekeeper approval.
+
+PDF is the registered file association. DOCX and image imports remain available inside the app. AsterPDF uses one document window; opening a different PDF switches that window after any unsaved-changes decision. Native file-open requests are queued before startup, and macOS can recreate a document window after the previous one was closed.
+
 ## Development and verification
 
 ```bash
@@ -67,6 +76,8 @@ npm run desktop
 `npm run desktop` starts the built app. During development, run `npm run dev` in one terminal, then start Electron with `ASTERPDF_DEV_URL=http://127.0.0.1:5173` in another terminal. On Windows PowerShell set the variable with `$env:ASTERPDF_DEV_URL='http://127.0.0.1:5173'` before `npm run desktop`.
 
 `npm run smoke` exercises the reader, recent-file previews, automatic saves, failed-save retry, and PDF annotations. `npm run smoke:editor` checks DOCX and image conversion, searchable DOCX text, page edits, signatures, and offline compression. `npm run smoke:updates` checks update progress, retry, and save-before-install with mocked network/installer operations and real PDF writes, including canceled Save As and failed writes. It never installs an update. `ASTERPDF_SMOKE_PACKAGED=1` runs the reader smoke test against `release/win-unpacked/AsterPDF.exe` after a Windows build.
+
+`npm run smoke:file-open` checks a PDF passed on startup, a real second process forwarding another PDF, spaces and Arabic filenames, window restoration, unsaved inline edits, canceled/accepted document switches, missing-file recovery, and queuing during Save As. It also exercises the macOS `open-file` listener and window recreation through simulated Electron events. On Windows, set `ASTERPDF_SMOKE_PACKAGED=1` to test the packaged EXE. Native Finder registration still needs verification on a Mac.
 
 ## Implementation
 

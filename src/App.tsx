@@ -24,6 +24,7 @@ import FontPicker, { type ColorCommand, type FontCommand, type FontSelection, ty
 import ColorPicker from './components/ColorPicker';
 import UpdateSettings from './components/UpdateSettings';
 import { useUpdates } from './updates';
+import { finishInlineEdits } from './finish-inline-edit';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
@@ -84,6 +85,9 @@ function commentLabel(comment: PdfComment): string {
 
 export default function App() {
   const updates = useUpdates();
+  const [externalOpen, setExternalOpen] = useState<{ id: string; path: string } | null>(null);
+  const externalOpeningRef = useRef(false);
+  useEffect(() => window.aster.onExternalOpen(setExternalOpen), []);
   const [preparingInstall, setPreparingInstall] = useState(false);
   const [installError, setInstallError] = useState('');
   const installLockRef = useRef(false);
@@ -241,8 +245,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.aster.setDirty(drafts.length > 0 || editingDirty || placedSignatures.length > 0 || Boolean(source?.needsSave));
-  }, [drafts, editingDirty, placedSignatures.length, source?.needsSave]);
+    window.aster.setDirty(drafts.length > 0 || editingDirty || placedSignatures.length > 0 || Boolean(source?.needsSave) || Boolean(pendingPoint && noteText.trim()));
+  }, [drafts, editingDirty, placedSignatures.length, source?.needsSave, pendingPoint, noteText]);
 
   useEffect(() => {
     const element = viewerRef.current;
@@ -534,6 +538,29 @@ export default function App() {
       if (opened) await installOpened(opened);
     } catch (cause) { setError(messageOf(cause)); }
   }, [installOpened]);
+
+  useEffect(() => {
+    if (!externalOpen || externalOpeningRef.current || busy || preparingInstall || installing ||
+      signatureOpen || compressionOpen || discardRequestId || pendingSignatureRemoval || pendingSignatureDiscard) return;
+    externalOpeningRef.current = true;
+    const request = externalOpen;
+    void (async () => {
+      try {
+        // Reopening the same file should focus the window without resetting edits.
+        if (source?.path === request.path) return;
+        setSettingsOpen(false);
+        await Promise.resolve();
+        await finishInlineEdits();
+        await openPath(request.path);
+      } catch (cause) { setError(`Could not open file: ${messageOf(cause)}`); }
+      finally {
+        setExternalOpen(null);
+        externalOpeningRef.current = false;
+        window.aster.completeExternalOpen(request.id);
+      }
+    })();
+  }, [externalOpen, busy, preparingInstall, installing, signatureOpen, compressionOpen, discardRequestId,
+    pendingSignatureRemoval, pendingSignatureDiscard, source?.path, openPath]);
 
   const buildPendingPdf = useCallback(async (additionalNotes: NewNote[] = []): Promise<{ bytes: Uint8Array; base: Uint8Array; objects: OverlayObject[] }> => {
     if (!source) throw new Error('Open a PDF first.');

@@ -17,6 +17,7 @@
     "smoke:page-refresh": "node scripts/smoke-page-refresh.cjs",
     "smoke:arabic-source": "node scripts/smoke-arabic-source.cjs",
     "smoke:updates": "node scripts/smoke-updates.cjs",
+    "smoke:file-open": "node scripts/smoke-file-open.cjs",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "build:win": "npm run build && electron-builder --win nsis --x64 --publish never",
@@ -79,6 +80,7 @@
       "artifactName": "AsterPDF-${version}-Windows-${arch}-Setup.${ext}"
     },
     "nsis": {
+      "include": "assets/file-associations.nsh",
       "oneClick": false,
       "perMachine": false,
       "allowToChangeInstallationDirectory": true,
@@ -86,6 +88,7 @@
       "createStartMenuShortcut": true
     },
     "mac": {
+      "fileAssociations": [{ "ext": "pdf", "name": "PDF document", "mimeType": "application/pdf", "role": "Editor", "rank": "Alternate" }],
       "target": [
         "dmg",
         "zip"

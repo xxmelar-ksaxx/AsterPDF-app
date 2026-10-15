@@ -7,6 +7,7 @@ const { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOver
 const { listInstalledFonts, getInstalledFont } = require('./installed-fonts.cjs');
 const { createUpdateService } = require('./updates.cjs');
 const { createUpdateInstaller } = require('./update-installer.cjs');
+const { pdfPathsFromArguments, createFileOpenQueue } = require('./file-open.cjs');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'aster', privileges: { standard: true, secure: true, supportFetchAPI: true } }
@@ -31,6 +32,33 @@ let closePromptRunning = false;
 let quitRequested = false;
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const SUPPORTED = new Set(['.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp']);
+
+const fileOpenQueue = createFileOpenQueue({ send: (request) => mainWindow.webContents.send('pdf:external-open', request) });
+function focusDocumentWindow() {
+  if (!app.isReady() || !recentStore) return;
+  if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show(); mainWindow.focus();
+}
+function enqueueExternalPdf(filePath) {
+  if (updateInstaller?.getState().phase === 'installing') return;
+  // Create a replacement window before enqueueing, if the Mac app has no window.
+  focusDocumentWindow();
+  fileOpenQueue.enqueue(filePath);
+}
+// Finder can send open-file before app.ready, including the first launch.
+app.on('open-file', (event, filePath) => { event.preventDefault(); enqueueExternalPdf(filePath); });
+const launchFiles = pdfPathsFromArguments(process.argv, { packaged: app.isPackaged, cwd: process.cwd() });
+const primaryInstance = app.requestSingleInstanceLock({ pdfPaths: launchFiles });
+if (!primaryInstance) app.quit();
+else {
+  launchFiles.forEach((filePath) => fileOpenQueue.enqueue(filePath));
+  app.on('second-instance', (_event, argv, cwd, data) => {
+    const files = Array.isArray(data?.pdfPaths) ? data.pdfPaths : pdfPathsFromArguments(argv, { packaged: app.isPackaged, cwd });
+    focusDocumentWindow();
+    files.forEach(enqueueExternalPdf);
+  });
+}
 
 function appOrigin(event) {
   return Boolean(mainWindow && event.sender === mainWindow.webContents &&
@@ -205,6 +233,10 @@ async function finishCompressedSave(rawBytes, token, expectedPath) {
 }
 
 function createWindow() {
+  fileOpenQueue.reset();
+  currentPath = null;
+  dirty = false;
+  preparedCompressedSave = null;
   closeApproved = false;
   closePromptRunning = false;
   mainWindow = new BrowserWindow({
@@ -238,10 +270,15 @@ function createWindow() {
     }).catch(() => { closePromptRunning = false; quitRequested = false; });
   });
   mainWindow.on('closed', () => {
+    fileOpenQueue.reset();
     if (discardPrompt) { discardPrompt.resolve(false); discardPrompt = null; }
     mainWindow = null;
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  mainWindow.webContents.on('did-start-navigation', (_event, _url, inPlace, isMainFrame) => {
+    if (isMainFrame && !inPlace) fileOpenQueue.reset();
+  });
+  mainWindow.webContents.on('render-process-gone', () => fileOpenQueue.reset());
   mainWindow.webContents.on('will-navigate', (event) => event.preventDefault());
   if (process.env.ASTERPDF_DEV_URL) mainWindow.loadURL(process.env.ASTERPDF_DEV_URL);
   else mainWindow.loadURL('aster://app/index.html');
@@ -276,6 +313,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!primaryInstance) return;
   recentStore = createRecentStore(app.getPath('userData'));
   updateInstaller = createUpdateInstaller({ updater: require('electron-updater').autoUpdater,
     isPackaged: app.isPackaged, onChange: publishUpdate });
@@ -310,6 +348,8 @@ app.whenReady().then(() => {
     prompt.resolve(discard === true);
   });
   ipcMain.handle('pdf:open-dialog', (event) => { requireApp(event); return selectFiles(); });
+  ipcMain.on('pdf:external-ready', (event, ready) => { if (appOrigin(event)) fileOpenQueue.setReady(ready === true); });
+  ipcMain.on('pdf:external-complete', (event, id) => { if (appOrigin(event)) fileOpenQueue.complete(id); });
   ipcMain.handle('pdf:add-dialog', (event) => { requireApp(event); return selectFiles(true); });
   ipcMain.handle('pdf:open-path', async (event, filePath) => {
     requireApp(event);

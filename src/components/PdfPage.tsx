@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { MessageSquare } from 'lucide-react';
+import { onFinishInlineEdit } from '../finish-inline-edit';
 import type { PDFDocumentProxy, PageViewport } from 'pdfjs-dist';
 import type { PdfComment } from '../pdf/comments';
 import type { PlacedSignature, SavedSignature } from '../signatures/library';
@@ -106,7 +107,7 @@ export default function PdfPage({
     const original = originalText.find((object) => object.index === current.index);
     const colorChanged = original && current.color.some((value, index) => value !== original.color[index]);
     if (commit && (current.value !== current.text || current.fontChoice !== 'original' || colorChanged))
-      void onCommitOriginalText(sourcePageNumber - 1, current.index, current.text, current.value, current.fontChoice,
+      return onCommitOriginalText(sourcePageNumber - 1, current.index, current.text, current.value, current.fontChoice,
         colorChanged ? current.color.slice(0, 3) : undefined);
   };
   useLayoutEffect(() => {
@@ -128,7 +129,8 @@ export default function PdfPage({
       finishOriginalText(true);
     };
     window.document.addEventListener('pointerdown', outside);
-    return () => window.document.removeEventListener('pointerdown', outside);
+    const unsubscribe = onFinishInlineEdit(() => finishOriginalText(true));
+    return () => { window.document.removeEventListener('pointerdown', outside); unsubscribe(); };
   }, [editingOriginal]);
 
   const setSheet = useCallback((element: HTMLDivElement | null) => {

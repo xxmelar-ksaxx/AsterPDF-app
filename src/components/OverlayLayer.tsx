@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
+import { onFinishInlineEdit } from '../finish-inline-edit';
 import { Trash2 } from 'lucide-react';
 import { textSize, type OverlayKind, type OverlayObject } from '../pdf/overlays';
 import TextFrame from './TextFrame';
@@ -90,7 +91,8 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, color
       finishText(true);
     };
     document.addEventListener('pointerdown', outside);
-    return () => document.removeEventListener('pointerdown', outside);
+    const unsubscribe = onFinishInlineEdit(() => finishText(true));
+    return () => { document.removeEventListener('pointerdown', outside); unsubscribe(); };
   }, [editing]);
   useLayoutEffect(() => {
     const current = editingRef.current;

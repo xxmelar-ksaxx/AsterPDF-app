@@ -6,6 +6,8 @@ declare global {
       openDialog(): Promise<OpenedFile | null>;
       addDialog(): Promise<OpenedFile[] | null>;
       openPath(path: string): Promise<OpenedFile | null>;
+      onExternalOpen(handler: (request: { id: string; path: string }) => void): () => void;
+      completeExternalOpen(id: string): void;
       pathForFile(file: File): string;
       save(bytes: Uint8Array, saveAs: boolean, expectedPath: string): Promise<{ path: string; name: string } | null>;
       listOriginalText(bytes: Uint8Array, pageIndex: number): Promise<OriginalPdfText[]>;
