@@ -15,4 +15,5 @@ else
   echo "Unsigned local build. Set Apple signing and notarization credentials for a public release."
 fi
 npm run checksum:mac
-echo "macOS DMG, ZIP, and SHA-256 checksums are in $(pwd)/release"
+echo "macOS DMG, ZIP, SHA-256 checksums and latest-mac.yml are in $(pwd)/release"
+echo "Upload these release files together. In-app installation requires signed macOS builds."

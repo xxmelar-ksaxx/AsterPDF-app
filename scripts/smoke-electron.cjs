@@ -15,12 +15,13 @@ async function main() {
     page.drawText(`AsterPDF page ${number}`, { x: 80, y: 700, size: 22, font });
   }
   await fs.writeFile(fixture, await sample.save());
-  const executablePath = process.env.ASTERPDF_SMOKE_PACKAGED === '1'
+  const executablePath = process.env.ASTERPDF_SMOKE_EXECUTABLE || (process.env.ASTERPDF_SMOKE_PACKAGED === '1'
     ? path.join(project, 'release', 'win-unpacked', 'AsterPDF.exe')
-    : require('electron');
+    : require('electron'));
   const electron = await _electron.launch({
     executablePath,
-    args: process.env.ASTERPDF_SMOKE_PACKAGED === '1' ? [] : [project],
+    args: process.env.ASTERPDF_SMOKE_PACKAGED === '1'
+      ? [`--user-data-dir=${temporary}`] : [project, `--user-data-dir=${temporary}`],
     env: { ...process.env, APPDATA: temporary, LOCALAPPDATA: temporary },
     timeout: 60000
   });
@@ -35,10 +36,30 @@ async function main() {
     await electron.evaluate(({ dialog }, filePath) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [filePath] });
     }, fixture);
-    await window.getByRole('button', { name: 'Open PDF', exact: true }).first().click();
+    await window.getByRole('button', { name: 'Open a file', exact: true }).first().click();
     await window.locator('.page-sheet').last().waitFor({ timeout: 30000 });
     if (await window.locator('.page-sheet').count() !== 24) throw new Error('Continuous page flow did not mount all pages.');
     await window.locator('.page-sheet[data-page-number="1"] canvas').waitFor({ state: 'visible', timeout: 30000 });
+    const originalViewerWidth = await window.locator('.viewer-column').evaluate((element) => element.getBoundingClientRect().width);
+    await window.getByRole('button', { name: 'Hide sidebar' }).click();
+    await window.waitForFunction((originalWidth) => document.querySelector('.viewer-column').getBoundingClientRect().width > originalWidth + 200, originalViewerWidth);
+    await window.getByRole('button', { name: 'Pages', exact: true }).click();
+    await window.getByRole('heading', { name: 'Pages' }).waitFor();
+    await window.getByRole('button', { name: 'Hide sidebar' }).click();
+    await window.getByRole('button', { name: 'Comments', exact: true }).click();
+    await window.getByRole('heading', { name: 'Comments' }).waitFor();
+    await window.getByRole('button', { name: 'Hide sidebar' }).click();
+    await window.getByRole('button', { name: 'Comment', exact: true }).click();
+    await window.getByRole('button', { name: 'Hide sidebar' }).waitFor();
+    await window.getByRole('button', { name: 'Click on page…' }).click();
+    await window.getByRole('button', { name: 'Sign tool' }).click();
+    await window.getByRole('button', { name: 'Sign', exact: true }).waitFor();
+    if (await window.locator('.sidebar-content').count()) throw new Error('Sign tool did not return to the compact rail.');
+    await window.getByRole('button', { name: 'Compress tool' }).click();
+    await window.getByRole('button', { name: 'Compress', exact: true }).waitFor();
+    await window.getByRole('button', { name: 'Add files tool' }).click();
+    await window.getByRole('button', { name: 'Add files', exact: true }).waitFor();
+    await window.getByRole('button', { name: 'Comments', exact: true }).click();
     const distantCanvasWidth = await window.locator('.page-sheet[data-page-number="24"] canvas').evaluate((canvas) => canvas.width);
     if (distantCanvasWidth !== 0) throw new Error('A distant page rendered before it entered the viewport buffer.');
     await window.evaluate(() => {
@@ -71,7 +92,7 @@ async function main() {
       };
     });
     const addComment = async (text, x, y) => {
-      await window.getByRole('button', { name: 'Add comment', exact: true }).click();
+      await window.getByRole('button', { name: 'Comment', exact: true }).click();
       await window.locator('.page-sheet[data-page-number="3"] .page-stage').scrollIntoViewIfNeeded();
       await window.locator('.page-sheet[data-page-number="3"] canvas').waitFor({ state: 'visible', timeout: 30000 });
       await window.locator('.page-sheet[data-page-number="3"] .page-stage').click({ position: { x, y } });
@@ -108,7 +129,7 @@ async function main() {
     await window.locator('.unsaved-dot').waitFor({ state: 'visible', timeout: 10000 });
     const afterFailure = await PDFDocument.load(await fs.readFile(fixture));
     if (afterFailure.getPages()[2].node.Annots()?.size() !== 2) throw new Error('A failed save changed the original PDF.');
-    await window.getByRole('button', { name: 'Save', exact: true }).click();
+    await window.getByRole('button', { name: 'Save PDF', exact: true }).click();
     await window.waitForFunction(() => {
       const cards = [...document.querySelectorAll('.comment-card')];
       return cards.length === 3 && cards.every((item) => !item.textContent?.includes('Unsaved') && !item.textContent?.includes('Saving'))
@@ -120,7 +141,7 @@ async function main() {
     await window.getByRole('button', { name: 'Pages', exact: true }).click();
     await window.getByRole('button', { name: 'Page 1', exact: true }).click();
     await window.waitForFunction(() => document.querySelector('.page-control strong')?.textContent === '1', null, { timeout: 30000 });
-    await window.getByRole('button', { name: 'Comments', exact: false }).first().click();
+    await window.getByRole('button', { name: 'Comments', exact: true }).click();
     await window.locator('.comment-card').first().click();
     await window.waitForFunction(() => document.querySelector('.page-control strong')?.textContent === '3', null, { timeout: 30000 });
     await window.screenshot({ path: path.join(project, 'release', 'smoke.png'), fullPage: true });
@@ -138,9 +159,40 @@ async function main() {
     await window.screenshot({ path: path.join(project, 'release', 'smoke-recent.png'), fullPage: true });
     await recent.click();
     await window.locator('.page-sheet[data-page-number="1"] canvas').waitFor({ state: 'visible', timeout: 30000 });
-    process.stdout.write('Recent PDF preview and reopen, automatic saves, queued comments, failed-save retry, and PDF annotations passed.\n');
+    await window.getByRole('button', { name: 'Pages', exact: true }).click();
+    await window.getByRole('button', { name: 'Rotate right' }).click();
+    await window.locator('.unsaved-dot').waitFor({ state: 'visible' });
+    await window.getByRole('button', { name: 'Open file' }).click();
+    await window.getByRole('alertdialog', { name: 'Discard unsaved changes?' }).waitFor();
+    if (!await window.getByRole('button', { name: 'Keep editing' }).evaluate((button) => document.activeElement === button)) throw new Error('The safe discard choice did not receive focus.');
+    await window.keyboard.press('Shift+Tab');
+    if (!await window.getByRole('button', { name: 'Discard changes' }).evaluate((button) => document.activeElement === button)) throw new Error('Keyboard focus escaped the discard dialog.');
+    await window.keyboard.press('Tab');
+    await window.screenshot({ path: path.join(project, 'release', 'smoke-discard.png'), fullPage: true });
+    await window.getByRole('button', { name: 'Keep editing' }).click();
+    await window.getByRole('alertdialog', { name: 'Discard unsaved changes?' }).waitFor({ state: 'hidden' });
+    await window.locator('.unsaved-dot').waitFor({ state: 'visible' });
+    await window.getByRole('button', { name: 'Open file' }).click();
+    await window.getByRole('button', { name: 'Discard changes' }).click();
+    await window.locator('.unsaved-dot').waitFor({ state: 'hidden', timeout: 30000 });
+    await window.locator('.page-sheet[data-page-number="1"] canvas').waitFor({ state: 'visible', timeout: 30000 });
+    await window.getByRole('button', { name: 'Pages', exact: true }).click();
+    await window.getByRole('button', { name: 'Rotate right' }).click();
+    await window.locator('.unsaved-dot').waitFor({ state: 'visible' });
+    await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await window.getByRole('alertdialog', { name: 'Discard unsaved changes?' }).waitFor();
+    await window.getByRole('button', { name: 'Keep editing' }).click();
+    await window.locator('.unsaved-dot').waitFor({ state: 'visible' });
+    await electron.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].close());
+    await window.getByRole('alertdialog', { name: 'Discard unsaved changes?' }).waitFor();
+    const closed = window.waitForEvent('close');
+    await window.getByRole('button', { name: 'Discard changes' }).click().catch((error) => {
+      if (!/Target page, context or browser has been closed/.test(String(error))) throw error;
+    });
+    await closed;
+    process.stdout.write('Recent PDF preview, automatic saves, comments, and unsaved-change decisions passed.\n');
   } finally {
-    await electron.close();
+    await electron.close().catch(() => {});
     await fs.rm(temporary, { recursive: true, force: true });
   }
 }

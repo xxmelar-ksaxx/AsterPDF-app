@@ -7,5 +7,6 @@ call npm ci || exit /b 1
 call npm run build:win || exit /b 1
 call npm run checksum:win || exit /b 1
 echo.
-echo Windows installer and SHA-256 checksum are in %~dp0release
+echo Windows installer, SHA-256 checksum, latest.yml and blockmap are in %~dp0release
+echo Upload these release files together so in-app updates can download and install.
 endlocal
