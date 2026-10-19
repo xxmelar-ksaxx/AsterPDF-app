@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search, Star } from 'lucide-react';
 import { createPortal } from 'react-dom';
+import type { TextAppearance } from '../pdf/overlays';
 
 export type InstalledFont = { id: string; family: string; style: string; postscriptName: string };
-export type FontSelection = { pageId: string; index: number; fontName: string; choice: string; overlayId?: string; fontSize?: number; color?: string };
+export type FontSelection = { pageId: string; index: number; fontName: string; choice: string; overlayId?: string; fontSize?: number; color?: string; appearance?: TextAppearance };
 export type ColorCommand = { pageId: string; index: number; color: string; sequence: number };
 export type FontCommand = { pageId: string; index: number; choice: string; sequence: number; overlayId?: string };
 

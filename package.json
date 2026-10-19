@@ -13,6 +13,7 @@
     "smoke": "node scripts/smoke-electron.cjs",
     "smoke:editor": "node scripts/smoke-editor.cjs",
     "smoke:draw": "node scripts/smoke-draw.cjs",
+    "smoke:draw-workspace": "node scripts/smoke-draw-workspace.cjs",
     "smoke:font": "node scripts/smoke-font.cjs",
     "smoke:page-refresh": "node scripts/smoke-page-refresh.cjs",
     "smoke:arabic-source": "node scripts/smoke-arabic-source.cjs",

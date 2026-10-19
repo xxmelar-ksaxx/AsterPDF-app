@@ -132,8 +132,8 @@ function createShapedText(pdfium, document, page, original, objectIndex, replace
   }
 }
 
-function addShapedText(pdfium, document, page, text, fontBytes, size, matrix, color) {
-  return writeShapedLine(pdfium, document, page, text, fontBytes, size, matrix, [...color, 255], pdfium.FPDFPage_CountObjects(page), 0);
+function addShapedText(pdfium, document, page, text, fontBytes, size, matrix, color, bold = false) {
+  return writeShapedLine(pdfium, document, page, text, fontBytes, size, matrix, [...color, 255], pdfium.FPDFPage_CountObjects(page), bold ? 2 : 0);
 }
 
 function writeShapedLine(pdfium, document, page, text, fontBytes, size, matrix, color, insertAt, renderMode) {
@@ -195,6 +195,10 @@ function writeShapedLine(pdfium, document, page, text, fontBytes, size, matrix, 
       if (!object || !pdfium.FPDFText_SetCharcodes(object, codesPtr, 1) || !pdfium.FPDFPageObj_SetMatrix(object, matrixPtr))
         throw new Error('Could not position shaped Arabic text.');
       pdfium.FPDFPageObj_SetFillColor(object, ...color);
+      if (renderMode === 2) {
+        pdfium.FPDFPageObj_SetStrokeColor(object, ...color);
+        pdfium.FPDFPageObj_SetStrokeWidth(object, size * .025);
+      }
       if (renderMode >= 0) pdfium.FPDFTextObj_SetTextRenderMode(object, renderMode);
       markObject(object, { id });
       if (!pdfium.FPDFPage_InsertObjectAtIndex(page, object, insertAt + index + 1)) throw new Error('Could not insert shaped Arabic text.');

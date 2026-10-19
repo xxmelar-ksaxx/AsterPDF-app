@@ -3,12 +3,14 @@ import {
   ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
   FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X,
   ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical, TriangleAlert,
-  Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus
+  Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus, PanelRight,
+  Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, Eye, EyeOff
 } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { addTextNotes, readPageComments, type NewNote, type PdfComment } from './pdf/comments';
+import { addTextNotes, changeComments, readPageComments, type CommentChange, type CommentOverride, type NewNote, type PdfComment } from './pdf/comments';
+import { prepareCommentSave } from './pdf/comment-save';
 import type { OpenedPdf, RecentPdf } from './types';
 import type { OpenedFile } from './types';
 import PdfPage, { pageScale, type PageSize, type PendingPoint, type Zoom } from './components/PdfPage';
@@ -18,17 +20,23 @@ import { appendPdfs, composePagePlan, compressPdf, embedSignatures, type Compres
 import { changePagePlan, initialPagePlan, remapPageSelection, type PlannedPage } from './pdf/page-plan';
 import { cropSignature, importSignature, loadSignatures, storeSignatures, type PlacedSignature, type SavedSignature, type SignatureStroke } from './signatures/library';
 import { signatureDrawFromViewport } from './signatures/placement';
-import { attachOverlayPackage, embedOverlays, readOverlayPackage, textSize, type OverlayObject } from './pdf/overlays';
+import { attachOverlayPackage, embedOverlays, isDrawingObject, readOverlayPackage, textSize, type OverlayObject, type TextAppearance } from './pdf/overlays';
 import type { OverlayTool, PendingImage } from './components/OverlayLayer';
 import FontPicker, { type ColorCommand, type FontCommand, type FontSelection, type InstalledFont } from './components/FontPicker';
 import ColorPicker from './components/ColorPicker';
+import DrawInspector, { layerName, NumberField, type DrawStyle } from './components/DrawInspector';
+import SmartJustifyIcon from './components/SmartJustifyIcon';
+import { prepareTextForExport, textOverlaySize } from './components/text-overlay-size';
+import { resolveTextFont } from './components/OriginalTextEditor';
 import UpdateSettings from './components/UpdateSettings';
+import SaveFeedback, { paintSaveFeedback } from './components/SaveFeedback';
+import CommentCard from './components/CommentCard';
 import { useUpdates } from './updates';
 import { finishInlineEdits } from './finish-inline-edit';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
-type SidebarTab = 'comments' | 'pages';
+type SidebarTab = 'comments' | 'pages' | 'draw';
 type ActiveTool = SidebarTab | 'edit' | 'draw' | 'sign' | 'compress' | 'files';
 const DEFAULT_PAGE_SIZE: PageSize = { width: 612, height: 792 };
 const EMPTY_COMMENTS: PdfComment[] = [];
@@ -68,15 +76,10 @@ function originalTextError(error: unknown): string {
 
 function displayDate(value?: string): string {
   if (!value) return '';
-  if (value.startsWith('D:') && value.length >= 10) {
-    const year = Number(value.slice(2, 6));
-    const month = Number(value.slice(6, 8)) - 1;
-    const day = Number(value.slice(8, 10));
-    const parsed = new Date(year, month, day);
-    return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleDateString();
-  }
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleDateString();
+  const parsed = value.startsWith('D:') ? pdfjs.PDFDateString.toDateObject(value) : new Date(value);
+  return !parsed || Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleString(undefined, {
+    year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit'
+  });
 }
 
 function commentLabel(comment: PdfComment): string {
@@ -100,7 +103,12 @@ export default function App() {
     window.addEventListener('keydown', blockKeys, true);
     return () => window.removeEventListener('keydown', blockKeys, true);
   }, [preparingInstall, installing]);
-  const [source, setSource] = useState<OpenedPdf | null>(null);
+  const [source, setSourceState] = useState<OpenedPdf | null>(null);
+  const [previewSource, setPreviewSource] = useState<OpenedPdf | null>(null);
+  const setSource = useCallback((next: OpenedPdf | null) => {
+    setSourceState(next); setPreviewSource(next);
+    setCommentOverrides({});
+  }, []);
   const [recentPdfs, setRecentPdfs] = useState<RecentPdf[]>([]);
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
   const documentTasksRef = useRef(new WeakMap<PDFDocumentProxy, ReturnType<typeof pdfjs.getDocument>>());
@@ -112,8 +120,35 @@ export default function App() {
   const [pageGridOpen, setPageGridOpen] = useState(false);
   const [gridDragOver, setGridDragOver] = useState<number | null>(null);
   const [comments, setComments] = useState<PdfComment[]>([]);
+  const [savedSessionComments, setSavedSessionComments] = useState<PdfComment[]>([]);
   const [drafts, setDrafts] = useState<NewNote[]>([]);
+  const [commentChanges, setCommentChanges] = useState<CommentChange[]>([]);
+  const [commentOverrides, setCommentOverrides] = useState<Record<string, CommentOverride>>({});
+  const [editingComment, setEditingComment] = useState<{ comment: PdfComment; text: string } | null>(null);
+  const pendingCommentCount = drafts.length + commentChanges.length;
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [popupCommentId, setPopupCommentId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedId) { setPopupCommentId(null); return; }
+    const clearSelection = () => { setSelectedId(null); setPopupCommentId(null); setPendingCommentScroll(null); };
+    const dismissOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && (target.closest('.comment-pin, .comment-popup') ||
+        target.closest<HTMLElement>('.comment-card')?.dataset.commentId === selectedId)) return;
+      clearSelection();
+    };
+    const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) clearSelection(); };
+    globalThis.document.addEventListener('pointerdown', dismissOutside, true);
+    globalThis.document.addEventListener('keydown', dismissOnEscape);
+    return () => {
+      globalThis.document.removeEventListener('pointerdown', dismissOutside, true);
+      globalThis.document.removeEventListener('keydown', dismissOnEscape);
+    };
+  }, [selectedId]);
+  const [showCommentPins, setShowCommentPins] = useState(true);
+  const [pendingCommentScroll, setPendingCommentScroll] = useState<string | null>(null);
+  const commentListRef = useRef<HTMLDivElement>(null);
+  const commentCardRefs = useRef(new Map<string, HTMLDivElement>());
   const [placing, setPlacing] = useState(false);
   const [pendingPoint, setPendingPoint] = useState<PendingPoint | null>(null);
   const [noteText, setNoteText] = useState('');
@@ -122,6 +157,10 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [discardRequestId, setDiscardRequestId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [commentSaving, setCommentSaving] = useState(false);
+  const [returningHome, setReturningHome] = useState(false);
+  const returningHomeRef = useRef(false);
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [editingDirty, setEditingDirty] = useState(false);
   const [pagePlan, setPagePlan] = useState<PlannedPage[] | null>(null);
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
@@ -137,18 +176,49 @@ export default function App() {
     catch { return []; }
   });
   const [overlayLineWidth, setOverlayLineWidth] = useState(2);
+  const [drawDefaults, setDrawDefaults] = useState<DrawStyle>({ color: '#172333', lineWidth: 2, fill: '#e7f0d9', radius: 0, opacity: 1 });
+  const [drawPreview, setDrawPreview] = useState<{ id: string; patch: Partial<OverlayObject> } | null>(null);
+  useEffect(() => { setDrawPreview(null); }, [selectedOverlayId]);
+  const selectedOverlay = overlays.find((item) => item.id === selectedOverlayId && (activeTool === 'draw' || !isDrawingObject(item)));
+  const visibleOverlays = drawPreview ? overlays.map((item) => item.id === drawPreview.id ? { ...item, ...drawPreview.patch } : item) : overlays;
+  const drawSelection = selectedOverlay?.kind !== 'text' ? selectedOverlay : undefined;
+  const currentDrawStyle = drawSelection ? { ...drawDefaults, ...drawSelection, fill: drawSelection.fill ?? null,
+    fillHidden: drawSelection.fillHidden ?? false,
+    radius: drawSelection.radius ?? 0, opacity: drawSelection.opacity ?? 1, ...(drawPreview?.id === drawSelection.id ? drawPreview.patch : {}) } : drawDefaults;
   const [overlayFontSize, setOverlayFontSize] = useState(16);
   const [overlayFontChoice, setOverlayFontChoice] = useState<OverlayObject['fontChoice']>('noto-sans');
+  const [textAppearance, setTextAppearance] = useState<TextAppearance>({});
   const [overlayImage, setOverlayImage] = useState<PendingImage | null>(null);
   const [installedFonts, setInstalledFonts] = useState<InstalledFont[]>([]);
   const [fontsStatus, setFontsStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const fontsPromiseRef = useRef<Promise<InstalledFont[]> | null>(null);
+  const ensureInstalledFonts = useCallback(() => {
+    if (!fontsPromiseRef.current) {
+      setFontsStatus('loading');
+      fontsPromiseRef.current = window.aster.listInstalledFonts().then((fonts) => {
+        setInstalledFonts(fonts); setFontsStatus('ready'); return fonts;
+      }).catch((cause) => {
+        fontsPromiseRef.current = null; setFontsStatus('error'); throw cause;
+      });
+    }
+    return fontsPromiseRef.current;
+  }, []);
   const [fontEditing, setFontEditing] = useState<FontSelection | null>(null);
+  const selectedText = selectedOverlay?.kind === 'text' ? selectedOverlay : undefined;
+  const activeTextAppearance = selectedText && fontEditing?.overlayId !== selectedText.id ? selectedText : textAppearance;
+  const activeTextFont = resolveTextFont(selectedText?.fontChoice || overlayFontChoice || 'noto-sans', '', selectedText?.text || '', installedFonts, activeTextAppearance);
+  const canFormatText = !busy && !selectedText?.locked && Boolean(selectedText || fontEditing?.overlayId || (!fontEditing && overlayTool === 'text'));
+  const textFontSelection: FontSelection | null = selectedText && fontEditing?.overlayId !== selectedText.id
+    ? { pageId: selectedText.pageId, index: -1, overlayId: selectedText.id, fontName: 'Added text',
+      choice: selectedText.fontChoice || 'helvetica', fontSize: textSize(selectedText), color: selectedText.color }
+    : fontEditing || (overlayTool === 'text' ? { pageId: '', index: -1, overlayId: 'new', fontName: 'Added text', choice: overlayFontChoice || 'noto-sans' } : null);
   const [fontCommand, setFontCommand] = useState<FontCommand | null>(null);
   const [colorCommand, setColorCommand] = useState<ColorCommand | null>(null);
   const changeFontEditing = useCallback((selection: FontSelection | null) => {
     setFontEditing(selection);
     if (selection?.fontSize) setOverlayFontSize(Math.max(4, Math.min(500, selection.fontSize)));
     if (selection?.overlayId) setOverlayFontChoice(selection.choice as OverlayObject['fontChoice']);
+    if (selection?.overlayId) setTextAppearance(selection.appearance || {});
     if (selection?.color) setOverlayColor(selection.color);
   }, []);
   const [signatureOpen, setSignatureOpen] = useState(false);
@@ -173,6 +243,8 @@ export default function App() {
   const signatureImportRef = useRef<HTMLInputElement>(null);
   const overlayImageRef = useRef<HTMLInputElement>(null);
   const savedBytesRef = useRef<Uint8Array | null>(null);
+  const savedFileBytesRef = useRef<Uint8Array | null>(null);
+  const savingCommentIdsRef = useRef(new Set<string>());
   const dragPageRef = useRef<number | null>(null);
   const gridReturnScrollRef = useRef<number | null>(null);
   const gridJumpPageRef = useRef<number | null>(null);
@@ -232,10 +304,8 @@ export default function App() {
   useEffect(() => { setSavedSignatures(loadSignatures()); }, []);
   useEffect(() => {
     if (activeTool !== 'edit' || fontsStatus !== 'idle') return;
-    setFontsStatus('loading');
-    window.aster.listInstalledFonts().then((fonts) => { setInstalledFonts(fonts); setFontsStatus('ready'); })
-      .catch((cause) => { setFontsStatus('error'); setError(`Could not list system fonts: ${messageOf(cause)}`); });
-  }, [activeTool, fontsStatus]);
+    void ensureInstalledFonts().catch((cause) => setError(`Could not list system fonts: ${messageOf(cause)}`));
+  }, [activeTool, fontsStatus, ensureInstalledFonts]);
 
   useEffect(() => {
     window.aster.getSettings().then((settings) => {
@@ -245,8 +315,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.aster.setDirty(drafts.length > 0 || editingDirty || placedSignatures.length > 0 || Boolean(source?.needsSave) || Boolean(pendingPoint && noteText.trim()));
-  }, [drafts, editingDirty, placedSignatures.length, source?.needsSave, pendingPoint, noteText]);
+    window.aster.setDirty(pendingCommentCount > 0 || editingDirty || placedSignatures.length > 0 || Boolean(source?.needsSave) || Boolean(pendingPoint && noteText.trim()) || Boolean(editingComment && editingComment.text !== editingComment.comment.text));
+  }, [pendingCommentCount, editingDirty, placedSignatures.length, source?.needsSave, pendingPoint, noteText, editingComment]);
 
   useEffect(() => {
     const element = viewerRef.current;
@@ -258,6 +328,8 @@ export default function App() {
   }, [source, pageGridOpen]);
 
   useEffect(() => {
+    const source = previewSource;
+    setSavedSessionComments([]);
     if (!source) { setDocument(null); return; }
     let cancelled = false;
     let published = false;
@@ -331,7 +403,7 @@ export default function App() {
       // Published documents stay alive until React has replaced their pages.
       if (!published) void task?.destroy();
     };
-  }, [source, measurePage, refreshRecent]);
+  }, [previewSource, measurePage, refreshRecent]);
 
   useEffect(() => () => {
     if (document) {
@@ -369,9 +441,9 @@ export default function App() {
 
   const effectivePages = useMemo(() => document ? (pagePlan ?? initialPagePlan(document.numPages)) : [], [document, pagePlan]);
   const visibleComments = useMemo(() => pagePlan
-    ? pagePlan.flatMap((page, index) => comments.filter((comment) => comment.page === page.sourceIndex + 1)
+    ? pagePlan.flatMap((page, index) => [...comments, ...savedSessionComments].filter((comment) => comment.page === page.sourceIndex + 1)
       .map((comment) => ({ ...comment, id: `${page.id}:${comment.id}`, page: index + 1 })))
-    : comments, [comments, pagePlan]);
+    : [...comments, ...savedSessionComments], [comments, savedSessionComments, pagePlan]);
 
   const allComments = useMemo(() => [
     ...visibleComments,
@@ -385,7 +457,25 @@ export default function App() {
       rect: [note.x, note.y, note.x + 24, note.y + 24],
       draft: true
     }))
-  ].sort((a, b) => a.page - b.page), [visibleComments, drafts]);
+  ].flatMap((comment) => {
+    const override = commentOverrides[comment.id];
+    return override?.deleted ? [] : [{ ...comment, ...override }];
+  }).sort((a, b) => a.page - b.page), [visibleComments, drafts, commentOverrides]);
+  useLayoutEffect(() => {
+    if (!pendingCommentScroll || sidebarCollapsed || sidebarTab !== 'comments') return;
+    const list = commentListRef.current;
+    const card = commentCardRefs.current.get(pendingCommentScroll);
+    if (!list || !card) return;
+    const bounds = list.getBoundingClientRect(), target = card.getBoundingClientRect();
+    if (target.top < bounds.top + 8 || target.bottom > bounds.bottom - 8) {
+      // Scroll only the comment list, never the PDF viewer or the whole app.
+      list.scrollTo({
+        top: Math.max(0, list.scrollTop + target.top - bounds.top - Math.max(8, (list.clientHeight - target.height) / 2)),
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+      });
+    }
+    setPendingCommentScroll(null);
+  }, [pendingCommentScroll, sidebarCollapsed, sidebarTab, allComments]);
   const commentsByPage = useMemo(() => {
     const grouped = new Map<number, PdfComment[]>();
     for (const comment of allComments) {
@@ -448,6 +538,7 @@ export default function App() {
   }, []);
 
   const jumpToComment = useCallback(async (comment: PdfComment) => {
+    setPopupCommentId(null);
     setSelectedId(comment.id);
     const viewer = viewerRef.current;
     const sheet = pageRefs.current.get(comment.page);
@@ -473,6 +564,15 @@ export default function App() {
     try {
       const imported = await convertToPdf(opened);
       const editable = opened.kind === 'pdf' ? await readOverlayPackage(imported) : null;
+      // Editable objects replace the flattened PDF text in our preview. Resolve
+      // their fonts before showing them, even when opening in Comments mode.
+      const restoredText = editable?.objects.filter((item) => item.kind === 'text') ?? [];
+      const fonts = restoredText.some((item) => item.fontChoice?.startsWith('system:')) ? await ensureInstalledFonts() : [];
+      const fontSpecs = new Set(restoredText.map((item) => {
+        const style = resolveTextFont(item.fontChoice || 'helvetica', '', item.text || '', fonts, item);
+        return `${style.fontStyle} ${style.fontWeight} ${textSize(item)}px ${style.family}`;
+      }));
+      await Promise.all([...fontSpecs].map((spec) => window.document.fonts.load(spec)));
       const bytes = editable?.base ?? imported;
       restoreScrollRef.current = null;
       gridReturnScrollRef.current = null;
@@ -480,9 +580,11 @@ export default function App() {
       setPageGridOpen(false);
       setGridDragOver(null);
       setDrafts([]);
+      setCommentChanges([]); setEditingComment(null);
       setEditingDirty(false);
       setPagePlan(null);
       savedBytesRef.current = bytes;
+      savedFileBytesRef.current = imported;
       setSelectedPages(new Set());
       setPlacedSignatures([]);
       setOverlays(editable?.objects ?? []);
@@ -507,6 +609,7 @@ export default function App() {
     } catch (cause) {
       setSource(null);
       setDrafts([]);
+      setCommentChanges([]); setEditingComment(null);
       setEditingDirty(false);
       setPagePlan(null);
       setPageGridOpen(false);
@@ -521,9 +624,10 @@ export default function App() {
       setError(`Could not open file: ${messageOf(cause)}`);
     }
     finally { setBusy(false); }
-  }, [refreshRecent]);
+  }, [refreshRecent, ensureInstalledFonts]);
 
   const openSelected = useCallback(async () => {
+    if (returningHomeRef.current) return;
     if (savingRef.current) { setError('Please wait for the PDF to finish saving.'); return; }
     try {
       const opened = await window.aster.openDialog();
@@ -532,6 +636,7 @@ export default function App() {
   }, [installOpened]);
 
   const openPath = useCallback(async (filePath: string) => {
+    if (returningHomeRef.current) return;
     if (savingRef.current) { setError('Please wait for the PDF to finish saving.'); return; }
     try {
       const opened = await window.aster.openPath(filePath);
@@ -539,8 +644,37 @@ export default function App() {
     } catch (cause) { setError(messageOf(cause)); }
   }, [installOpened]);
 
+  const goHome = async () => {
+    if (!source || busy || savingRef.current || returningHomeRef.current || installLockRef.current) return;
+    returningHomeRef.current = true;
+    setReturningHome(true);
+    try {
+      await finishInlineEdits();
+      if (!(await window.aster.closeDocument(source.path))) return;
+      setSource(null);
+      setDrafts([]); setEditingDirty(false); setPagePlan(null);
+      setCommentChanges([]); setEditingComment(null);
+      setComments([]); setSavedSessionComments([]); setSelectedId(null); setPendingCommentScroll(null);
+      setPendingPoint(null); setNoteText(''); setPlacing(false);
+      setOverlays([]); setSelectedOverlayId(null); setDrawPreview(null); setOverlayImage(null);
+      setPlacedSignatures([]); setSelectedSignatureId(null); setPlacingSignatureId(null);
+      setSignatureMenuOpen(false); setSignatureOpen(false);
+      setPendingSignatureRemoval(null); setPendingSignatureDiscard(false);
+      setHistoryPast([]); setHistoryFuture([]); setSelectedPages(new Set());
+      setPageGridOpen(false); setGridDragOver(null); setPageNumber(1);
+      setCompressionOpen(false); setCompressionChoice(null); setCompressionError('');
+      setCompressionEstimate({ status: 'idle' });
+      setActiveTool('comments'); setSidebarTab('comments'); setSidebarCollapsed(false);
+      setFontEditing(null); setSettingsOpen(false); setError('');
+      savedBytesRef.current = null; savedFileBytesRef.current = null;
+      restoreScrollRef.current = null; gridReturnScrollRef.current = null; gridJumpPageRef.current = null;
+      void refreshRecent();
+    } catch (cause) { setError(`Could not return to Home: ${messageOf(cause)}`); }
+    finally { returningHomeRef.current = false; setReturningHome(false); }
+  };
+
   useEffect(() => {
-    if (!externalOpen || externalOpeningRef.current || busy || preparingInstall || installing ||
+    if (!externalOpen || externalOpeningRef.current || busy || commentSaving || returningHome || preparingInstall || installing ||
       signatureOpen || compressionOpen || discardRequestId || pendingSignatureRemoval || pendingSignatureDiscard) return;
     externalOpeningRef.current = true;
     const request = externalOpen;
@@ -559,7 +693,7 @@ export default function App() {
         window.aster.completeExternalOpen(request.id);
       }
     })();
-  }, [externalOpen, busy, preparingInstall, installing, signatureOpen, compressionOpen, discardRequestId,
+  }, [externalOpen, busy, commentSaving, returningHome, preparingInstall, installing, signatureOpen, compressionOpen, discardRequestId,
     pendingSignatureRemoval, pendingSignatureDiscard, source?.path, openPath]);
 
   const buildPendingPdf = useCallback(async (additionalNotes: NewNote[] = []): Promise<{ bytes: Uint8Array; base: Uint8Array; objects: OverlayObject[] }> => {
@@ -583,40 +717,56 @@ export default function App() {
       return { pageId: planned.id, index, viewport: page.getViewport({ scale: 1, rotation: natural.rotation + planned.turns * 90 }) };
     }));
     const notes = [...drafts, ...additionalNotes];
-    const base = notes.length ? await addTextNotes(signed, notes) : signed;
+    const base = await changeComments(notes.length ? await addTextNotes(signed, notes) : signed, commentChanges);
     const visibleIds = new Map(effectivePages.map((planned, index) => [planned.id, `source-${index}`]));
-    const objects = overlays.flatMap((item) => visibleIds.has(item.pageId) ? [{ ...item, pageId: visibleIds.get(item.pageId)! }] : []);
-    let annotated = await embedOverlays(base, overlays, overlayPages);
-    const shaped = overlays.flatMap((item) => {
-      if (item.kind !== 'text' || !item.text || !(/[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/u.test(item.text) || item.fontChoice === 'noto-naskh-arabic')) return [];
+    const sizedOverlays = overlays.map((item) => {
+      const target = overlayPages.find((page) => page.pageId === item.pageId);
+      return item.kind === 'text' && target ? { ...item, ...textOverlaySize(item, target.viewport.width, target.viewport.height, installedFonts) } : item;
+    });
+    const objects = sizedOverlays.flatMap((item) => visibleIds.has(item.pageId) ? [{ ...item, pageId: visibleIds.get(item.pageId)! }] : []);
+    const exportObjects = (await Promise.all(sizedOverlays.map((item) => {
+      const target = overlayPages.find((page) => page.pageId === item.pageId);
+      return target ? prepareTextForExport(item, installedFonts, target.viewport.width, target.viewport.height) : Promise.resolve([]);
+    }))).flat();
+    let annotated = await embedOverlays(base, exportObjects, overlayPages);
+    const shaped = exportObjects.flatMap((item) => {
+      if (item.hidden || item.kind !== 'text' || !item.text || !(/[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/u.test(item.text) || item.fontChoice === 'noto-naskh-arabic')) return [];
       const target = overlayPages.find((page) => page.pageId === item.pageId);
       if (!target) return [];
       const view = target.viewport;
       const size = textSize(item);
-      const [x, y] = view.convertToPdfPoint(item.x * view.width, item.y * view.height + size);
-      const [rightX, rightY] = view.convertToPdfPoint((item.x + 0.1) * view.width, item.y * view.height + size);
+      const left = item.x * view.width + (item.width * view.width - (item.textAdvance ?? item.width * view.width)) * (item.textAlign === 'center' ? .5 : item.textAlign === 'right' ? 1 : 0);
+      const [x, y] = view.convertToPdfPoint(left, item.y * view.height + size);
+      const [rightX, rightY] = view.convertToPdfPoint(left + 10, item.y * view.height + size);
       const angle = Math.atan2(rightY - y, rightX - x);
       const color = [1, 3, 5].map((offset) => Number.parseInt(item.color.slice(offset, offset + 2), 16));
-      return [{ pageIndex: target.index, text: item.text, size, fontChoice: item.fontChoice,
-        matrix: [Math.cos(angle), Math.sin(angle), -Math.sin(angle), Math.cos(angle), x, y], color }];
+      const shear = item.italic ? Math.tan(Math.PI / 15) : 0;
+      return [{ pageIndex: target.index, text: item.text, size, fontChoice: item.fontChoice, bold: item.bold,
+        matrix: [Math.cos(angle), Math.sin(angle), -Math.sin(angle) + shear * Math.cos(angle), Math.cos(angle) + shear * Math.sin(angle), x, y], color }];
     });
     if (shaped.length) annotated = await window.aster.embedShapedText(annotated, shaped);
     return { bytes: await attachOverlayPackage(annotated, base, objects), base, objects };
-  }, [source, pagePlan, placedSignatures, effectivePages, document, drafts, overlays]);
+  }, [source, pagePlan, placedSignatures, effectivePages, document, drafts, commentChanges, overlays, installedFonts]);
 
   const save = useCallback(async (saveAs = false, additionalNotes: NewNote[] = []): Promise<boolean> => {
+    if (returningHomeRef.current) return false;
     if (savingRef.current) return false;
-    if (!source || (!saveAs && drafts.length === 0 && !additionalNotes.length && !editingDirty && !placedSignatures.length && !source.needsSave)) return true;
+    if (!source || (!saveAs && pendingCommentCount === 0 && !additionalNotes.length && !editingDirty && !placedSignatures.length && !source.needsSave)) return true;
     const savedIds = new Set(drafts.map((note) => note.id));
+    const savedChangeIds = new Set(commentChanges.map((change) => change.operationId));
     savingRef.current = true;
     window.aster.setSaving(true);
     setBusy(true);
     try {
+      setSaveMessage('Preparing your pages and edits…');
+      await paintSaveFeedback();
       const { bytes, base, objects } = await buildPendingPdf(additionalNotes);
+      setSaveMessage('Saving your changes…');
       const saved = await window.aster.save(bytes, saveAs || Boolean(source.needsSave), source.path);
       if (saved) {
         restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
         setDrafts((current) => current.filter((note) => !savedIds.has(note.id)));
+        setCommentChanges((current) => current.filter((change) => !savedChangeIds.has(change.operationId)));
         setEditingDirty(false);
         setPagePlan(null);
         setPlacedSignatures([]);
@@ -627,6 +777,7 @@ export default function App() {
         setHistoryPast([]);
         setHistoryFuture([]);
         savedBytesRef.current = base;
+        savedFileBytesRef.current = bytes;
         setSource({ ...saved, bytes: base });
         if (additionalNotes.length) { setPendingPoint(null); setNoteText(''); }
         window.aster.setDirty(false);
@@ -641,9 +792,12 @@ export default function App() {
     } finally {
       savingRef.current = false;
       window.aster.setSaving(false);
+      setSaveMessage(null);
       setBusy(false);
     }
-  }, [source, drafts, editingDirty, placedSignatures.length, buildPendingPdf, refreshRecent]);
+  }, [source, drafts, commentChanges, pendingCommentCount, editingDirty, placedSignatures.length, buildPendingPdf, refreshRecent]);
+  const latestSave = useRef(save);
+  useLayoutEffect(() => { latestSave.current = save; }, [save]);
 
   const restartAndInstall = async () => {
     if (busy || savingRef.current || installLockRef.current) return;
@@ -665,7 +819,7 @@ export default function App() {
   };
 
   const applyEdit = useCallback(async (edit: PageEdit) => {
-    if (!source || !document || busy || drafts.length || pendingPoint) return;
+    if (!source || !document || busy || pendingCommentCount || pendingPoint) return;
     try {
       const current = pagePlan ?? initialPagePlan(document.numPages);
       const next = changePagePlan(current, edit);
@@ -686,10 +840,10 @@ export default function App() {
       setActiveTool('pages');
       setError('');
     } catch (cause) { setError(`Could not edit pages: ${messageOf(cause)}`); }
-  }, [source, document, pagePlan, selectedPages, busy, drafts, pendingPoint, overlays]);
+  }, [source, document, pagePlan, selectedPages, busy, pendingCommentCount, pendingPoint, overlays]);
 
   const addFiles = useCallback(async (afterPage?: number) => {
-    if (!source || busy || drafts.length) return;
+    if (!source || busy || pendingCommentCount) return;
     try {
       const files = await window.aster.addDialog();
       if (!files?.length) return;
@@ -720,10 +874,10 @@ export default function App() {
       setError('');
     } catch (cause) { setError(`Could not add files: ${messageOf(cause)}`); }
     finally { setBusy(false); }
-  }, [source, pagePlan, effectivePages, busy, drafts, overlays]);
+  }, [source, pagePlan, effectivePages, busy, pendingCommentCount, overlays]);
 
   const saveCompressedCopy = useCallback(async () => {
-    if (!source || !compressionChoice || busy || savingRef.current || drafts.length) return;
+    if (!source || !compressionChoice || busy || savingRef.current || pendingCommentCount) return;
     savingRef.current = true;
     window.aster.setSaving(true);
     setBusy(true);
@@ -734,6 +888,8 @@ export default function App() {
       if (!destination) return;
       token = destination.token;
       setCompressionProgress('Preparing PDF pages and signatures…');
+      setSaveMessage('Preparing your compressed PDF…');
+      await paintSaveFeedback();
       const prepared = (await buildPendingPdf()).bytes;
       setCompressionProgress(compressionChoice === 'lossless' ? 'Repacking PDF objects…' : 'Starting page compression…');
       const bytes = await compressPdf(prepared, compressionChoice,
@@ -757,6 +913,7 @@ export default function App() {
       setHistoryPast([]);
       setHistoryFuture([]);
       savedBytesRef.current = editableCopy?.base ?? bytes;
+      savedFileBytesRef.current = bytes;
       setSource({ ...saved, bytes: editableCopy?.base ?? bytes });
       setCompressionOpen(false);
       setCompressionChoice(null);
@@ -771,10 +928,11 @@ export default function App() {
       if (token) await window.aster.discardCompressedSave(token).catch(() => {});
       savingRef.current = false;
       window.aster.setSaving(false);
+      setSaveMessage(null);
       setBusy(false);
       setCompressionProgress('');
     }
-  }, [source, compressionChoice, busy, drafts.length, buildPendingPdf, refreshRecent]);
+  }, [source, compressionChoice, busy, pendingCommentCount, buildPendingPdf, refreshRecent]);
 
   const addSignatureAt = useCallback((pageId: string, placement: Omit<PlacedSignature, 'id' | 'pageId' | 'signatureId' | 'dataUrl'>) => {
     const signature = savedSignatures.find((item) => item.id === placingSignatureId);
@@ -814,7 +972,7 @@ export default function App() {
   }, []);
 
   const undoEdit = useCallback(() => {
-    if (!source || busy || drafts.length || !historyPast.length) return;
+    if (!source || busy || pendingCommentCount || !historyPast.length) return;
     const previous = historyPast[historyPast.length - 1];
     setHistoryPast((history) => history.slice(0, -1));
     setHistoryFuture((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
@@ -831,10 +989,10 @@ export default function App() {
       restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes: previous.bytes });
     }
-  }, [source, pagePlan, effectivePages.length, selectedPages, busy, drafts, historyPast, overlays]);
+  }, [source, pagePlan, effectivePages.length, selectedPages, busy, pendingCommentCount, historyPast, overlays]);
 
   const redoEdit = useCallback(() => {
-    if (!source || busy || drafts.length || !historyFuture.length) return;
+    if (!source || busy || pendingCommentCount || !historyFuture.length) return;
     const next = historyFuture[historyFuture.length - 1];
     setHistoryFuture((history) => history.slice(0, -1));
     setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
@@ -851,7 +1009,7 @@ export default function App() {
       restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes: next.bytes });
     }
-  }, [source, pagePlan, effectivePages.length, selectedPages, busy, drafts, historyFuture, overlays]);
+  }, [source, pagePlan, effectivePages.length, selectedPages, busy, pendingCommentCount, historyFuture, overlays]);
 
   useEffect(() => {
     const historyAction = (direction: 'undo' | 'redo') => {
@@ -881,7 +1039,7 @@ export default function App() {
   useEffect(() => {
     const deselect = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Element && !target.closest('[data-overlay-id], .overlay-toolbar, .image-context-menu, .added-text-editor, [data-added-text-controls], [data-font-picker]'))
+      if (target instanceof Element && !target.closest('[data-overlay-id], .overlay-toolbar, .draw-inspector, .sidebar-toggle, .image-context-menu, .added-text-editor, [data-added-text-controls], [data-font-picker]'))
         setSelectedOverlayId(null);
     };
     window.document.addEventListener('pointerdown', deselect, true);
@@ -889,15 +1047,15 @@ export default function App() {
   }, []);
 
   const commitOverlays = useCallback((next: OverlayObject[]) => {
-    if (!source || busy) return;
+    if (!source || busy || pendingCommentCount) return;
     setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
     setHistoryFuture([]);
     setOverlays(next);
     setEditingDirty(true);
     window.aster.setDirty(true);
-  }, [source, busy, pagePlan, effectivePages.length, overlays]);
+  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
   const commitOriginalText = useCallback(async (pageIndex: number, objectIndex: number, oldText: string, nextText: string, fontChoice: string, color?: number[]) => {
-    if (!source || busy || drafts.length || (oldText === nextText && fontChoice === 'original' && !color)) return;
+    if (!source || busy || pendingCommentCount || (oldText === nextText && fontChoice === 'original' && !color)) return;
     setBusy(true);
     window.aster.setSaving(true);
     try {
@@ -911,9 +1069,9 @@ export default function App() {
       setError('');
     } catch (cause) { setError(`Could not edit original PDF text: ${originalTextError(cause)}`); }
     finally { setBusy(false); window.aster.setSaving(false); }
-  }, [source, busy, drafts.length, pagePlan, effectivePages.length, overlays]);
+  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
   const moveOriginalText = useCallback(async (pageIndex: number, objectIndex: number, text: string, dx: number, dy: number) => {
-    if (!source || busy || drafts.length) return;
+    if (!source || busy || pendingCommentCount) return;
     setBusy(true);
     window.aster.setSaving(true);
     try {
@@ -927,11 +1085,114 @@ export default function App() {
       setError('');
     } catch (cause) { setError(`Could not move original PDF text: ${originalTextError(cause)}`); }
     finally { setBusy(false); window.aster.setSaving(false); }
-  }, [source, busy, drafts.length, pagePlan, effectivePages.length, overlays]);
-  const addOverlay = (object: OverlayObject) => { commitOverlays([...overlays, object]); setSelectedOverlayId(object.id);
-    if (object.kind === 'image') { setOverlayTool('select'); setOverlayImage(null); } };
-  const updateOverlay = (object: OverlayObject) => commitOverlays(overlays.map((item) => item.id === object.id ? object : item));
-  const deleteOverlay = (id: string) => { commitOverlays(overlays.filter((item) => item.id !== id)); setSelectedOverlayId(null); };
+  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
+  const addOverlay = (object: OverlayObject) => { commitOverlays([...overlays, { ...object, editingTool: object.editingTool ?? (activeTool === 'draw' ? 'draw' : 'edit') }]); setSelectedOverlayId(object.id);
+    if (object.kind === 'image' || ['rectangle', 'ellipse', 'line'].includes(object.kind)) { setOverlayTool('select'); setOverlayImage(null); } };
+  const updateOverlay = (object: OverlayObject) => {
+    const previous = overlays.find((item) => item.id === object.id);
+    if (previous && isDrawingObject(previous) && activeTool !== 'draw') return;
+    if (!previous || Object.entries(object).every(([key, value]) => previous[key as keyof OverlayObject] === value)) return;
+    commitOverlays(overlays.map((item) => item.id === object.id ? object : item));
+  };
+  const deleteOverlay = (id: string) => {
+    const object = overlays.find((item) => item.id === id);
+    if (object && isDrawingObject(object) && activeTool !== 'draw') return;
+    commitOverlays(overlays.filter((item) => item.id !== id)); setSelectedOverlayId(null);
+  };
+  const selectOverlay = (id: string | null) => {
+    const object = overlays.find((item) => item.id === id);
+    if (object && isDrawingObject(object) && activeTool !== 'draw') return;
+    setSelectedOverlayId(id);
+    const selected = overlays.find((item) => item.id === id);
+    if (selected) {
+      setOverlayColor(selected.color); setOverlayLineWidth(selected.lineWidth);
+      if (selected.kind === 'text') {
+        setOverlayFontSize(textSize(selected)); setOverlayFontChoice(selected.fontChoice || 'helvetica');
+        setTextAppearance({ bold: selected.bold, italic: selected.italic, underline: selected.underline, strikeThrough: selected.strikeThrough, textAlign: selected.textAlign, textSizing: selected.textSizing });
+      }
+      if (selected.kind !== 'text' && selected.kind !== 'image') setDrawDefaults({ color: selected.color, lineWidth: selected.lineWidth,
+        fill: selected.fill ?? null, fillHidden: selected.fillHidden ?? false, opacity: selected.opacity ?? 1, radius: selected.radius ?? 0 });
+    }
+  };
+  const chooseDrawingTool = (tool: OverlayTool) => { setOverlayTool(tool); if (tool !== 'select') setSelectedOverlayId(null); };
+  const rememberDrawColor = (color: string) => setRecentColors((colors) => {
+    const next = [color, ...colors.filter((value) => value !== color)].slice(0, 10);
+    try { localStorage.setItem('asterpdf-recent-colors', JSON.stringify(next)); } catch { /* Optional history. */ }
+    return next;
+  });
+  const changeDrawStyle = (patch: Partial<DrawStyle>, commit = true) => {
+    if (drawSelection?.locked || busy) return;
+    if (!commit && drawSelection) { setDrawPreview({ id: drawSelection.id, patch }); return; }
+    setDrawDefaults((previous) => ({ ...previous, ...patch }));
+    if (commit) {
+      setDrawPreview(null);
+      if (drawSelection) updateOverlay({ ...drawSelection, ...patch });
+      if (patch.color) rememberDrawColor(patch.color);
+      if (patch.fill) rememberDrawColor(patch.fill);
+    }
+  };
+  const duplicateOverlay = () => {
+    if (!drawSelection || drawSelection.locked) return;
+    const size = displayPageSize(effectivePages.findIndex((item) => item.id === drawSelection.pageId) + 1);
+    addOverlay({ ...drawSelection, id: crypto.randomUUID(), name: `${layerName(drawSelection)} copy`,
+      x: drawSelection.x + 12 / size.width, y: drawSelection.y + 12 / size.height });
+  };
+  const orderOverlay = (id: string, direction: string) => {
+    const object = overlays.find((item) => item.id === id);
+    if (!object || object.locked) return;
+    const siblings = overlays.filter((item) => item.pageId === object.pageId && item.kind !== 'text');
+    const index = siblings.indexOf(object);
+    const target = direction === 'forward' ? siblings[index + 1] : direction === 'backward' ? siblings[index - 1] : siblings.find((item) => item.id === direction);
+    if (!target || target === object) return;
+    const next = overlays.filter((item) => item.id !== id);
+    next.splice(next.indexOf(target) + (siblings.indexOf(target) > index ? 1 : 0), 0, object);
+    commitOverlays(next);
+  };
+  useEffect(() => {
+    if (activeTool !== 'draw' || busy || settingsOpen || signatureOpen || compressionOpen || discardRequestId) return;
+    const key = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.altKey) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || target.closest('input, textarea, select, [role="dialog"]'))) return;
+      if (event.key === 'Escape') { setSelectedOverlayId(null); setDrawPreview(null); setOverlayTool('select'); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateOverlay(); return; }
+      if (event.ctrlKey || event.metaKey) return;
+      if (drawSelection && !drawSelection.locked && (event.key === 'Delete' || event.key === 'Backspace')) {
+        event.preventDefault(); deleteOverlay(drawSelection.id); return;
+      }
+      if (drawSelection && !drawSelection.locked && event.key.startsWith('Arrow')) {
+        event.preventDefault();
+        const size = displayPageSize(effectivePages.findIndex((item) => item.id === drawSelection.pageId) + 1);
+        const step = event.shiftKey ? 10 : 1;
+        const next = { ...drawSelection, x: drawSelection.x + (event.key === 'ArrowRight' ? step : event.key === 'ArrowLeft' ? -step : 0) / size.width,
+          y: drawSelection.y + (event.key === 'ArrowDown' ? step : event.key === 'ArrowUp' ? -step : 0) / size.height };
+        if (event.repeat) setOverlays((items) => items.map((item) => item.id === next.id ? next : item));
+        else updateOverlay(next);
+        return;
+      }
+      const shortcut = ({ v: 'select', r: 'rectangle', o: 'ellipse', l: 'line', p: 'pen', e: 'eraser' } as const)[event.key.toLowerCase() as 'v'];
+      if (shortcut) { event.preventDefault(); chooseDrawingTool(shortcut); }
+    };
+    window.document.addEventListener('keydown', key);
+    return () => window.document.removeEventListener('keydown', key);
+  });
+  const changeTextAppearance = (patch: TextAppearance) => {
+    if (!canFormatText) return;
+    setTextAppearance((previous) => ({ ...previous, ...patch }));
+    if (!selectedText || fontEditing?.overlayId === selectedText.id) return;
+    const updated = { ...selectedText, ...patch };
+    const size = displayPageSize(effectivePages.findIndex((item) => item.id === updated.pageId) + 1);
+    updateOverlay({ ...updated, ...textOverlaySize(updated, size.width, size.height, installedFonts) });
+  };
+  const changeOverlayFontSize = (value: number, commit = true) => {
+    setOverlayFontSize(value);
+    if (selectedOverlay?.kind !== 'text' || fontEditing?.overlayId === selectedOverlay.id) return;
+    const size = displayPageSize(effectivePages.findIndex((item) => item.id === selectedOverlay.pageId) + 1);
+    const updated = { ...selectedOverlay, fontSize: value };
+    Object.assign(updated, textOverlaySize(updated, size.width, size.height, installedFonts));
+    if (!commit) { setDrawPreview({ id: updated.id, patch: updated }); return; }
+    setDrawPreview(null); updateOverlay(updated);
+  };
   const chooseOverlayColor = (value: string, rememberColor = true) => {
     setOverlayColor(value);
     if (rememberColor) setRecentColors((colors) => { const next = [value, ...colors.filter((color) => color !== value)].slice(0, 10);
@@ -952,7 +1213,7 @@ export default function App() {
       setOverlayImage({ dataUrl: canvas.toDataURL('image/png'), aspect: canvas.width / canvas.height });
       setSelectedOverlayId(null);
       setOverlayTool('image');
-      setActiveTool('edit');
+      if (activeTool !== 'draw') setActiveTool('edit');
     } catch (cause) { setError(`Could not insert image: ${messageOf(cause)}`); }
   };
 
@@ -961,16 +1222,63 @@ export default function App() {
     void applyEdit({ type: 'batch', pages: selectedIndices, action });
 
   useEffect(() => {
-    if (!source || busy || drafts.length === 0 || autoSaveRevision <= lastAutoAttemptRef.current) return;
+    if (!source || busy || commentSaving || returningHome || savingRef.current || pendingCommentCount === 0 || autoSaveRevision <= lastAutoAttemptRef.current) return;
+    if (source.needsSave) {
+      lastAutoAttemptRef.current = autoSaveRevision;
+      setError('Save this PDF once to choose its location and enable automatic comment saving.'); return;
+    }
+    if (!savedFileBytesRef.current || editingDirty || placedSignatures.length || pagePlan) return;
     lastAutoAttemptRef.current = autoSaveRevision;
-    void save();
-  }, [autoSaveRevision, busy, drafts, save, source]);
+    const batch = [...drafts];
+    const changes = [...commentChanges];
+    const changeIds = new Set(changes.map((change) => change.operationId));
+    const ids = new Set(batch.map((note) => note.id));
+    const snapshot = savedFileBytesRef.current;
+    savingCommentIdsRef.current = new Set([...ids, ...changes.map((change) => change.target.id)]);
+    savingRef.current = true;
+    setCommentSaving(true);
+    window.aster.setSaving(true);
+    void (async () => {
+      try {
+        const { bytes, base } = await prepareCommentSave(snapshot, batch, changes);
+        const saved = await window.aster.save(bytes, false, source.path);
+        if (!saved) throw new Error('The comments were not saved.');
+        savedFileBytesRef.current = bytes;
+        savedBytesRef.current = base;
+        // Only the data changes. Keep the current PDF renderer, scroll, tools,
+        // selected note, and the next comment's composer exactly as they are.
+        setSourceState({ ...source, ...saved, bytes: base });
+        setSavedSessionComments((current) => [...current, ...batch.map((note): PdfComment => ({
+          id: note.id, page: note.page, author: note.author, text: note.text,
+          kind: 'Text note', date: note.date, rect: [note.x, note.y, note.x + 24, note.y + 24]
+        }))]);
+        setDrafts((current) => current.filter((note) => !ids.has(note.id)));
+        setCommentChanges((current) => current.filter((change) => !changeIds.has(change.operationId)));
+        if (changes.some((change) => change.target.kind !== 'Text note' && (change.type === 'delete' || change.target.kind === 'Free text'))) {
+          // Visible PDF markup needs a fresh bitmap; sticky notes only need the
+          // interactive pin/list update and never interrupt the page renderer.
+          restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
+          setPreviewSource({ ...source, ...saved, bytes: base });
+        }
+        // The dirty-state effect accounts for newer comments and an unfinished
+        // composer; never clear it unconditionally for an older saved batch.
+        setError('');
+      } catch (cause) {
+        setError(`Could not auto-save comments: ${messageOf(cause)} Your comments are still here. Use Save PDF to retry.`);
+      } finally {
+        savingCommentIdsRef.current = new Set();
+        savingRef.current = false;
+        window.aster.setSaving(false);
+        setCommentSaving(false);
+      }
+    })();
+  }, [autoSaveRevision, busy, commentSaving, returningHome, drafts, commentChanges, pendingCommentCount, source, editingDirty, placedSignatures.length, pagePlan]);
 
   useEffect(() => {
     const subscriptions = [
       window.aster.onMenu('menu:open', () => { if (!installLockRef.current) void openSelected(); }),
-      window.aster.onMenu('menu:save', () => { if (!installLockRef.current) void save(); }),
-      window.aster.onMenu('menu:save-as', () => { if (!installLockRef.current) void save(true); }),
+      window.aster.onMenu('menu:save', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current()).catch((cause) => setError(messageOf(cause))); }),
+      window.aster.onMenu('menu:save-as', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current(true)).catch((cause) => setError(messageOf(cause))); }),
       window.aster.onMenu('menu:settings', () => { if (!installLockRef.current) setSettingsOpen(true); })
     ];
     return () => subscriptions.forEach((unsubscribe) => unsubscribe());
@@ -1022,13 +1330,14 @@ export default function App() {
 
   const selectTool = (tool: ActiveTool) => {
     if (pageGridOpen) setPageGridOpen(false);
+    setSelectedOverlayId(null); setDrawPreview(null);
     setActiveTool(tool);
     setSignatureMenuOpen(false);
     if (tool !== 'comments') setPlacing(false);
     if (tool !== 'sign') setPlacingSignatureId(null);
     if (tool === 'edit') { setOverlayTool('select'); setSidebarTab('pages'); }
-    if (tool === 'draw') setOverlayTool('pen');
-    if (tool === 'comments' || tool === 'pages') {
+    if (tool === 'draw') { setOverlayTool('select'); setSelectedOverlayId(null); }
+    if (tool === 'comments' || tool === 'pages' || tool === 'draw') {
       setSidebarTab(tool);
       setSidebarCollapsed(false);
     } else setSidebarCollapsed(true);
@@ -1162,10 +1471,16 @@ export default function App() {
     setNoteText('');
   };
 
-  const removeDraft = (id: string) => {
-    if (drafts.length === 1) window.aster.setDirty(false);
-    setDrafts((current) => current.filter((note) => note.id !== id));
-    if (selectedId === id) setSelectedId(null);
+  const changeComment = (comment: PdfComment, type: 'edit' | 'delete', text?: string) => {
+    if (busy || returningHome || editingDirty || placedSignatures.length || pagePlan) return;
+    if (type === 'edit' && (!text?.trim() || text.trim() === comment.text)) { setEditingComment(null); return; }
+    const date = new Date().toISOString();
+    setCommentChanges((current) => [...current, { operationId: crypto.randomUUID(), target: comment, type, text: text?.trim(), date }]);
+    setCommentOverrides((current) => ({ ...current, [comment.id]: type === 'delete' ? { deleted: true } : { text: text!.trim(), date } }));
+    setAutoSaveRevision((revision) => revision + 1);
+    window.aster.setDirty(true);
+    if (editingComment?.comment.id === comment.id) setEditingComment(null);
+    if (type === 'delete' && selectedId === comment.id) setSelectedId(null);
   };
 
   const activeSignature = savedSignatures.find((item) => item.id === placingSignatureId) ?? null;
@@ -1223,16 +1538,16 @@ export default function App() {
     else setError('Drop a PDF, DOCX, or image file to open it.');
   }}>
     <header className="topbar">
-      <div className="brand"><img src="./icon.png" alt="" /><span>Aster<span className="brand-pdf">PDF</span></span></div>
+      <button className="brand brand-home" type="button" onClick={() => void goHome()} disabled={busy || commentSaving || returningHome || preparingInstall || installing} aria-label="Home — Recently opened PDFs" title="Home · Recently opened PDFs"><img src="./icon.png" alt="" /><span>Aster<span className="brand-pdf">PDF</span></span></button>
       <div className="topbar-divider" />
-      <div className="document-title" title={source?.path}>{source ? <><FileText size={17} /><strong>{source.name}</strong>{busy ? <span className="saving-spinner" role="status" aria-label={compressionProgress || 'Working'} title={compressionProgress || 'Working'} /> : (drafts.length > 0 || editingDirty || source.needsSave) && <span className="unsaved-dot" title="Unsaved changes" />}</> : <span>No document open</span>}</div>
+      <div className="document-title" title={source?.path}>{source ? <><FileText size={17} /><strong>{source.name}</strong>{busy || commentSaving ? <span className="saving-spinner" role="status" aria-label={commentSaving ? 'Saving comments in the background' : compressionProgress || 'Working'} title={commentSaving ? 'Saving comments in the background' : compressionProgress || 'Working'} /> : (pendingCommentCount > 0 || editingDirty || source.needsSave) && <span className="unsaved-dot" title="Unsaved changes" />}</> : <span>No document open</span>}</div>
       <div className="topbar-actions">
         <button className="button subtle" onClick={() => setSettingsOpen(true)} title="Application settings"><Settings2 size={18} /><span>Settings</span></button>
         {(updates.state?.available || updates.state?.transfer.phase === 'ready') && <button className="button update-button" aria-label="Update AsterPDF" title="View update progress and installation"
           onClick={() => { setSettingsOpen(true); if (!updates.downloading && updates.state?.transfer.phase !== 'ready') void updates.download(); }}>
           {updates.downloading ? <span className="inline-spinner" /> : <ArrowDownToLine size={17} />}<span>{updates.downloading ? `Downloading ${Math.floor(updates.state?.transfer.percent || 0)}%` : updates.state?.transfer.phase === 'ready' ? 'Restart and install…' : 'Update'}</span></button>}
         <button className="button subtle" onClick={() => void openSelected()} disabled={busy}><FolderOpen size={18} /><span>Open file</span></button>
-        <button className="button primary" onClick={() => void save()} disabled={!source || (!drafts.length && !editingDirty && !source.needsSave) || busy}><Save size={17} /><span>{busy ? 'Working…' : 'Save PDF'}</span></button>
+        <button className="button primary" onClick={() => void save()} disabled={!source || (!pendingCommentCount && !editingDirty && !source.needsSave) || busy || commentSaving}><Save size={17} /><span>{busy ? 'Working…' : 'Save PDF'}</span></button>
       </div>
     </header>
 
@@ -1268,15 +1583,15 @@ export default function App() {
           </div> : activeTool === 'comments' ? <button className={`button ${placing ? 'placing-button' : 'outline'} tool-action context-action`} onClick={startComment} disabled={!document || busy || editingDirty} title={editingDirty ? 'Save edits before adding comments' : 'Add comment'}><MessageSquare size={17} />{placing ? 'Click on page…' : 'Comment'}</button>
           : activeTool === 'edit' || activeTool === 'draw' ? null
           : activeTool === 'pages' ? <div className="page-tools toolbar-page-tools" aria-label="Selected page actions">
-            <button title="Undo edit" aria-label="Undo edit" disabled={busy || drafts.length > 0 || !historyPast.length} onClick={undoEdit}><Undo2 size={16} /></button>
-            <button title="Redo edit" aria-label="Redo edit" disabled={busy || drafts.length > 0 || !historyFuture.length} onClick={redoEdit}><Redo2 size={16} /></button>
-            <button title="Move page up" aria-label="Move page up" disabled={busy || drafts.length > 0 || selectedIndices.every((index) => index === 0)} onClick={() => applySelection('move-up')}><ArrowUp size={16} /></button>
-            <button title="Move page down" aria-label="Move page down" disabled={busy || drafts.length > 0 || selectedIndices.every((index) => index === effectivePages.length - 1)} onClick={() => applySelection('move-down')}><ArrowDown size={16} /></button>
-            <button title="Rotate left" aria-label="Rotate left" disabled={busy || drafts.length > 0} onClick={() => applySelection('rotate-left')}><RotateCcw size={16} /></button>
-            <button title="Rotate right" aria-label="Rotate right" disabled={busy || drafts.length > 0} onClick={() => applySelection('rotate-right')}><RotateCw size={16} /></button>
-            <button title="Duplicate page" aria-label="Duplicate page" disabled={busy || drafts.length > 0} onClick={() => applySelection('duplicate')}><Copy size={16} /></button>
-            <button title="Delete page" aria-label="Delete page" disabled={busy || drafts.length > 0 || selectedIndices.length >= effectivePages.length} onClick={() => applySelection('delete')}><Trash2 size={16} /></button>
-          </div> : activeTool === 'sign' ? <div className="signature-picker"><button className={`button ${placingSignatureId ? 'placing-button' : 'outline'} tool-action context-action`} onClick={startSignature} disabled={!document || busy || drafts.length > 0} aria-expanded={signatureMenuOpen} aria-haspopup="menu"><PenLine size={16} />{placingSignatureId ? 'Place signature…' : 'Sign'}</button>
+            <button title="Undo edit" aria-label="Undo edit" disabled={busy || pendingCommentCount > 0 || !historyPast.length} onClick={undoEdit}><Undo2 size={16} /></button>
+            <button title="Redo edit" aria-label="Redo edit" disabled={busy || pendingCommentCount > 0 || !historyFuture.length} onClick={redoEdit}><Redo2 size={16} /></button>
+            <button title="Move page up" aria-label="Move page up" disabled={busy || pendingCommentCount > 0 || selectedIndices.every((index) => index === 0)} onClick={() => applySelection('move-up')}><ArrowUp size={16} /></button>
+            <button title="Move page down" aria-label="Move page down" disabled={busy || pendingCommentCount > 0 || selectedIndices.every((index) => index === effectivePages.length - 1)} onClick={() => applySelection('move-down')}><ArrowDown size={16} /></button>
+            <button title="Rotate left" aria-label="Rotate left" disabled={busy || pendingCommentCount > 0} onClick={() => applySelection('rotate-left')}><RotateCcw size={16} /></button>
+            <button title="Rotate right" aria-label="Rotate right" disabled={busy || pendingCommentCount > 0} onClick={() => applySelection('rotate-right')}><RotateCw size={16} /></button>
+            <button title="Duplicate page" aria-label="Duplicate page" disabled={busy || pendingCommentCount > 0} onClick={() => applySelection('duplicate')}><Copy size={16} /></button>
+            <button title="Delete page" aria-label="Delete page" disabled={busy || pendingCommentCount > 0 || selectedIndices.length >= effectivePages.length} onClick={() => applySelection('delete')}><Trash2 size={16} /></button>
+          </div> : activeTool === 'sign' ? <div className="signature-picker"><button className={`button ${placingSignatureId ? 'placing-button' : 'outline'} tool-action context-action`} onClick={startSignature} disabled={!document || busy || pendingCommentCount > 0} aria-expanded={signatureMenuOpen} aria-haspopup="menu"><PenLine size={16} />{placingSignatureId ? 'Place signature…' : 'Sign'}</button>
             {signatureMenuOpen && <div className="signature-dropdown" role="menu" aria-label="Saved signatures">
               {savedSignatures.length ? savedSignatures.map((signature) => <div className="signature-option" key={signature.id}>
                 <button role="menuitem" onClick={() => chooseSignature(signature.id)}><img src={signature.dataUrl} alt="" /><span>{signature.name}</span></button>
@@ -1284,49 +1599,71 @@ export default function App() {
               </div>) : <p className="signature-empty">No saved signatures yet</p>}
               <button className="signature-add" role="menuitem" onClick={openNewSignature}>+ Signature</button>
             </div>}
-          </div> : activeTool === 'compress' ? <button className="button outline tool-action context-action" onClick={() => { setCompressionError(''); setCompressionOpen(true); }} disabled={!document || busy || drafts.length > 0}><Shrink size={16} />Compress</button>
-          : <button className="button outline tool-action context-action" onClick={() => void addFiles()} disabled={!document || busy || drafts.length > 0}><Files size={16} />Add files</button>}
+          </div> : activeTool === 'compress' ? <button className="button outline tool-action context-action" onClick={() => { setCompressionError(''); setCompressionOpen(true); }} disabled={!document || busy || pendingCommentCount > 0}><Shrink size={16} />Compress</button>
+          : <button className="button outline tool-action context-action" onClick={() => void addFiles()} disabled={!document || busy || pendingCommentCount > 0}><Files size={16} />Add files</button>}
         {(activeTool === 'edit' || activeTool === 'draw') && <div className="overlay-toolbar" role="toolbar" aria-label={activeTool === 'edit' ? 'Edit tools' : 'Draw tools'}>
-          <button className={overlayTool === 'select' ? 'active' : ''} onClick={() => setOverlayTool('select')} aria-label="Select objects" title="Select and move objects"><MousePointer2 size={17} />Select</button>
+          <button className={overlayTool === 'select' ? 'active' : ''} onClick={() => setOverlayTool('select')} aria-label="Select objects" aria-pressed={overlayTool === 'select'} title="Select and move objects (V)"><MousePointer2 size={17} /></button>
           {activeTool === 'edit' ? <>
-            <button className={overlayTool === 'text' ? 'active' : ''} onClick={() => setOverlayTool('text')} aria-label="Add text overlay" title="Add editable text over the PDF"><Type size={17} />Text</button>
-            <FontPicker selection={fontEditing || (overlayTool === 'text' ? { pageId: '', index: -1, overlayId: 'new', fontName: 'Added text', choice: overlayFontChoice || 'noto-sans' } : null)} fonts={installedFonts} loading={fontsStatus === 'loading'} onSelect={(choice) => {
+            <button className={overlayTool === 'text' ? 'active' : ''} onClick={() => setOverlayTool('text')} aria-label="Add text overlay" title="Add editable text over the PDF"><Type size={17} /></button>
+            <FontPicker selection={textFontSelection} fonts={installedFonts} loading={fontsStatus === 'loading'} onSelect={(choice) => {
+              if (selectedText && fontEditing?.overlayId !== selectedText.id) {
+                const updated = { ...selectedText, fontChoice: choice as OverlayObject['fontChoice'] };
+                const size = displayPageSize(effectivePages.findIndex((item) => item.id === updated.pageId) + 1);
+                setOverlayFontChoice(updated.fontChoice);
+                updateOverlay({ ...updated, ...textOverlaySize(updated, size.width, size.height, installedFonts) });
+                return;
+              }
               if (!fontEditing) { setOverlayFontChoice(choice as OverlayObject['fontChoice']); return; }
               setFontEditing({ ...fontEditing, choice });
               if (fontEditing.overlayId) setOverlayFontChoice(choice as OverlayObject['fontChoice']);
               setFontCommand((old) => ({ pageId: fontEditing.pageId, index: fontEditing.index, overlayId: fontEditing.overlayId, choice, sequence: (old?.sequence || 0) + 1 }));
             }} />
+            <div className="text-format-tools" role="group" aria-label="Text formatting" data-added-text-controls>
+              <button disabled={!canFormatText} aria-label="Bold" title="Bold" aria-pressed={activeTextFont.fontWeight >= 600} onClick={() => changeTextAppearance({ bold: activeTextFont.fontWeight < 600 })}><Bold size={16} /></button>
+              <button disabled={!canFormatText} aria-label="Italic" title="Italic" aria-pressed={activeTextFont.fontStyle === 'italic'} onClick={() => changeTextAppearance({ italic: activeTextFont.fontStyle !== 'italic' })}><Italic size={16} /></button>
+              <button disabled={!canFormatText} aria-label="Underline" title="Underline" aria-pressed={Boolean(activeTextAppearance.underline)} onClick={() => changeTextAppearance({ underline: !activeTextAppearance.underline })}><Underline size={16} /></button>
+              <button disabled={!canFormatText} aria-label="Strikethrough" title="Strikethrough" aria-pressed={Boolean(activeTextAppearance.strikeThrough)} onClick={() => changeTextAppearance({ strikeThrough: !activeTextAppearance.strikeThrough })}><Strikethrough size={16} /></button>
+            </div>
+            <div className="text-format-tools" role="group" aria-label="Text alignment" data-added-text-controls>
+              {([{ align: 'left', Icon: AlignLeft }, { align: 'center', Icon: AlignCenter }, { align: 'right', Icon: AlignRight }, { align: 'justify', Icon: AlignJustify }] as const).map(({ align, Icon }) =>
+                <button key={align} disabled={!canFormatText} aria-label={`Align text ${align}`} title={`Align ${align} within text box`} aria-pressed={(activeTextAppearance.textAlign || 'left') === align}
+                  onClick={() => changeTextAppearance({ textAlign: align })}><Icon size={16} /></button>)}
+              <button disabled={!canFormatText} aria-label="Smart justify" title="Smart Justify · Arabic Kashida on wrapped lines"
+                aria-pressed={activeTextAppearance.textAlign === 'smart-justify'} onClick={() => changeTextAppearance({ textAlign: 'smart-justify' })}><SmartJustifyIcon /></button>
+              <button disabled={!canFormatText} aria-label="Auto-size text container" title="Auto-size text container · Drag its handles for a fixed size"
+                aria-pressed={activeTextAppearance.textSizing !== 'fixed'} onClick={() => changeTextAppearance({ textSizing: 'auto' })}><Maximize2 size={16} /></button>
+            </div>
             <button className={overlayTool === 'image' ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label="Add image overlay"
-              title={overlayTool === 'image' ? 'Click on a page to place the image. Esc to cancel.' : 'Add an image'}><ImagePlus size={17} />{overlayTool === 'image' ? 'Place image…' : 'Image'}</button>
+              title={overlayTool === 'image' ? 'Click on a page to place the image. Esc to cancel.' : 'Add an image'}><ImagePlus size={17} /></button>
             <span className="overlay-divider" />
             <button onClick={undoEdit} disabled={!historyPast.length} aria-label="Undo edit"><Undo2 size={17} /></button>
             <button onClick={redoEdit} disabled={!historyFuture.length} aria-label="Redo edit"><Redo2 size={17} /></button>
           </> : <>
-            <button className={overlayTool === 'pen' ? 'active' : ''} onClick={() => setOverlayTool('pen')} aria-label="Freehand pen"><Pencil size={17} />Pen</button>
-            <button className={overlayTool === 'rectangle' ? 'active' : ''} onClick={() => setOverlayTool('rectangle')} aria-label="Draw rectangle"><Square size={17} /></button>
-            <button className={overlayTool === 'ellipse' ? 'active' : ''} onClick={() => setOverlayTool('ellipse')} aria-label="Draw ellipse"><Circle size={17} /></button>
-            <button className={overlayTool === 'line' ? 'active' : ''} onClick={() => setOverlayTool('line')} aria-label="Draw line"><Minus size={17} /></button>
-            <button className={overlayTool === 'eraser' ? 'active' : ''} onClick={() => setOverlayTool('eraser')} aria-label="Erase object" title="Erase a drawn object"><Eraser size={17} />Erase</button>
-            <button onClick={undoEdit} disabled={!historyPast.length} aria-label="Undo drawing"><Undo2 size={17} /></button>
-            <button onClick={redoEdit} disabled={!historyFuture.length} aria-label="Redo drawing"><Redo2 size={17} /></button>
+            <button className={overlayTool === 'rectangle' ? 'active' : ''} onClick={() => chooseDrawingTool('rectangle')} aria-pressed={overlayTool === 'rectangle'} aria-label="Draw rectangle" title="Rectangle (R) · Click or drag"><Square size={17} /></button>
+            <button className={overlayTool === 'ellipse' ? 'active' : ''} onClick={() => chooseDrawingTool('ellipse')} aria-pressed={overlayTool === 'ellipse'} aria-label="Draw ellipse" title="Ellipse (O) · Shift for a circle"><Circle size={17} /></button>
+            <button className={overlayTool === 'line' ? 'active' : ''} onClick={() => chooseDrawingTool('line')} aria-pressed={overlayTool === 'line'} aria-label="Draw line" title="Line (L) · Shift snaps the angle"><Minus size={17} /></button>
+            <button className={overlayTool === 'pen' ? 'active' : ''} onClick={() => chooseDrawingTool('pen')} aria-pressed={overlayTool === 'pen'} aria-label="Freehand pen" title="Freehand pen (P)"><Pencil size={17} /></button>
+            <button className={overlayTool === 'image' ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label="Add image overlay" title="Place an image"><ImagePlus size={17} /></button>
+            <button className={overlayTool === 'eraser' ? 'active' : ''} onClick={() => chooseDrawingTool('eraser')} aria-pressed={overlayTool === 'eraser'} aria-label="Erase object" title="Erase object (E)"><Eraser size={17} /></button>
+            <span className="overlay-divider" />
+            <button onClick={undoEdit} disabled={!historyPast.length} aria-label="Undo drawing" title="Undo (Ctrl/Cmd+Z)"><Undo2 size={17} /></button>
+            <button onClick={redoEdit} disabled={!historyFuture.length} aria-label="Redo drawing" title="Redo (Ctrl/Cmd+Shift+Z)"><Redo2 size={17} /></button>
           </>}
           <span className="overlay-divider" />
-          <ColorPicker value={(!fontEditing && overlays.find((item) => item.id === selectedOverlayId)?.color) || overlayColor}
-            recent={recentColors} onChange={chooseOverlayColor} />
-          {activeTool === 'edit' ? <label className="overlay-width" data-added-text-controls>Font size <input type="number" min="4" max="500" step="1" value={overlayFontSize} aria-label="Font size"
-            onChange={(event) => { const value = Math.max(4, Math.min(500, Number(event.target.value) || 16)); setOverlayFontSize(value);
-              const selected = overlays.find((item) => item.id === selectedOverlayId);
-              if (selected?.kind === 'text' && !fontEditing?.overlayId) updateOverlay({ ...selected, fontSize: value }); }} /><span>pt</span></label>
-            : <label className="overlay-width">Width <input type="number" min="1" max="12" value={overlayLineWidth} aria-label="Line width"
-            onChange={(event) => { const value = Math.max(1, Math.min(12, Number(event.target.value) || 1)); setOverlayLineWidth(value);
-              const selected = overlays.find((item) => item.id === selectedOverlayId); if (selected) updateOverlay({ ...selected, lineWidth: value }); }} /></label>}
-          {selectedOverlayId && <button onClick={() => deleteOverlay(selectedOverlayId)} aria-label="Delete selected object"><Trash2 size={17} /></button>}
+          <ColorPicker value={activeTool === 'draw' ? currentDrawStyle.color : (!fontEditing && selectedOverlay?.color) || overlayColor}
+            recent={recentColors} onChange={activeTool === 'draw' ? (color, commit) => changeDrawStyle({ color }, commit) : chooseOverlayColor} />
+          {activeTool === 'edit' ? <div className="overlay-font-size" data-added-text-controls>
+            <NumberField label="Font size" icon={<Type size={15} />} unit="pt" min={4} max={500} value={overlayFontSize}
+              onChange={(value) => changeOverlayFontSize(value)} onPreview={(value) => changeOverlayFontSize(value, false)} /></div>
+            : <button className={sidebarTab === 'draw' && !sidebarCollapsed ? 'active' : ''} title="Properties and layers" aria-label="Toggle drawing panel"
+              aria-expanded={sidebarTab === 'draw' && !sidebarCollapsed} onClick={() => { setSidebarTab('draw'); setSidebarCollapsed(sidebarTab === 'draw' ? !sidebarCollapsed : false); }}><PanelRight size={17} /></button>}
+          {selectedOverlay && <button disabled={selectedOverlay.locked} onClick={() => deleteOverlay(selectedOverlay.id)} title="Delete selected object" aria-label="Delete selected object"><Trash2 size={17} /></button>}
           <input ref={overlayImageRef} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={(event) => { void importOverlayImage(event.target.files?.[0]); event.target.value = ''; }} />
         </div>}
         </div>
         {pageGridOpen ? <div className="page-grid-scroll">
           <div className="page-grid-intro"><div><h2>Organize pages</h2><p>Drag a page to reorder it. Select pages to use the actions above.</p></div><span>{selectedPages.size ? `${selectedPages.size} selected` : `${effectivePages.length} pages`}</span></div>
-          <div className="page-grid" aria-label="Pages grid">{effectivePages.map((planned, index) => <article key={planned.id} className={`page-grid-card${selectedPages.has(index) ? ' selected' : ''}${gridDragOver === index ? ' drag-target' : ''}`} draggable={!busy && !drafts.length}
+          <div className="page-grid" aria-label="Pages grid">{effectivePages.map((planned, index) => <article key={planned.id} className={`page-grid-card${selectedPages.has(index) ? ' selected' : ''}${gridDragOver === index ? ' drag-target' : ''}`} draggable={!busy && !pendingCommentCount}
             onDragStart={(event) => { dragPageRef.current = index; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(index)); }}
             onDragOver={(event) => { if (dragPageRef.current !== null) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setGridDragOver(index); } }}
             onDrop={(event) => { event.preventDefault(); event.stopPropagation(); const from = dragPageRef.current; dragPageRef.current = null; setGridDragOver(null); if (from !== null && from !== index) void applyEdit({ type: 'move', from, to: index }); }}
@@ -1341,22 +1678,26 @@ export default function App() {
             {document && effectivePages.map((planned, index) => {
               const page = index + 1;
               return <PdfPage key={planned.id} document={document} pageNumber={page} sourcePageNumber={planned.sourceIndex + 1} rotation={planned.turns * 90}
-                sourceBytes={source.bytes} inspectOriginalText={activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
+                sourceBytes={source.bytes} inspectOriginalText={!pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
                 onFontEditChange={changeFontEditing} fontCommand={fontCommand} colorCommand={colorCommand} installedFonts={installedFonts}
                 size={displayPageSize(page)}
                 zoom={zoom} viewerWidth={viewerWidth} viewerRef={viewerRef}
-                comments={commentsByPage.get(page) ?? EMPTY_COMMENTS} selectedId={selectedId}
+                comments={showCommentPins ? commentsByPage.get(page) ?? EMPTY_COMMENTS : EMPTY_COMMENTS} selectedId={selectedId}
                 placing={placing} pendingPoint={pendingPoint} pageId={planned.id}
                 signatures={placedSignatures.filter((signature) => signature.pageId === planned.id)} selectedSignatureId={selectedSignatureId} placingSignature={activeSignature}
-                overlayTool={activeTool === 'edit' || activeTool === 'draw' ? overlayTool : null}
-                overlayColor={overlayColor} overlayLineWidth={overlayLineWidth} overlayFontSize={overlayFontSize} overlayFontChoice={overlayFontChoice} overlayImage={overlayImage}
-                overlays={overlays.filter((object) => object.pageId === planned.id)} selectedOverlayId={selectedOverlayId}
+                overlayTool={!pendingCommentCount && (activeTool === 'edit' || activeTool === 'draw') ? overlayTool : null}
+                drawActive={activeTool === 'draw'}
+                textAppearance={textAppearance}
+                overlayColor={activeTool === 'draw' ? drawDefaults.color : overlayColor} overlayLineWidth={activeTool === 'draw' ? drawDefaults.lineWidth : overlayLineWidth} drawStyle={drawDefaults} overlayFontSize={overlayFontSize} overlayFontChoice={overlayFontChoice} overlayImage={overlayImage}
+                overlays={visibleOverlays.filter((object) => object.pageId === planned.id)} selectedOverlayId={selectedOverlayId}
                 onAddOverlay={addOverlay} onUpdateOverlay={updateOverlay} onDeleteOverlay={deleteOverlay}
-                onSelectOverlay={(id) => { setSelectedOverlayId(id);
-                  const selected = overlays.find((item) => item.id === id); if (selected) setOverlayColor(selected.color); }}
+                onSelectOverlay={selectOverlay}
                 registerPage={registerPage} onMeasure={measurePage} onPlace={choosePoint}
                 onAddSignature={addSignatureAt} onUpdateSignature={updateSignature} onSelectSignature={setSelectedSignatureId} onDeleteSignature={requestSignatureRemoval}
-                onSelectComment={(id) => { setSelectedId(id); selectTool('comments'); }}
+                popupCommentId={popupCommentId}
+                onSelectComment={(id) => { setSelectedId(id); setPopupCommentId(id); }}
+                onCloseComment={() => { setSelectedId(null); setPopupCommentId(null); }}
+                onOpenCommentSidebar={(id) => { setPopupCommentId(null); setSelectedId(id); selectTool('comments'); setPendingCommentScroll(id); }}
                 onError={reportPageError} />;
             })}
           </div>
@@ -1366,31 +1707,45 @@ export default function App() {
 
       <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`} aria-label="Document sidebar">
         {!sidebarCollapsed && <div className="sidebar-content">
-        {sidebarTab === 'comments' ? <>
-          <div className="sidebar-heading"><div><h2>Comments</h2><p>{scanning ? 'Reading comments…' : allComments.length ? `${allComments.length} in this document` : 'No comments yet'}</p></div><button className="icon-button" title="Save a copy" aria-label="Save a copy" disabled={busy} onClick={() => void save(true)}><FilePlus2 size={19} /></button></div>
-          <div className="comment-list">
+        {sidebarTab === 'draw' ? (() => {
+          const index = drawSelection ? effectivePages.findIndex((item) => item.id === drawSelection.pageId) : pageNumber - 1;
+          const page = Math.max(0, index) + 1, size = displayPageSize(page);
+          return <DrawInspector objects={overlays.filter((item) => item.pageId === effectivePages[page - 1]?.id && item.kind !== 'text')}
+            selected={drawSelection} page={page} pageWidth={size.width} pageHeight={size.height} style={currentDrawStyle} recent={recentColors} busy={busy}
+            onStyle={changeDrawStyle} onUpdate={updateOverlay} onSelect={(id) => { selectOverlay(id); setOverlayTool('select'); }}
+            onDelete={deleteOverlay} onDuplicate={duplicateOverlay} onOrder={orderOverlay} onClose={() => setSidebarCollapsed(true)} />;
+        })() : sidebarTab === 'comments' ? <>
+          <div className="sidebar-heading"><h2 className="comments-heading">Comments <span>{allComments.length}</span></h2><div className="comment-heading-actions">
+            <button className="icon-button" title={showCommentPins ? 'Hide comments on pages' : 'Show comments on pages'} aria-label={showCommentPins ? 'Hide comments on pages' : 'Show comments on pages'} aria-pressed={showCommentPins} onClick={() => setShowCommentPins((visible) => !visible)}>{showCommentPins ? <Eye size={19} /> : <EyeOff size={19} />}</button>
+            <button className="icon-button" title="Save a copy" aria-label="Save a copy" disabled={busy || commentSaving} onClick={() => void save(true)}><FilePlus2 size={19} /></button>
+          </div></div>
+          <div className="comment-list" ref={commentListRef}>
             {allComments.length === 0 && !pendingPoint ? <div className="empty-comments"><div><MessageSquare size={25} /></div><h3>Start a conversation</h3><p>{placedSignatures.length ? 'Confirm and save the pending signature above to add a comment.' : 'Comments in this PDF will appear here. Click “Add comment” and choose a spot on the page.'}</p>{!placedSignatures.length && <button className="text-button" onClick={startComment}>Add the first comment <ChevronRight size={15} /></button>}</div> : null}
-            {allComments.map((comment) => <button key={comment.id} className={`comment-card ${selectedId === comment.id ? 'selected' : ''}`} onClick={() => void jumpToComment(comment)}>
-              <div className="comment-meta"><span className="avatar">{comment.author.charAt(0).toUpperCase()}</span><span className="comment-author">{comment.author}</span><span className="comment-page">p. {comment.page}</span></div>
-              <p>{commentLabel(comment)}</p>
-              <div className="comment-bottom"><span>{comment.kind}{comment.draft ? busy ? ' · Saving…' : ' · Unsaved' : ''}</span><span>{displayDate(comment.date)}</span></div>
-              {comment.draft && !busy && <span className="remove-draft" onClick={(event) => { event.stopPropagation(); removeDraft(comment.id); }}>Remove</span>}
-            </button>)}
+            {allComments.map((comment) => <CommentCard key={comment.id} comment={comment} selected={selectedId === comment.id}
+              cardRef={(element) => { if (element) commentCardRefs.current.set(comment.id, element); else commentCardRefs.current.delete(comment.id); }}
+              label={commentLabel(comment)} date={displayDate(comment.date)} saving={savingCommentIdsRef.current.has(comment.id)}
+              pending={Boolean(comment.draft) || commentChanges.some((change) => change.target.id === comment.id)}
+              disabled={busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}
+              editingText={editingComment?.comment.id === comment.id ? editingComment.text : undefined}
+              onSelect={() => void jumpToComment(comment)} onEdit={() => { setPopupCommentId(null); setEditingComment({ comment, text: comment.text }); setSelectedId(comment.id); }}
+              onTextChange={(text) => setEditingComment((current) => current ? { ...current, text } : null)}
+              onSave={() => { if (editingComment) changeComment(editingComment.comment, 'edit', editingComment.text); }}
+              onCancel={() => setEditingComment(null)} onDelete={() => changeComment(comment, 'delete')} />)}
           </div>
           {pendingPoint && <div className="compose"><div className="compose-title"><span className="avatar">{authorName.charAt(0).toUpperCase()}</span><strong>New comment</strong><button onClick={() => setPendingPoint(null)} aria-label="Cancel comment"><X size={17} /></button></div><textarea autoFocus placeholder="Write your comment…" value={noteText} onChange={(event) => setNoteText(event.target.value)} maxLength={10000} /><div className="compose-footer"><span>Page {pendingPoint.page} · {authorName}</span><button className="button primary" onClick={addComment} disabled={!noteText.trim()}>Add comment</button></div></div>}
           <div className="sidebar-bottom"><CircleHelp size={16} /><span>Comments are saved inside the PDF.</span></div>
         </> : <div className="pages-panel"><div className="sidebar-heading"><div><h2>Pages</h2><p>{selectedPages.size ? `${selectedPages.size} selected` : 'Drag pages to sort, or use the arrows.'}</p></div><button className="icon-button" onClick={openPageGrid} aria-label="Expand pages to grid" title="Expand pages to grid"><Maximize2 size={18} /></button></div>
           <div className="page-selection"><button onClick={() => setSelectedPages(new Set(Array.from({ length: effectivePages.length }, (_, index) => index)))}>Select all</button><button onClick={() => setSelectedPages(new Set())} disabled={!selectedPages.size}>Clear</button></div>
-          <div className="page-list">{effectivePages.map((planned, index) => <div key={planned.id} draggable={!busy && !drafts.length} className={`page-row ${pageNumber === index + 1 ? 'active' : ''}`}
+          <div className="page-list">{effectivePages.map((planned, index) => <div key={planned.id} draggable={!busy && !pendingCommentCount} className={`page-row ${pageNumber === index + 1 ? 'active' : ''}`}
             onDragStart={(event) => { dragPageRef.current = index; event.dataTransfer.effectAllowed = 'move'; }}
             onDragOver={(event) => { if (dragPageRef.current !== null) { event.preventDefault(); event.stopPropagation(); } }}
             onDrop={(event) => { event.preventDefault(); event.stopPropagation(); const from = dragPageRef.current; dragPageRef.current = null; if (from !== null && from !== index) void applyEdit({ type: 'move', from, to: index }); }}
             onDragEnd={() => { dragPageRef.current = null; }}>
             <input type="checkbox" aria-label={`Select page ${index + 1}`} checked={selectedPages.has(index)} onChange={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })} />
             <button onClick={() => scrollToPage(index + 1)}>{document && <PageThumbnail document={document} page={planned.sourceIndex + 1} rotation={planned.turns * 90} />}<span className="page-row-label"><strong>Page {index + 1}</strong>{pagePlan && <em>Original page {planned.sourceIndex + 1}</em>}</span><small className="page-comment-count">{commentsByPage.get(index + 1)?.length || ''}</small></button>
-            <button className="page-insert" aria-label={`Add files after page ${index + 1}`} title="Add files after this page" disabled={busy || drafts.length > 0} onClick={() => void addFiles(index)}><FilePlus2 size={15} /></button>
+            <button className="page-insert" aria-label={`Add files after page ${index + 1}`} title="Add files after this page" disabled={busy || pendingCommentCount > 0} onClick={() => void addFiles(index)}><FilePlus2 size={15} /></button>
           </div>)}</div>
-          <div className="sidebar-bottom"><Files size={16} /><button className="text-button" onClick={() => void addFiles()} disabled={busy || drafts.length > 0}>Add PDF, Word, or images</button></div>
+          <div className="sidebar-bottom"><Files size={16} /><button className="text-button" onClick={() => void addFiles()} disabled={busy || pendingCommentCount > 0}>Add PDF, Word, or images</button></div>
         </div>}
         </div>}
         <div className="sidebar-rail" role="toolbar" aria-label="PDF tools" aria-orientation="vertical">
@@ -1453,10 +1808,11 @@ export default function App() {
       <h2 id="install-title">{preparingInstall ? 'Saving before restart…' : 'Restarting to install…'}</h2>
       <p role="status"><span className="inline-spinner" /> {preparingInstall ? 'Please wait while your PDF changes are saved.' : 'Your changes are saved. AsterPDF will reopen after the update.'}</p>
     </div></div>}
+    <SaveFeedback message={saveMessage ? compressionProgress || saveMessage : null} />
     {discardRequestId && <div className="modal-backdrop discard-backdrop"><div className="settings-modal discard-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-description">
       <div className="discard-icon"><TriangleAlert size={23} /></div>
       <h2 id="discard-title">Discard unsaved changes?</h2>
-      <p id="discard-description">Your changes to this PDF have not been saved. Save the PDF first if you want to keep them.</p>
+      <p id="discard-description">Your changes to this PDF have not been saved. Save them before leaving this document if you want to keep them.</p>
       <div className="discard-actions"><button className="button confirm-keep" autoFocus onClick={() => answerDiscard(false)}><Check size={17} />Keep editing</button><button className="button danger" onClick={() => answerDiscard(true)}><Trash2 size={16} />Discard changes</button></div>
     </div></div>}
   </div>;

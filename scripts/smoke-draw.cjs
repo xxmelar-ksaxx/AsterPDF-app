@@ -101,6 +101,7 @@ async function main() {
     };
     await window.getByRole('button', { name: 'Draw', exact: true }).click();
     await window.locator('.page-sheet').first().locator('.overlay-layer.overlay-active').waitFor();
+    await window.getByRole('button', { name: 'Freehand pen', exact: true }).click();
     await drag(0.14, 0.2, 0.39, 0.35);
     await window.getByRole('button', { name: 'Draw rectangle' }).click();
     await drag(0.48, 0.2, 0.75, 0.37);

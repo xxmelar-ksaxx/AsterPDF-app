@@ -359,6 +359,15 @@ app.whenReady().then(() => {
     return readFile(filePath);
   });
   ipcMain.handle('pdf:save', (event, bytes, saveAs, expectedPath) => { requireApp(event); return savePdf(bytes, Boolean(saveAs), expectedPath); });
+  ipcMain.handle('pdf:close-document', async (event, expectedPath) => {
+    requireApp(event);
+    if (typeof expectedPath !== 'string' || currentPath !== expectedPath) return false;
+    if (!(await confirmDiscard()) || closePromptRunning || saving || writing || currentPath !== expectedPath) return false;
+    currentPath = null;
+    dirty = false;
+    preparedCompressedSave = null;
+    return true;
+  });
   ipcMain.handle('pdf:list-original-text', (event, bytes, pageIndex) => {
     requireApp(event); return listOriginalText(bytes, pageIndex);
   });

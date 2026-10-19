@@ -409,7 +409,7 @@ async function embedShapedOverlays(rawBytes, placements) {
       const page = pdfium.FPDF_LoadPage(document, item.pageIndex);
       if (!page) throw new Error('Could not load the page for Arabic text.');
       try {
-        addShapedText(pdfium, document, page, item.text, fonts.get(item), item.size, item.matrix, item.color);
+        addShapedText(pdfium, document, page, item.text, fonts.get(item), item.size, item.matrix, item.color, item.bold === true);
         if (!pdfium.FPDFPage_GenerateContent(page)) throw new Error('Could not save the Arabic page content.');
       } finally { pdfium.FPDF_ClosePage(page); }
     }

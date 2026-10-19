@@ -1,4 +1,4 @@
-import { PDFArray, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFString } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString } from 'pdf-lib';
 
 export interface PdfComment {
   id: string;
@@ -20,6 +20,16 @@ export interface NewNote {
   text: string;
   date: string;
 }
+
+export type CommentChange = {
+  operationId: string;
+  target: PdfComment;
+  type: 'edit' | 'delete';
+  text?: string;
+  date: string;
+};
+
+export type CommentOverride = { text?: string; date?: string; deleted?: boolean };
 
 type AnnotationLike = {
   id?: string;
@@ -97,6 +107,66 @@ export async function addTextNotes(source: Uint8Array, notes: NewNote[]): Promis
       page.node.set(PDFName.of('Annots'), annots);
     }
     annots.push(ref);
+  }
+  return document.save({ useObjectStreams: false });
+}
+
+/** Change annotation dictionaries in place, keeping their author and geometry. */
+export async function changeComments(source: Uint8Array, changes: CommentChange[]): Promise<Uint8Array> {
+  if (!changes.length) return source;
+  const document = await PDFDocument.load(source.slice(), { updateMetadata: false });
+  const stringValue = (value: unknown) => value instanceof PDFString || value instanceof PDFHexString ? value.decodeText() : '';
+  const refId = (value: unknown) => value instanceof PDFRef ? `${value.objectNumber}R${value.generationNumber || ''}` : '';
+  for (const change of changes) {
+    const page = document.getPages()[change.target.page - 1];
+    const annots = page?.node.Annots();
+    if (!annots) throw new Error('The comment could not be found in this PDF.');
+    const entries = Array.from({ length: annots.size() }, (_, index) => {
+      const reference = annots.get(index);
+      return { index, reference, annotation: document.context.lookup(reference) };
+    });
+    let matches = entries.filter(({ reference, annotation }) => annotation instanceof PDFDict &&
+      (refId(reference) === change.target.id || stringValue(annotation.get(PDFName.of('NM'))) === change.target.id));
+    if (!matches.length) {
+      // Direct annotation dictionaries have generated PDF.js IDs. A unique
+      // content/author/location match also covers re-numbered editable copies.
+      matches = entries.filter(({ annotation }) => {
+        if (!(annotation instanceof PDFDict)) return false;
+        const rect = annotation.lookupMaybe(PDFName.of('Rect'), PDFArray);
+        if (!rect || rect.size() !== 4) return false;
+        const coordinates = rect.asArray().map((value) => value instanceof PDFNumber ? value.asNumber() : NaN);
+        const subtype = annotation.get(PDFName.of('Subtype'));
+        const expectedKind = change.target.kind === 'Text note' ? 'Text' : change.target.kind.replaceAll(' ', '');
+        return subtype instanceof PDFName && subtype.decodeText().toLowerCase() === expectedKind.toLowerCase() &&
+          stringValue(annotation.get(PDFName.of('Contents'))).trim() === change.target.text.trim() &&
+          (stringValue(annotation.get(PDFName.of('T'))).trim() || 'Unknown author') === change.target.author &&
+          Math.abs(Math.min(coordinates[0], coordinates[2]) - change.target.rect[0]) < .1 &&
+          Math.abs(Math.max(coordinates[1], coordinates[3]) - change.target.rect[3]) < .1;
+      });
+    }
+    if (matches.length !== 1) throw new Error('The comment could not be identified safely. Reopen the PDF and try again.');
+    const { index, reference, annotation } = matches[0];
+    if (!(annotation instanceof PDFDict)) throw new Error('Invalid PDF comment.');
+    if (change.type === 'edit') {
+      if (!change.text?.trim()) throw new Error('A comment cannot be empty.');
+      annotation.set(PDFName.of('Contents'), PDFHexString.fromText(change.text.trim()));
+      annotation.set(PDFName.of('M'), PDFString.of(pdfDate(change.date)));
+      annotation.delete(PDFName.of('RC')); // Avoid stale rich-text content overriding the edit.
+      if (annotation.get(PDFName.of('Subtype')) === PDFName.of('FreeText')) annotation.delete(PDFName.of('AP'));
+    } else {
+      const popup = annotation.get(PDFName.of('Popup'));
+      // Remove the note's popup too; it is not a separate user comment.
+      for (let position = annots.size() - 1; position >= 0; position--) {
+        const entry = entries[position];
+        if (position === index || (popup && entry.reference === popup) ||
+          (entry.annotation instanceof PDFDict && entry.annotation.get(PDFName.of('Subtype')) === PDFName.of('Popup') &&
+            entry.annotation.get(PDFName.of('Parent')) === reference)) annots.remove(position);
+        else if (entry.annotation instanceof PDFDict && entry.annotation.get(PDFName.of('IRT')) === reference) {
+          // Preserve reply text as independent comments instead of orphaning it.
+          entry.annotation.delete(PDFName.of('IRT')); entry.annotation.delete(PDFName.of('RT'));
+        }
+      }
+    }
   }
   return document.save({ useObjectStreams: false });
 }

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { onFinishInlineEdit } from '../finish-inline-edit';
-import type { PDFDocumentProxy, PageViewport } from 'pdfjs-dist';
+import { AnnotationType, OPS, type PDFDocumentProxy, type PageViewport } from 'pdfjs-dist';
 import type { PdfComment } from '../pdf/comments';
 import type { PlacedSignature, SavedSignature } from '../signatures/library';
 import OverlayLayer, { type OverlayTool, type PendingImage } from './OverlayLayer';
-import type { OverlayObject } from '../pdf/overlays';
+import type { OverlayObject, TextAppearance } from '../pdf/overlays';
 import TextFrame from './TextFrame';
+import CommentPin from './CommentPin';
 import type { ColorCommand, FontCommand, FontSelection, InstalledFont } from './FontPicker';
 import type { OriginalPdfText } from '../types';
 import OriginalTextEditor, { type TextEdit } from './OriginalTextEditor';
@@ -40,6 +41,9 @@ type Props = {
   viewerRef: RefObject<HTMLDivElement | null>;
   comments: PdfComment[];
   selectedId: string | null;
+  popupCommentId: string | null;
+  onCloseComment: () => void;
+  onOpenCommentSidebar: (id: string) => void;
   placing: boolean;
   pendingPoint: PendingPoint | null;
   pageId: string;
@@ -55,9 +59,12 @@ type Props = {
   onSelectSignature: (id: string | null) => void;
   onDeleteSignature: (id: string) => void;
   overlayTool: OverlayTool | null;
+  drawActive: boolean;
   overlayColor: string;
   overlayLineWidth: number;
+  drawStyle: Pick<OverlayObject, 'fill' | 'fillHidden' | 'opacity' | 'radius'>;
   overlayFontSize: number;
+  textAppearance: TextAppearance;
   overlayFontChoice: OverlayObject['fontChoice'];
   overlayImage: PendingImage | null;
   overlays: OverlayObject[];
@@ -71,9 +78,9 @@ type Props = {
 
 export default function PdfPage({
   document, sourceBytes, inspectOriginalText, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
-  placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
+  popupCommentId, onCloseComment, onOpenCommentSidebar, placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
-  overlayTool, overlayColor, overlayLineWidth, overlayFontSize, overlayFontChoice, overlayImage, overlays, selectedOverlayId,
+  overlayTool, drawActive, overlayColor, overlayLineWidth, drawStyle, overlayFontSize, textAppearance, overlayFontChoice, overlayImage, overlays, selectedOverlayId,
   onAddOverlay, onUpdateOverlay, onDeleteOverlay, onSelectOverlay, onError
 }: Props) {
   const sheetRef = useRef<HTMLDivElement | null>(null);
@@ -176,9 +183,28 @@ export default function PdfPage({
         canvas.height = Math.ceil(currentViewport.height * pixelRatio);
         const context = canvas.getContext('2d');
         if (!context) throw new Error('Canvas rendering is unavailable.');
+        const annotations = await page.getAnnotations({ intent: 'display' });
+        if (cancelled) return;
+        const noteIds = new Set(annotations.filter((annotation) =>
+          annotation.annotationType === AnnotationType.TEXT || annotation.annotationType === AnnotationType.POPUP
+        ).map((annotation) => annotation.id));
+        let insideNote = false;
         renderTask = page.render({
           canvas, canvasContext: context, viewport: currentViewport,
-          transform: [pixelRatio, 0, 0, pixelRatio, 0, 0]
+          transform: [pixelRatio, 0, 0, pixelRatio, 0, 0],
+          // Our interactive pins replace native sticky-note appearances. Keep
+          // them out of the bitmap so opacity and the eye toggle control every
+          // note marker. Other PDF artwork, forms and annotations still render.
+          operationsFilter: (index, operators) => {
+            const operation = operators.fnArray[index];
+            if (operation === OPS.beginAnnotation) insideNote = noteIds.has(operators.argsArray[index]?.[0]);
+            if (operation === OPS.endAnnotation) {
+              const render = !insideNote;
+              insideNote = false;
+              return render;
+            }
+            return !insideNote;
+          }
         });
         await renderTask.promise;
         if (cancelled || !canvasRef.current) return;
@@ -292,21 +318,20 @@ export default function PdfPage({
           onChange={(value) => { const next = { ...editingOriginalRef.current!, value };
             editingOriginalRef.current = next; setEditingOriginal(next); }} onFinish={finishOriginalText} />}
       </div>}
-      {activeViewport && <OverlayLayer pageId={pageId} width={width} height={height} scale={scale} tool={overlayTool}
+      {activeViewport && <OverlayLayer pageId={pageId} width={width} height={height} scale={scale} tool={overlayTool} drawActive={drawActive}
         fontSize={overlayFontSize} fontChoice={overlayFontChoice} viewport={activeViewport} fonts={installedFonts}
+        textAppearance={textAppearance}
         fontCommand={fontCommand} onFontEditChange={onFontEditChange}
-        color={overlayColor} lineWidth={overlayLineWidth} image={overlayImage} objects={overlays}
+        color={overlayColor} lineWidth={overlayLineWidth} drawStyle={drawStyle} image={overlayImage} objects={overlays}
         selectedId={selectedOverlayId} onAdd={onAddOverlay} onUpdate={onUpdateOverlay} onDelete={onDeleteOverlay} onSelect={onSelectOverlay} />}
       {near && !ready && <span className="page-rendering">Rendering page {pageNumber}…</span>}
       {activeViewport && comments.map((comment) => {
         const first = activeViewport.convertToViewportPoint(comment.rect[0], comment.rect[1]);
         const second = activeViewport.convertToViewportPoint(comment.rect[2], comment.rect[3]);
-        return <button key={comment.id} className={`comment-pin ${selectedId === comment.id ? 'selected' : ''} ${comment.draft ? 'draft' : ''}`}
-          style={{ left: Math.min(first[0], second[0]), top: Math.min(first[1], second[1]) }}
-          title={`${comment.author}: ${comment.text || '(Empty note)'}`}
-          onClick={(event) => { event.stopPropagation(); onSelectComment(comment.id); }}>
-          <MessageSquare size={14} fill="currentColor" />
-        </button>;
+        return <CommentPin key={comment.id} comment={comment} left={Math.min(first[0], second[0])} top={Math.min(first[1], second[1])}
+          selected={selectedId === comment.id} open={popupCommentId === comment.id && selectedId === comment.id}
+          viewerRef={viewerRef} onSelect={() => onSelectComment(comment.id)} onClose={onCloseComment}
+          onOpenSidebar={() => onOpenCommentSidebar(comment.id)} />;
       })}
       {activeViewport && pendingPoint?.page === pageNumber && (() => {
         const [left, top] = activeViewport.convertToViewportPoint(pendingPoint.x, pendingPoint.y);

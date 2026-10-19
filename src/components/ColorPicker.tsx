@@ -17,8 +17,8 @@ function toHex({ h, s, v }: ReturnType<typeof toHsv>) {
 }
 type EyeDropperConstructor = new () => { open(): Promise<{ sRGBHex: string }> };
 
-export default function ColorPicker({ value, recent, onChange }: {
-  value: string; recent: string[]; onChange: (value: string, remember?: boolean) => void;
+export default function ColorPicker({ value, recent, onChange, label = 'Text and drawing color' }: {
+  value: string; recent: string[]; onChange: (value: string, remember?: boolean) => void; label?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [hsv, setHsv] = useState(() => toHsv(value));
@@ -79,7 +79,7 @@ export default function ColorPicker({ value, recent, onChange }: {
     finally { setSampling(false); }
   };
   return <div className="color-picker" data-added-text-controls>
-    <button ref={trigger} className="color-picker-trigger" aria-label="Text and drawing color" title={`Color ${value}`}
+    <button ref={trigger} className="color-picker-trigger" aria-label={label} title={`Color ${value}`}
       aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(!open); setError(''); }}>
       <span style={{ background: value }} />
     </button>

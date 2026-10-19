@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('aster', {
   openDialog: () => ipcRenderer.invoke('pdf:open-dialog'),
   addDialog: () => ipcRenderer.invoke('pdf:add-dialog'),
   openPath: (filePath) => ipcRenderer.invoke('pdf:open-path', filePath),
+  closeDocument: (expectedPath) => ipcRenderer.invoke('pdf:close-document', expectedPath),
   onExternalOpen: (handler) => {
     const listener = (_event, request) => handler(request);
     ipcRenderer.on('pdf:external-open', listener);
