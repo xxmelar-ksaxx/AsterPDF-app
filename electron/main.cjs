@@ -8,6 +8,7 @@ const { listInstalledFonts, getInstalledFont } = require('./installed-fonts.cjs'
 const { createUpdateService, updateArchitecture } = require('./updates.cjs');
 const { createUpdateInstaller } = require('./update-installer.cjs');
 const { pdfPathsFromArguments, createFileOpenQueue } = require('./file-open.cjs');
+const { createWordExport } = require('./word-export.cjs');
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'aster', privileges: { standard: true, secure: true, supportFetchAPI: true } }
@@ -19,6 +20,9 @@ let dirty = false;
 let writing = false;
 let saving = false;
 let preparedCompressedSave = null;
+const wordExport = createWordExport({ dialog, getWindow: () => mainWindow, getCurrentPath: () => currentPath,
+  sameFile, validatePdfBytes, listInstalledFonts });
+app.on('will-quit', () => wordExport.dispose());
 let recentStore;
 let updateService;
 let updateInstaller;
@@ -308,6 +312,7 @@ function createWindow() {
       { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }
     ] },
     { label: 'View', submenu: [{ role: 'togglefullscreen' }] },
+    { label: 'Tools', submenu: [{ label: 'PDF to Word', click: () => send('menu:pdf-to-word') }] },
     { label: 'Settings', submenu: [{ label: 'Settings…', click: () => send('menu:settings') }] }
   ]));
 }
@@ -359,6 +364,14 @@ app.whenReady().then(() => {
     return readFile(filePath);
   });
   ipcMain.handle('pdf:save', (event, bytes, saveAs, expectedPath) => { requireApp(event); return savePdf(bytes, Boolean(saveAs), expectedPath); });
+  ipcMain.handle('word:prepare-export', (event, expectedPath) => { requireApp(event); return wordExport.prepare(expectedPath); });
+  ipcMain.handle('word:convert', (event, bytes, token, expectedPath) => {
+    requireApp(event);
+    return wordExport.convert(bytes, token, expectedPath, message => {
+      if (!event.sender.isDestroyed()) event.sender.send('word:progress', { token, message });
+    });
+  });
+  ipcMain.handle('word:discard-export', (event, token) => { requireApp(event); wordExport.discard(token); });
   ipcMain.handle('pdf:close-document', async (event, expectedPath) => {
     requireApp(event);
     if (typeof expectedPath !== 'string' || currentPath !== expectedPath) return false;

@@ -428,4 +428,37 @@ async function embedShapedOverlays(rawBytes, placements) {
   });
 }
 
-module.exports = { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays };
+// Reuse the same Unicode/Arabic extraction as the editor during Word export.
+function conversionTextRuns(pdfium, textPage) {
+  const characters = pageTextCharacters(pdfium, textPage);
+  const memory = pdfium.pdfium, ptr = memory.wasmExports.malloc(48);
+  try {
+    return [...characters].flatMap(([object, chars]) => {
+      const text = objectText(pdfium, object, textPage, () => characters).replace(/\u0000/g, '');
+      if (!text.trim()) return [];
+      const boxes = chars.flatMap(char => {
+        if (!char.text.trim() || !pdfium.FPDFText_GetCharBox(textPage, char.index, ptr, ptr + 8, ptr + 16, ptr + 24)) return [];
+        const [left, right, bottom, top] = [0, 8, 16, 24].map(offset => memory.getValue(ptr + offset, 'double'));
+        return [left, right, bottom, top].every(Number.isFinite) && right > left && top > bottom ? [[left, bottom, right, top]] : [];
+      });
+      if (!boxes.length) return [];
+      const first = chars[0].index;
+      const color = pdfium.FPDFText_GetFillColor(textPage, first, ptr, ptr + 4, ptr + 8, ptr + 12)
+        ? [0, 4, 8].map(offset => Math.max(0, Math.min(255, memory.getValue(ptr + offset, 'i32')))) : [0, 0, 0];
+      // Font size excludes the text transform. Some producers use 1-point
+      // fonts and scale their matrix to the actual displayed size.
+      let size = pdfium.FPDFText_GetFontSize(textPage, first) || 12;
+      if (pdfium.FPDFText_GetMatrix(textPage, first, ptr)) {
+        const scale = Math.hypot(memory.getValue(ptr + 8, 'float'), memory.getValue(ptr + 12, 'float'));
+        if (Number.isFinite(scale) && scale > 0) size *= scale;
+      }
+      return [{ object, text, font: objectFontName(pdfium, object), size,
+        bold: pdfium.FPDFText_GetFontWeight(textPage, first) >= 600,
+        color: color.map(value => value.toString(16).padStart(2, '0')).join(''),
+        box: [Math.min(...boxes.map(box => box[0])), Math.min(...boxes.map(box => box[1])),
+          Math.max(...boxes.map(box => box[2])), Math.max(...boxes.map(box => box[3]))] }];
+    });
+  } finally { memory.wasmExports.free(ptr); }
+}
+
+module.exports = { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays, conversionTextRuns };

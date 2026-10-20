@@ -13,7 +13,7 @@ import { addTextNotes, changeComments, readPageComments, noteAsComment, markupKi
 import { selectedPdfText } from './components/PdfTextSelection';
 import { captureMarkups, restoreMarkupOverrides, type MarkupSnapshot } from './pdf/markup-history';
 import { prepareCommentSave } from './pdf/comment-save';
-import type { OpenedPdf, RecentPdf } from './types';
+import type { OpenedPdf, RecentPdf, WordExportResult } from './types';
 import type { OpenedFile } from './types';
 import PdfPage, { pageScale, type PageSize, type PendingPoint, type Zoom } from './components/PdfPage';
 import PageThumbnail from './components/PageThumbnail';
@@ -168,6 +168,8 @@ export default function App() {
   const [returningHome, setReturningHome] = useState(false);
   const returningHomeRef = useRef(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [wordExporting, setWordExporting] = useState(false);
+  const [wordExportResult, setWordExportResult] = useState<WordExportResult | null>(null);
   const [editingDirty, setEditingDirty] = useState(false);
   const [pagePlan, setPagePlan] = useState<PlannedPage[] | null>(null);
   const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
@@ -746,6 +748,45 @@ export default function App() {
     return { bytes: await attachOverlayPackage(annotated, base, objects), base, objects };
   }, [source, pagePlan, placedSignatures, effectivePages, document, drafts, commentChanges, overlays, installedFonts]);
 
+  const latestWordBuild = useRef(buildPendingPdf);
+  useLayoutEffect(() => { latestWordBuild.current = buildPendingPdf; }, [buildPendingPdf]);
+  const exportToWord = useCallback(async () => {
+    if (!source || !document) { setError('Open a PDF before converting it to Word.'); return; }
+    if (busy || savingRef.current || returningHomeRef.current || installLockRef.current) return;
+    savingRef.current = true;
+    window.aster.setSaving(true);
+    let prepared: { token: string; path: string } | null = null;
+    let unsubscribe: (() => void) | undefined;
+    try {
+      // Ask for the destination before any conversion or expensive preparation.
+      prepared = await window.aster.prepareWordExport(source.path);
+      if (!prepared) return;
+      await finishInlineEdits();
+      setBusy(true); setWordExporting(true); setWordExportResult(null);
+      window.aster.setSaving(true);
+      setSaveMessage('Preparing the current PDF…');
+      await paintSaveFeedback();
+      unsubscribe = window.aster.onWordProgress(progress => {
+        if (progress.token === prepared?.token) setSaveMessage(progress.message);
+      });
+      const additionalNotes: NewNote[] = pendingPoint && noteText.trim() && authorName ? [{
+        id: crypto.randomUUID(), page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
+        author: authorName, text: noteText.trim(), date: new Date().toISOString()
+      }] : [];
+      const { bytes } = await latestWordBuild.current(additionalNotes);
+      const result = await window.aster.convertToWord(bytes, prepared.token, source.path);
+      setWordExportResult(result); setError('');
+    } catch (cause) {
+      setError(`Could not convert PDF to Word: ${messageOf(cause)}`);
+    } finally {
+      unsubscribe?.();
+      if (prepared) await window.aster.discardWordExport(prepared.token).catch(() => {});
+      savingRef.current = false;
+      window.aster.setSaving(false);
+      setBusy(false); setSaveMessage(null); setWordExporting(false);
+    }
+  }, [source, document, busy, pendingPoint, noteText, authorName]);
+
   const save = useCallback(async (saveAs = false, additionalNotes: NewNote[] = []): Promise<boolean> => {
     if (returningHomeRef.current) return false;
     if (savingRef.current) return false;
@@ -1316,10 +1357,11 @@ export default function App() {
       window.aster.onMenu('menu:open', () => { if (!installLockRef.current) void openSelected(); }),
       window.aster.onMenu('menu:save', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current()).catch((cause) => setError(messageOf(cause))); }),
       window.aster.onMenu('menu:save-as', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current(true)).catch((cause) => setError(messageOf(cause))); }),
-      window.aster.onMenu('menu:settings', () => { if (!installLockRef.current) setSettingsOpen(true); })
+      window.aster.onMenu('menu:settings', () => { if (!installLockRef.current) setSettingsOpen(true); }),
+      window.aster.onMenu('menu:pdf-to-word', () => { void exportToWord(); })
     ];
     return () => subscriptions.forEach((unsubscribe) => unsubscribe());
-  }, [openSelected, save]);
+  }, [openSelected, save, exportToWord]);
 
   const saveSettings = async () => {
     try {
@@ -1915,7 +1957,15 @@ export default function App() {
       <h2 id="install-title">{preparingInstall ? 'Saving before restart…' : 'Restarting to install…'}</h2>
       <p role="status"><span className="inline-spinner" /> {preparingInstall ? 'Please wait while your PDF changes are saved.' : 'Your changes are saved. AsterPDF will reopen after the update.'}</p>
     </div></div>}
-    <SaveFeedback message={saveMessage ? compressionProgress || saveMessage : null} />
+    {wordExportResult && <div className="word-export-notice" role="status">
+      <div><strong>Saved {wordExportResult.name}</strong>
+        <p>{wordExportResult.pages} pages · {wordExportResult.tables} editable tables. Review the converted layout before use.</p>
+        {wordExportResult.warnings.map((warning, index) => <p key={index}>{warning}</p>)}
+      </div>
+      <button className="icon-button" aria-label="Dismiss Word export result" onClick={() => setWordExportResult(null)}><X size={17} /></button>
+    </div>}
+    <SaveFeedback message={saveMessage ? (wordExporting ? saveMessage : compressionProgress || saveMessage) : null}
+      title={wordExporting ? 'Converting to Word' : 'Saving your PDF'} />
     {discardRequestId && <div className="modal-backdrop discard-backdrop"><div className="settings-modal discard-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-description">
       <div className="discard-icon"><TriangleAlert size={23} /></div>
       <h2 id="discard-title">Discard unsaved changes?</h2>

@@ -21,6 +21,10 @@ declare global {
       finishCompressedSave(bytes: Uint8Array, token: string, expectedPath: string): Promise<{ path: string; name: string }>;
       discardCompressedSave(token: string): Promise<void>;
       printDocx(): Promise<Uint8Array>;
+      prepareWordExport(expectedPath: string): Promise<{ token: string; path: string } | null>;
+      convertToWord(bytes: Uint8Array, token: string, expectedPath: string): Promise<WordExportResult>;
+      discardWordExport(token: string): Promise<void>;
+      onWordProgress(handler: (progress: { token: string; message: string }) => void): () => void;
       getRecentPdfs(): Promise<RecentPdf[]>;
       setRecentPreview(path: string, preview: string): Promise<void>;
       getSettings(): Promise<{ authorName: string }>;
@@ -34,7 +38,7 @@ declare global {
       setSaving(value: boolean): void;
       onDiscardRequest(handler: (id: string) => void): () => void;
       answerDiscardRequest(id: string, discard: boolean): void;
-      onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:undo' | 'menu:redo', handler: () => void): () => void;
+      onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word', handler: () => void): () => void;
     };
   }
 }
@@ -45,6 +49,8 @@ export interface OpenedPdf {
   bytes: Uint8Array;
   needsSave?: boolean;
 }
+
+export interface WordExportResult { path: string; name: string; pages: number; tables: number; warnings: string[] }
 
 export interface UpdateStatus {
   transfer: {

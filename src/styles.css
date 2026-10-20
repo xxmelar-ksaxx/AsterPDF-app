@@ -30,6 +30,9 @@
 .comment-options>button.comment-delete{color:#b6453b}
 .comment-card .comment-bottom{align-items:center;gap:8px;margin-top:8px}
 .comment-date{margin-left:auto;text-align:right}
+.word-export-notice{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);z-index:100;display:flex;align-items:flex-start;gap:16px;max-width:min(620px,90vw);max-height:40vh;overflow:auto;padding:16px 18px;background:#f8fcee;border:1px solid #c5dca4;border-radius:12px;box-shadow:0 8px 30px #26331f22;color:#344835;font-size:13px}
+.word-export-notice p{margin:6px 0 0;font-size:12px;line-height:1.5;color:#71806e}
+.word-export-notice .icon-button{flex:none}
 .comment-tools{display:flex;align-items:center;gap:5px}
 .comment-tools .icon-button{width:34px;height:34px;border:1px solid transparent}
 .comment-tools .icon-button.active{background:#edf6df;border-color:#a9cc76;color:#426c24}

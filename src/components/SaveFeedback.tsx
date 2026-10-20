@@ -11,7 +11,7 @@ export function paintSaveFeedback() {
   });
 }
 
-export default function SaveFeedback({ message }: { message: string | null }) {
+export default function SaveFeedback({ message, title = 'Saving your PDF' }: { message: string | null; title?: string }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const lastMessage = useRef('Preparing your PDF…');
   if (message) lastMessage.current = message;
@@ -31,7 +31,7 @@ export default function SaveFeedback({ message }: { message: string | null }) {
         <circle className="save-feedback-ring" cx="44" cy="44" r="40" /></svg>
       <div className="save-feedback-document"><FileText size={28} strokeWidth={1.5} /></div>
     </div>
-    <h2 id="save-feedback-title">Saving your PDF</h2>
+    <h2 id="save-feedback-title">{title}</h2>
     <p id="save-feedback-message" role="status" aria-live="polite">{message || lastMessage.current}</p>
   </dialog>;
 }
