@@ -3,6 +3,7 @@ import { concatTransformationMatrix, decodePDFRawStream, degrees, LineCapStyle, 
 import type { PageViewport } from 'pdfjs-dist';
 import fontkit from '@pdf-lib/fontkit';
 import { shapePath } from './draw-geometry';
+import { restoreEditableAnnotations } from './editable-annotations';
 
 export type OverlayKind = 'pen' | 'rectangle' | 'ellipse' | 'line' | 'text' | 'image';
 export type TextAppearance = { bold?: boolean; italic?: boolean; underline?: boolean; strikeThrough?: boolean; textAlign?: 'left' | 'center' | 'right' | 'justify' | 'smart-justify'; textSizing?: 'auto' | 'fixed' };
@@ -68,8 +69,11 @@ export async function readOverlayPackage(bytes: Uint8Array): Promise<{ base: Uin
       (item.fontSize !== undefined && (!Number.isFinite(item.fontSize) || item.fontSize < 4 || item.fontSize > 500)))) {
       throw new Error('Invalid editable objects');
     }
-    await PDFDocument.load(base);
-    return { base, objects: parsed as OverlayObject[] };
+    const basePdf = await PDFDocument.load(base);
+    // A different page count means the saved artwork no longer maps safely.
+    // Open the current PDF normally instead of restoring a stale page layout.
+    if (basePdf.getPageCount() !== pdf.getPageCount()) return null;
+    return { base: await restoreEditableAnnotations(pdf, basePdf, base), objects: parsed as OverlayObject[] };
   } catch { throw new Error('This PDF has damaged AsterPDF editing data. Keep the original and open a healthy copy.'); }
 }
 

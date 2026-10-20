@@ -1,14 +1,15 @@
 import { useEffect, useId, useRef, useState, type Ref } from 'react';
-import { Check, MoreHorizontal, Pencil, Trash2, X } from 'lucide-react';
+import { Check, MoreHorizontal, Pencil, Reply, Trash2, X } from 'lucide-react';
 import type { PdfComment } from '../pdf/comments';
 import { onFinishInlineEdit } from '../finish-inline-edit';
 
 export default function CommentCard({ comment, selected, label, date, saving, pending, disabled, editingText,
-  cardRef, onSelect, onEdit, onTextChange, onSave, onCancel, onDelete }: {
+  cardRef, onSelect, onEdit, onTextChange, onSave, onCancel, onDelete, onReply }: {
   comment: PdfComment; selected: boolean; label: string; date: string; saving: boolean; pending: boolean; disabled: boolean;
   editingText?: string; cardRef: Ref<HTMLDivElement>;
   onSelect: () => void; onEdit: () => void; onTextChange: (text: string) => void;
   onSave: () => void; onCancel: () => void; onDelete: () => void;
+  onReply: () => void;
 }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -28,7 +29,7 @@ export default function CommentCard({ comment, selected, label, date, saving, pe
     if (!editing) return;
     return onFinishInlineEdit(() => { if (editingText.trim()) onSave(); else onCancel(); });
   }, [editing, editingText, onSave, onCancel]);
-  return <div ref={cardRef} data-comment-id={comment.id} className={`comment-card ${selected ? 'selected' : ''}`}>
+  return <div ref={cardRef} data-comment-id={comment.id} className={`comment-entry${selected ? ' selected' : ''}`}>
     <div className="comment-card-header">
       <button className="comment-jump comment-author-jump" onClick={onSelect} aria-label={`Go to comment by ${comment.author} on page ${comment.page}`}>
         <span className="comment-meta"><span className="avatar">{comment.author.charAt(0).toUpperCase()}</span><span className="comment-author">{comment.author}</span></span>
@@ -50,7 +51,7 @@ export default function CommentCard({ comment, selected, label, date, saving, pe
         </div>}
       </div>
     </div>
-    {!editing && <button className="comment-jump" onClick={onSelect}><span className="comment-body">{label}</span></button>}
+    {!editing && <button className="comment-jump" onClick={onSelect}><span className="comment-body" dir="auto">{label}</span></button>}
     {editing && <div className="comment-edit" onBlur={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget as Node | null) && editingText.trim()) onSave();
     }}>
@@ -66,6 +67,7 @@ export default function CommentCard({ comment, selected, label, date, saving, pe
     </div>}
     {confirmDelete && <div className="comment-delete-confirm"><span>Delete this comment?</span><button autoFocus className="text-button" onClick={() => { setConfirmDelete(false); menuButtonRef.current?.focus(); }}>Cancel</button>
       <button className="text-button comment-delete" disabled={disabled} onClick={() => { setConfirmDelete(false); onDelete(); }}>Delete</button></div>}
+    {!editing && <button className="text-button comment-reply-action" disabled={disabled} onClick={onReply}><Reply size={14} />Reply</button>}
     <div className="comment-bottom"><span role="status">{saving ? 'Saving…' : pending ? 'Unsaved' : ''}</span><span className="comment-date">{date}</span></div>
   </div>;
 }

@@ -9,7 +9,7 @@ import {
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { addTextNotes, changeComments, readPageComments, noteAsComment, markupKind, MARKUP_COLORS, type MarkupKind, type TextMarkupSelection, type CommentChange, type CommentOverride, type NewNote, type PdfComment } from './pdf/comments';
+import { addTextNotes, changeComments, readAllPageComments, noteAsComment, commentThreads, inMarkupThread, markupKind, MARKUP_COLORS, type MarkupKind, type TextMarkupSelection, type CommentChange, type CommentOverride, type NewNote, type PdfComment } from './pdf/comments';
 import { selectedPdfText } from './components/PdfTextSelection';
 import { captureMarkups, restoreMarkupOverrides, type MarkupSnapshot } from './pdf/markup-history';
 import { prepareCommentSave } from './pdf/comment-save';
@@ -141,7 +141,7 @@ export default function App() {
       const target = event.target;
       if (target instanceof Element && (target.closest('.comment-pin, .comment-popup') ||
         target.closest('[data-comment-color]')?.getAttribute('data-comment-color') === selectedId ||
-        target.closest<HTMLElement>('.comment-card')?.dataset.commentId === selectedId)) return;
+        target.closest<HTMLElement>('[data-comment-id]')?.dataset.commentId === selectedId)) return;
       clearSelection();
     };
     const dismissOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape' && !event.defaultPrevented) clearSelection(); };
@@ -392,8 +392,7 @@ export default function App() {
             const pdfPage = await pdf.getPage(page);
             const natural = pdfPage.getViewport({ scale: 1 });
             if (!cancelled) measurePage(page, { width: natural.width, height: natural.height });
-            const data = await pdfPage.getAnnotations({ intent: 'display' });
-            nextComments.push(...readPageComments(data, page));
+            nextComments.push(...await readAllPageComments(pdfPage, page));
             if (!cancelled && !refreshing) setComments([...nextComments]);
           } catch {
             if (!cancelled) setError(`Could not read comments on page ${page}.`);
@@ -451,7 +450,7 @@ export default function App() {
   const effectivePages = useMemo(() => document ? (pagePlan ?? initialPagePlan(document.numPages)) : [], [document, pagePlan]);
   const visibleComments = useMemo(() => pagePlan
     ? pagePlan.flatMap((page, index) => [...comments, ...savedSessionComments].filter((comment) => comment.page === page.sourceIndex + 1)
-      .map((comment) => ({ ...comment, id: `${page.id}:${comment.id}`, page: index + 1 })))
+      .map((comment) => ({ ...comment, id: `${page.id}:${comment.id}`, replyTo: comment.replyTo ? `${page.id}:${comment.replyTo}` : undefined, page: index + 1 })))
     : [...comments, ...savedSessionComments], [comments, savedSessionComments, pagePlan]);
 
   const allComments = useMemo(() => [
@@ -461,6 +460,11 @@ export default function App() {
     const override = commentOverrides[comment.id];
     return override?.deleted ? [] : [{ ...comment, ...override }];
   }).sort((a, b) => a.page - b.page), [visibleComments, drafts, commentOverrides]);
+  // Unannotated text markups belong on the page, not in the conversation.
+  const threads = useMemo(() => commentThreads(allComments), [allComments]);
+  const threadComments = useMemo(() => [...visibleComments, ...drafts.map(note => noteAsComment(note))], [visibleComments, drafts]);
+  const conversationComments = threads.filter(comment => !markupKind(comment.kind) || comment.text.trim() || comment.replies?.length);
+  const listedComments = threads.filter(comment => !markupKind(comment.kind) || comment.text.trim() || comment.replies?.length || editingComment?.comment.id === comment.id);
   useLayoutEffect(() => {
     if (!pendingCommentScroll || sidebarCollapsed || sidebarTab !== 'comments') return;
     const list = commentListRef.current;
@@ -478,13 +482,13 @@ export default function App() {
   }, [pendingCommentScroll, sidebarCollapsed, sidebarTab, allComments]);
   const commentsByPage = useMemo(() => {
     const grouped = new Map<number, PdfComment[]>();
-    for (const comment of allComments) {
+    for (const comment of threads) {
       const current = grouped.get(comment.page) ?? [];
       current.push(comment);
       grouped.set(comment.page, current);
     }
     return grouped;
-  }, [allComments]);
+  }, [threads]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
@@ -771,7 +775,7 @@ export default function App() {
       });
       const additionalNotes: NewNote[] = pendingPoint && noteText.trim() && authorName ? [{
         id: crypto.randomUUID(), page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
-        author: authorName, text: noteText.trim(), date: new Date().toISOString()
+        author: authorName, text: noteText.trim(), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
       }] : [];
       const { bytes } = await latestWordBuild.current(additionalNotes);
       const result = await (kind === 'data' ? window.aster.convertToData : window.aster.convertToWord)(bytes, prepared.token, source.path);
@@ -845,7 +849,7 @@ export default function App() {
     try {
       const pendingNotes: NewNote[] = pendingPoint && noteText.trim() ? [{
         id: crypto.randomUUID(), page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
-        author: authorName, text: noteText.trim(), date: new Date().toISOString()
+        author: authorName, text: noteText.trim(), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
       }] : [];
       if (pendingNotes.length && !authorName) throw new Error('Set your comment author name before saving this comment.');
       if (!(await save(false, pendingNotes))) {
@@ -1033,8 +1037,8 @@ export default function App() {
     if (direction === 'undo') history.future = [...history.future, current].slice(-100);
     else history.past = [...history.past, current].slice(-100);
     history.colorGroup = null;
-    setDrafts(notes => [...notes.filter(note => !note.markup), ...target.drafts]);
-    setCommentChanges(changes => [...changes.filter(change => !markupKind(change.target.kind)), ...target.changes]);
+    setDrafts(notes => [...notes.filter(note => !current.ids.includes(note.id)), ...target.drafts]);
+    setCommentChanges(changes => [...changes.filter(change => !current.ids.includes(change.target.id)), ...target.changes]);
     setCommentOverrides(overrides => restoreMarkupOverrides(overrides, current, target));
     setSelectedId(null); setPopupCommentId(null); setPendingCommentScroll(null); setEditingComment(null);
     window.getSelection()?.removeAllRanges();
@@ -1303,8 +1307,8 @@ export default function App() {
     if (!source || busy || commentSaving || returningHome || savingRef.current || pendingCommentCount === 0 || autoSaveRevision <= lastAutoAttemptRef.current) return;
     // Text markups stay pending until an explicit save, including when a
     // regular note triggers background saving in the same document.
-    const batch = drafts.filter(note => !note.markup);
-    const changes = commentChanges.filter(change => !markupKind(change.target.kind));
+    const batch = drafts.filter(note => !inMarkupThread(noteAsComment(note), threadComments));
+    const changes = commentChanges.filter(change => !inMarkupThread(change.target, threadComments));
     if (!batch.length && !changes.length) return;
     if (source.needsSave) {
       lastAutoAttemptRef.current = autoSaveRevision;
@@ -1350,7 +1354,7 @@ export default function App() {
         setCommentSaving(false);
       }
     })();
-  }, [autoSaveRevision, busy, commentSaving, returningHome, drafts, commentChanges, pendingCommentCount, source, editingDirty, placedSignatures.length, pagePlan]);
+  }, [autoSaveRevision, busy, commentSaving, returningHome, drafts, commentChanges, pendingCommentCount, source, editingDirty, placedSignatures.length, pagePlan, threadComments]);
 
   useEffect(() => {
     const subscriptions = [
@@ -1381,6 +1385,7 @@ export default function App() {
   };
 
   const startComment = () => {
+    if (pendingPoint?.replyTo && noteText.trim()) { setError('Post or cancel your current reply before starting a new comment.'); return; }
     if (editingDirty || placedSignatures.length) { setError('Save your edits before adding a comment so only the comment is auto-saved.'); return; }
     if (!authorName) { setSettingsOpen(true); return; }
     setMarkupTool(null);
@@ -1398,17 +1403,18 @@ export default function App() {
     if (!authorName) { setSettingsOpen(true); return; }
     const notes: NewNote[] = selections.map(selection => ({
       id: crypto.randomUUID(), page: selection.page, x: selection.quadPoints[0], y: selection.quadPoints[1],
-      author: authorName, text: selection.text.slice(0, 10000) || kind, date: new Date().toISOString(),
+      author: authorName, text: '', date: new Date().toISOString(),
       markup: { kind, quadPoints: selection.quadPoints, color: markupColors[kind] }
     }));
     rememberMarkup();
     window.aster.setDirty(true);
     setDrafts(current => [...current, ...notes]);
-    setSelectedId(notes[notes.length - 1].id); setPopupCommentId(null);
+    setSelectedId(notes[notes.length - 1].id); setPopupCommentId(notes[notes.length - 1].id);
     window.getSelection()?.removeAllRanges();
   }, [source, busy, returningHome, editingDirty, placedSignatures.length, pagePlan, authorName, markupColors, rememberMarkup]);
 
   const chooseMarkupTool = (kind: MarkupKind) => {
+    if (pendingPoint?.replyTo && noteText.trim()) { setError('Post or cancel your current reply before switching to a markup tool.'); return; }
     if (!authorName) { setSettingsOpen(true); return; }
     const selections = selectedPdfText();
     setPlacing(false); setPendingPoint(null); setPopupCommentId(null);
@@ -1576,27 +1582,47 @@ export default function App() {
   };
 
   const addComment = () => {
-    if (!pendingPoint || !noteText.trim() || !authorName || editingDirty || placedSignatures.length) return;
+    if (!pendingPoint || !noteText.trim() || !authorName || busy || returningHome || editingDirty || placedSignatures.length || pagePlan) return;
+    if (pendingPoint.replyTo && !allComments.some(comment => comment.id === pendingPoint.replyTo)) {
+      setError('This comment was removed. Cancel the reply or choose another comment.'); return;
+    }
     const id = crypto.randomUUID();
+    const manual = pendingPoint.replyTo && inMarkupThread(allComments.find(comment => comment.id === pendingPoint.replyTo)!, threadComments);
+    if (manual) rememberMarkup();
     window.aster.setDirty(true);
     setDrafts((current) => [...current, {
       id, page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
-      author: authorName, text: noteText.trim(), date: new Date().toISOString()
+      author: authorName, text: noteText.trim(), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
     }]);
-    setAutoSaveRevision((revision) => revision + 1);
-    setSelectedId(id);
+    if (!manual) setAutoSaveRevision((revision) => revision + 1);
+    setSelectedId(pendingPoint.replyTo ?? id);
+    setPendingCommentScroll(id);
     setPendingPoint(null);
+    setNoteText('');
+  };
+
+  const startReply = (comment: PdfComment) => {
+    if (!authorName) { setSettingsOpen(true); return; }
+    const root = threads.find(item => item.id === comment.id || item.replies?.some(reply => reply.id === comment.id)) ?? comment;
+    if (pendingPoint && noteText.trim()) {
+      selectTool('comments');
+      if (pendingPoint.replyTo !== root.id) setError('Post or cancel your current comment before starting another reply.');
+      return;
+    }
+    selectTool('comments'); setMarkupTool(null); setPlacing(false); setPopupCommentId(null);
+    setSelectedId(root.id); setPendingCommentScroll(root.id);
+    setPendingPoint({ page: root.page, x: root.rect[0], y: root.rect[1], replyTo: root.id });
     setNoteText('');
   };
 
   const changeComment = (comment: PdfComment, type: 'edit' | 'delete', text?: string) => {
     if (busy || returningHome || editingDirty || placedSignatures.length || pagePlan) return;
     if (type === 'edit' && (!text?.trim() || text.trim() === comment.text)) { setEditingComment(null); return; }
-    if (markupKind(comment.kind)) rememberMarkup();
+    if (inMarkupThread(comment, threadComments)) rememberMarkup();
     const date = new Date().toISOString();
     setCommentChanges((current) => [...current, { operationId: crypto.randomUUID(), target: comment, type, text: text?.trim(), date }]);
     setCommentOverrides((current) => ({ ...current, [comment.id]: { ...current[comment.id], ...(type === 'delete' ? { deleted: true } : { text: text!.trim(), date }) } }));
-    if (!markupKind(comment.kind)) setAutoSaveRevision((revision) => revision + 1);
+    if (!inMarkupThread(comment, threadComments)) setAutoSaveRevision((revision) => revision + 1);
     window.aster.setDirty(true);
     if (editingComment?.comment.id === comment.id) setEditingComment(null);
     if (type === 'delete' && selectedId === comment.id) setSelectedId(null);
@@ -1660,6 +1686,18 @@ export default function App() {
   const visibleCompressionEstimate: CompressionEstimate = source &&
     (estimateForRef.current?.bytes !== source.bytes || estimateForRef.current.plan !== pagePlan)
     ? { status: 'calculating', progress: 'Starting size estimates…' } : compressionEstimate;
+
+  const renderCommentEntry = (comment: PdfComment, root: PdfComment) => <CommentCard key={comment.id} comment={comment} selected={selectedId === comment.id}
+    cardRef={(element) => { if (element) commentCardRefs.current.set(comment.id, element); else commentCardRefs.current.delete(comment.id); }}
+    label={comment.text || (markupKind(comment.kind) ? comment.kind : commentLabel(comment))} date={displayDate(comment.date)} saving={savingCommentIdsRef.current.has(comment.id)}
+    pending={Boolean(comment.draft) || commentChanges.some(change => change.target.id === comment.id)}
+    disabled={busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}
+    editingText={editingComment?.comment.id === comment.id ? editingComment.text : undefined}
+    onSelect={() => void jumpToComment(root)} onReply={() => startReply(comment)}
+    onEdit={() => { setPopupCommentId(null); setEditingComment({ comment, text: comment.text }); setSelectedId(comment.id); }}
+    onTextChange={text => setEditingComment(current => current ? { ...current, text } : null)}
+    onSave={() => { if (editingComment) changeComment(editingComment.comment, 'edit', editingComment.text); }}
+    onCancel={() => setEditingComment(null)} onDelete={() => changeComment(comment, 'delete')} />;
 
   return <div className="app-shell" onDragOver={(event) => {
     if (event.dataTransfer.types.includes('Files')) event.preventDefault();
@@ -1844,6 +1882,12 @@ export default function App() {
                 onAddSignature={addSignatureAt} onUpdateSignature={updateSignature} onSelectSignature={setSelectedSignatureId} onDeleteSignature={requestSignatureRemoval}
                 popupCommentId={popupCommentId}
                 commentsActive={activeTool === 'comments'} markingText={Boolean(markupTool)} onCommentColor={changeMarkupColor} recentColors={recentColors}
+                onAddMarkupComment={(comment) => {
+                  setPopupCommentId(null); setSelectedId(comment.id); selectTool('comments');
+                  setMarkupTool(null); setEditingComment({ comment, text: comment.text }); setPendingCommentScroll(comment.id);
+                }}
+                onDeleteMarkup={(comment) => changeComment(comment, 'delete')}
+                onReplyComment={startReply}
                 commentEditingDisabled={busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}
                 onSelectComment={(id) => { setSelectedId(id); setPopupCommentId(id); }}
                 onCloseComment={() => { setSelectedId(null); setPopupCommentId(null); }}
@@ -1865,24 +1909,26 @@ export default function App() {
             onStyle={changeDrawStyle} onUpdate={updateOverlay} onSelect={(id) => { selectOverlay(id); setOverlayTool('select'); }}
             onDelete={deleteOverlay} onDuplicate={duplicateOverlay} onOrder={orderOverlay} onClose={() => setSidebarCollapsed(true)} />;
         })() : sidebarTab === 'comments' ? <>
-          <div className="sidebar-heading"><h2 className="comments-heading">Comments <span>{allComments.length}</span></h2><div className="comment-heading-actions">
+          <div className="sidebar-heading"><h2 className="comments-heading">Comments <span>{conversationComments.length}</span></h2><div className="comment-heading-actions">
             <button className="icon-button" title={showCommentPins ? 'Hide comments on pages' : 'Show comments on pages'} aria-label={showCommentPins ? 'Hide comments on pages' : 'Show comments on pages'} aria-pressed={showCommentPins} onClick={() => setShowCommentPins((visible) => !visible)}>{showCommentPins ? <Eye size={19} /> : <EyeOff size={19} />}</button>
             <button className="icon-button" title="Save a copy" aria-label="Save a copy" disabled={busy || commentSaving} onClick={() => void save(true)}><FilePlus2 size={19} /></button>
           </div></div>
           <div className="comment-list" ref={commentListRef}>
-            {allComments.length === 0 && !pendingPoint ? <div className="empty-comments"><div><MessageSquare size={25} /></div><h3>Start a conversation</h3><p>{placedSignatures.length ? 'Confirm and save the pending signature above to add a comment.' : 'Comments in this PDF will appear here. Click “Add comment” and choose a spot on the page.'}</p>{!placedSignatures.length && <button className="text-button" onClick={startComment}>Add the first comment <ChevronRight size={15} /></button>}</div> : null}
-            {allComments.map((comment) => <CommentCard key={comment.id} comment={comment} selected={selectedId === comment.id}
-              cardRef={(element) => { if (element) commentCardRefs.current.set(comment.id, element); else commentCardRefs.current.delete(comment.id); }}
-              label={commentLabel(comment)} date={displayDate(comment.date)} saving={savingCommentIdsRef.current.has(comment.id)}
-              pending={Boolean(comment.draft) || commentChanges.some((change) => change.target.id === comment.id)}
-              disabled={busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}
-              editingText={editingComment?.comment.id === comment.id ? editingComment.text : undefined}
-              onSelect={() => void jumpToComment(comment)} onEdit={() => { setPopupCommentId(null); setEditingComment({ comment, text: comment.text }); setSelectedId(comment.id); }}
-              onTextChange={(text) => setEditingComment((current) => current ? { ...current, text } : null)}
-              onSave={() => { if (editingComment) changeComment(editingComment.comment, 'edit', editingComment.text); }}
-              onCancel={() => setEditingComment(null)} onDelete={() => changeComment(comment, 'delete')} />)}
+            {listedComments.length === 0 && !pendingPoint ? <div className="empty-comments"><div><MessageSquare size={25} /></div><h3>Start a conversation</h3><p>{placedSignatures.length ? 'Confirm and save the pending signature above to add a comment.' : 'Comments in this PDF will appear here. Click “Add comment” and choose a spot on the page.'}</p>{!placedSignatures.length && <button className="text-button" onClick={startComment}>Add the first comment <ChevronRight size={15} /></button>}</div> : null}
+            {listedComments.map(thread => <section key={thread.id}
+              className={`comment-card comment-thread${selectedId === thread.id || thread.replies?.some(reply => reply.id === selectedId) ? ' selected' : ''}`}
+              aria-label={`Comment thread by ${thread.author}`}>
+              {renderCommentEntry(thread, thread)}
+              {!!thread.replies?.length && <div className="comment-thread-replies" aria-label="Replies">
+                {thread.replies.map(reply => renderCommentEntry(reply, thread))}
+              </div>}
+            </section>)}
           </div>
-          {pendingPoint && <div className="compose"><div className="compose-title"><span className="avatar">{authorName.charAt(0).toUpperCase()}</span><strong>New comment</strong><button onClick={() => setPendingPoint(null)} aria-label="Cancel comment"><X size={17} /></button></div><textarea autoFocus placeholder="Write your comment…" value={noteText} onChange={(event) => setNoteText(event.target.value)} maxLength={10000} /><div className="compose-footer"><span>Page {pendingPoint.page} · {authorName}</span><button className="button primary" onClick={addComment} disabled={!noteText.trim()}>Add comment</button></div></div>}
+          {pendingPoint && <div className="compose"><div className="compose-title"><span className="avatar">{authorName.charAt(0).toUpperCase()}</span><strong>{pendingPoint.replyTo ? 'Reply' : 'New comment'}</strong><button onClick={() => { setPendingPoint(null); setNoteText(''); }} aria-label={pendingPoint.replyTo ? 'Cancel reply' : 'Cancel comment'}><X size={17} /></button></div>
+            {pendingPoint.replyTo && <div className="reply-context">Replying to {allComments.find(comment => comment.id === pendingPoint.replyTo)?.author ?? 'comment'}</div>}
+            <textarea key={pendingPoint.replyTo ?? 'new'} autoFocus aria-label={pendingPoint.replyTo ? 'Write a reply' : 'Write a comment'} placeholder={pendingPoint.replyTo ? 'Write your reply…' : 'Write your comment…'} value={noteText} onChange={(event) => setNoteText(event.target.value)} maxLength={10000}
+              onKeyDown={event => { if (!event.nativeEvent.isComposing && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); addComment(); } }} />
+            <div className="compose-footer"><span>Page {pendingPoint.page} · {authorName}</span><button className="button primary" onClick={addComment} disabled={!noteText.trim() || busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}>{pendingPoint.replyTo ? 'Reply' : 'Add comment'}</button></div></div>}
           <div className="sidebar-bottom"><CircleHelp size={16} /><span>Comments are saved inside the PDF.</span></div>
         </> : <div className="pages-panel"><div className="sidebar-heading"><div><h2>Pages</h2><p>{selectedPages.size ? `${selectedPages.size} selected` : 'Drag pages to sort, or use the arrows.'}</p></div><button className="icon-button" onClick={openPageGrid} aria-label="Expand pages to grid" title="Expand pages to grid"><Maximize2 size={18} /></button></div>
           <div className="page-selection"><button onClick={() => setSelectedPages(new Set(Array.from({ length: effectivePages.length }, (_, index) => index)))}>Select all</button><button onClick={() => setSelectedPages(new Set())} disabled={!selectedPages.size}>Clear</button></div>
@@ -1900,7 +1946,7 @@ export default function App() {
         </div>}
         <div className="sidebar-rail" role="toolbar" aria-label="PDF tools" aria-orientation="vertical">
           <button className="sidebar-toggle" onClick={() => setSidebarCollapsed((collapsed) => !collapsed)} aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-expanded={!sidebarCollapsed}>{sidebarCollapsed ? <ChevronLeft size={19} /> : <ChevronRight size={19} />}</button>
-          <button className={activeTool === 'comments' ? 'active' : ''} onClick={() => selectTool('comments')} aria-label="Comments" title="Comments" aria-pressed={activeTool === 'comments'}><MessageSquare size={18} />{allComments.length > 0 && <span className="sidebar-rail-count">{allComments.length}</span>}</button>
+          <button className={activeTool === 'comments' ? 'active' : ''} onClick={() => selectTool('comments')} aria-label="Comments" title="Comments" aria-pressed={activeTool === 'comments'}><MessageSquare size={18} />{conversationComments.length > 0 && <span className="sidebar-rail-count">{conversationComments.length}</span>}</button>
           <button className={activeTool === 'pages' ? 'active' : ''} onClick={() => selectTool('pages')} aria-label="Pages" title="Pages" aria-pressed={activeTool === 'pages'}><FileText size={18} /></button>
           <button className={activeTool === 'edit' ? 'active' : ''} onClick={() => selectTool('edit')} aria-label="Edit" title="Edit" aria-pressed={activeTool === 'edit'}><Pencil size={18} /></button>
           <button className={activeTool === 'draw' ? 'active' : ''} onClick={() => selectTool('draw')} aria-label="Draw" title="Draw" aria-pressed={activeTool === 'draw'}><Paintbrush size={18} /></button>

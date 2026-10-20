@@ -61,6 +61,20 @@
 .comment-popup-header{display:flex;align-items:center;gap:7px;flex:none;font-size:12px}
 .comment-popup-header .icon-button{flex:none;width:26px;height:26px}
 .comment-popup-body{overflow:auto;min-height:0;margin-top:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.comment-reply-action{display:flex;align-items:center;gap:5px;align-self:flex-start;margin-top:9px;font-size:12px}
+.comment-entry{position:relative;min-width:0}
+.comment-thread-replies{position:relative;margin:14px 0 0 11px;padding-left:20px;border-left:2px solid #dce6d5}
+.comment-thread-replies>.comment-entry{padding:0 0 16px}
+.comment-thread-replies>.comment-entry:last-child{padding-bottom:0}
+.comment-thread-replies>.comment-entry::before{content:"";position:absolute;left:-22px;top:12px;width:13px;height:2px;background:#dce6d5}
+.comment-thread-replies .avatar{width:23px;height:23px;font-size:11px}
+.comment-thread-replies .comment-page{display:none}
+.comment-thread-replies .comment-entry.selected .comment-author{color:#527d2d}
+.comment-popup-replies{margin:12px 0 0 4px;padding-left:12px;border-left:2px solid #dce6d5}
+.comment-popup-reply{position:relative;margin-top:12px}
+.comment-popup-reply::before{content:"";position:absolute;left:-14px;top:8px;width:8px;height:2px;background:#dce6d5}
+.comment-popup-reply strong{display:block;font-size:11px;color:#718078}
+.reply-context{font-size:12px;color:#718078;margin:8px 0;overflow-wrap:anywhere}
 @keyframes comment-popup-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 @media(prefers-reduced-motion:reduce){.comment-popup{animation:none}}
 .comment-edit-actions{display:flex;justify-content:flex-end;gap:3px;margin-top:7px}

@@ -21,6 +21,8 @@ export interface PdfComment {
   quadPoints?: number[];
   color?: string;
   opacity?: number;
+  replyTo?: string;
+  replies?: PdfComment[];
 }
 
 export interface NewNote {
@@ -31,11 +33,12 @@ export interface NewNote {
   author: string;
   text: string;
   date: string;
+  replyTo?: string;
   markup?: { kind: MarkupKind; quadPoints: number[]; color: string };
 }
 
 export function noteAsComment(note: NewNote, draft = false): PdfComment {
-  return { id: note.id, page: note.page, author: note.author, text: note.text, date: note.date, draft,
+  return { id: note.id, page: note.page, author: note.author, text: note.text, date: note.date, draft, replyTo: note.replyTo,
     kind: note.markup?.kind ?? 'Text note', color: note.markup?.color, quadPoints: note.markup?.quadPoints,
     opacity: note.markup?.kind === 'Highlight' ? .35 : 1,
     rect: note.markup ? quadBounds(note.markup.quadPoints) : [note.x, note.y, note.x + 24, note.y + 24] };
@@ -60,6 +63,7 @@ type AnnotationLike = {
   contentsObj?: { str?: string };
   title?: string;
   contents?: string;
+  richText?: { str?: string } | null;
   modificationDate?: string;
   creationDate?: string;
   quadPoints?: ArrayLike<number> | null;
@@ -67,6 +71,8 @@ type AnnotationLike = {
   rotation?: number;
   opacity?: number;
   it?: string;
+  inReplyTo?: string | null;
+  replyType?: string;
 };
 
 const COMMENT_KINDS: Record<number, string> = {
@@ -76,9 +82,18 @@ const COMMENT_KINDS: Record<number, string> = {
   14: 'Caret', 15: 'Ink', 16: 'Popup', 17: 'File attachment'
 };
 
+export async function readAllPageComments(page: {
+  getAnnotations(options: { intent: 'any' }): Promise<AnnotationLike[]>;
+}, pageNumber: number): Promise<PdfComment[]> {
+  // A conversation includes annotations whose on-page appearance is hidden.
+  return readPageComments(await page.getAnnotations({ intent: 'any' }), pageNumber);
+}
+
 export function readPageComments(annotations: AnnotationLike[], page: number): PdfComment[] {
   return annotations.flatMap((annotation, index) => {
-    const text = (annotation.contentsObj?.str ?? annotation.contents ?? '').trim();
+    // Acrobat can store the note only in /RC (rich text). Use PDF.js's plain
+    // text projection; never insert annotation HTML into the application.
+    const text = annotation.contentsObj?.str?.trim() || annotation.contents?.trim() || annotation.richText?.str?.trim() || '';
     const kind = COMMENT_KINDS[annotation.annotationType ?? 0] ?? 'Comment';
     // Popups are the display containers of parent annotations, not distinct comments.
     if (annotation.annotationType === 2 || annotation.annotationType === 16 || (!text && annotation.annotationType !== 1 && !markupKind(kind))) return [];
@@ -99,6 +114,7 @@ export function readPageComments(annotations: AnnotationLike[], page: number): P
       author: (annotation.titleObj?.str ?? annotation.title ?? '').trim() || 'Unknown author',
       text,
       kind,
+      replyTo: annotation.replyType !== 'Group' ? annotation.inReplyTo || undefined : undefined,
       quadPoints: quadPoints?.length && quadPoints.length % 8 === 0 && quadPoints.every(Number.isFinite) ? quadPoints : undefined,
       color: annotation.color?.length === 3 ? '#' + Array.from(annotation.color).map(value => Math.round(value).toString(16).padStart(2, '0')).join('') : markupKind(kind) ? MARKUP_COLORS[kind] : undefined,
       opacity: typeof annotation.opacity === 'number' ? Math.max(0, Math.min(1, annotation.opacity)) : kind === 'Highlight' ? .35 : 1,
@@ -106,6 +122,34 @@ export function readPageComments(annotations: AnnotationLike[], page: number): P
       rect: rect && rect.length === 4 ? [rect[0], rect[1], rect[2], rect[3]] as [number, number, number, number] : [0, 0, 0, 0]
     }];
   });
+}
+
+/** Keep replies attached to their root, including imported nested conversations. */
+export function commentThreads(comments: PdfComment[]): PdfComment[] {
+  const byId = new Map(comments.map(comment => [comment.id, comment]));
+  const roots = new Map<string, PdfComment>();
+  for (const comment of comments) {
+    const root = commentRoot(comment, byId);
+    if (!roots.has(root.id)) roots.set(root.id, { ...root, replyTo: undefined, replies: [] });
+    if (comment.id !== root.id) roots.get(root.id)!.replies!.push(comment);
+  }
+  return [...roots.values()];
+}
+
+function commentRoot(comment: PdfComment, byId: Map<string, PdfComment>): PdfComment {
+  const seen = new Set([comment.id]);
+  let current = comment;
+  while (current.replyTo) {
+    const parent = byId.get(current.replyTo);
+    if (!parent || parent.page !== comment.page) break;
+    if (seen.has(parent.id)) return comment; // Malformed cycles must not hide content.
+    seen.add(parent.id); current = parent;
+  }
+  return current;
+}
+
+export function inMarkupThread(comment: PdfComment, comments: PdfComment[]): boolean {
+  return markupKind(commentRoot(comment, new Map(comments.map(item => [item.id, item]))).kind);
 }
 
 function writeMarkupAppearance(document: PDFDocument, annotation: PDFDict, kind: MarkupKind, points: number[], color: string, opacity = kind === 'Highlight' ? .35 : 1) {
@@ -140,9 +184,10 @@ function pdfDate(iso: string): string {
 export async function addTextNotes(source: Uint8Array, notes: NewNote[]): Promise<Uint8Array> {
   const document = await PDFDocument.load(source.slice(), { updateMetadata: false });
   const pages = document.getPages();
+  const pendingReplies: { note: NewNote; annotation: PDFDict }[] = [];
   for (const note of notes) {
     if (!Number.isInteger(note.page) || note.page < 1 || note.page > pages.length) throw new Error('Invalid note page.');
-    if (!Number.isFinite(note.x) || !Number.isFinite(note.y) || !note.author.trim() || !note.text.trim()) throw new Error('Invalid note.');
+    if (!Number.isFinite(note.x) || !Number.isFinite(note.y) || !note.author.trim() || (!note.markup && !note.text.trim())) throw new Error('Invalid note.');
     const page = pages[note.page - 1];
     const { x: cropX, y: cropY, width, height } = page.getCropBox();
     const x = Math.max(cropX, Math.min(cropX + width - 24, note.x));
@@ -177,6 +222,25 @@ export async function addTextNotes(source: Uint8Array, notes: NewNote[]): Promis
       page.node.set(PDFName.of('Annots'), annots);
     }
     annots.push(ref);
+    if (note.replyTo) pendingReplies.push({ note, annotation });
+  }
+  // Resolve after all notes exist, so a new parent and its replies can be saved
+  // in the same batch without relying on array order.
+  for (const { note, annotation } of pendingReplies) {
+    const annots = pages[note.page - 1].node.Annots()!;
+    const matches = Array.from({ length: annots.size() }, (_, index) => {
+      const reference = annots.get(index), target = document.context.lookup(reference);
+      const name = target instanceof PDFDict ? target.get(PDFName.of('NM')) : undefined;
+      const id = reference instanceof PDFRef ? `${reference.objectNumber}R${reference.generationNumber || ''}` : '';
+      return { index, reference, target, matches: target !== annotation && (id === note.replyTo ||
+        ((name instanceof PDFString || name instanceof PDFHexString) && name.decodeText() === note.replyTo)) };
+    }).filter(item => item.matches);
+    const parent = matches[0];
+    if (matches.length !== 1 || !(parent.target instanceof PDFDict)) throw new Error('The reply’s parent comment could not be found.');
+    const reference = parent.reference instanceof PDFRef ? parent.reference : document.context.register(parent.target);
+    if (!(parent.reference instanceof PDFRef)) annots.set(parent.index, reference);
+    annotation.set(PDFName.of('IRT'), reference);
+    annotation.set(PDFName.of('RT'), PDFName.of('R'));
   }
   return document.save({ useObjectStreams: false });
 }

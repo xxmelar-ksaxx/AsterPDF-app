@@ -1,4 +1,4 @@
-import { markupKind, type CommentChange, type CommentOverride, type NewNote, type PdfComment } from './comments';
+import { inMarkupThread, noteAsComment, type CommentChange, type CommentOverride, type NewNote, type PdfComment } from './comments';
 
 export type MarkupSnapshot = {
   ids: string[];
@@ -9,10 +9,11 @@ export type MarkupSnapshot = {
 
 /** Snapshot only manual text markups; background note saves must remain independent. */
 export function captureMarkups(drafts: NewNote[], changes: CommentChange[], overrides: Record<string, CommentOverride>, comments: PdfComment[]): MarkupSnapshot {
-  const markupDrafts = drafts.filter(note => note.markup);
-  const markupChanges = changes.filter(change => markupKind(change.target.kind));
+  const threadComments = [...comments, ...drafts.map(note => noteAsComment(note))];
+  const markupDrafts = drafts.filter(note => inMarkupThread(noteAsComment(note), threadComments));
+  const markupChanges = changes.filter(change => inMarkupThread(change.target, threadComments));
   const ids = new Set([
-    ...comments.filter(comment => markupKind(comment.kind)).map(comment => comment.id),
+    ...comments.filter(comment => inMarkupThread(comment, threadComments)).map(comment => comment.id),
     ...markupDrafts.map(note => note.id),
     ...markupChanges.map(change => change.target.id)
   ]);

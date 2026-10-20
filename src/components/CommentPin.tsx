@@ -1,13 +1,15 @@
 import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowRight, MessageSquare, X } from 'lucide-react';
+import { ArrowRight, MessageSquare, Reply, Trash2, X } from 'lucide-react';
 import { MARKUP_COLORS, markupKind, type PdfComment } from '../pdf/comments';
 import ColorPicker from './ColorPicker';
 
-export default function CommentPin({ comment, left, top, selected, open, viewerRef, onSelect, onClose, onOpenSidebar, onColor, recentColors, colorDisabled }: {
+export default function CommentPin({ comment, left, top, selected, open, viewerRef, onSelect, onClose, onOpenSidebar, onAddComment, onDelete, onReply, onColor, recentColors, colorDisabled }: {
   comment: PdfComment; left: number; top: number; selected: boolean; open: boolean;
   viewerRef: RefObject<HTMLDivElement | null>;
   onSelect: () => void; onClose: () => void; onOpenSidebar: () => void;
+  onAddComment: () => void; onDelete: () => void;
+  onReply: () => void;
   onColor: (color: string, remember?: boolean) => void; recentColors: string[]; colorDisabled: boolean;
 }) {
   const pinRef = useRef<HTMLButtonElement>(null);
@@ -15,6 +17,8 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
   const titleId = useId();
   const popupId = useId();
   const [position, setPosition] = useState({ left: 0, top: 0, width: 300, maxHeight: 320, visible: false });
+  const isMarkup = markupKind(comment.kind);
+  const hasComment = Boolean(comment.text.trim() || comment.replies?.length);
 
   useLayoutEffect(() => {
     if (!open) return;
@@ -55,7 +59,7 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
   const close = () => { onClose(); pinRef.current?.focus({ preventScroll: true }); };
   return <>
     <button ref={pinRef} className={`comment-pin ${selected ? 'selected' : ''} ${comment.draft ? 'draft' : ''}${comment.quadPoints?.length ? ' markup-anchor' : ''}`}
-      style={{ left, top }} aria-label={`Comment by ${comment.author} on page ${comment.page}`}
+      style={{ left, top }} aria-label={isMarkup && !hasComment ? `${comment.kind} options on page ${comment.page}` : `Comment by ${comment.author} on page ${comment.page}`}
       aria-expanded={open} aria-controls={open ? popupId : undefined} aria-haspopup="dialog"
       onClick={(event) => { event.stopPropagation(); onSelect(); }}>
       <MessageSquare size={14} fill="currentColor" />
@@ -68,17 +72,26 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
         if (event.key === 'Escape') { event.preventDefault(); close(); }
       }}>
       <div className="comment-popup-header">
-        <span className="avatar">{comment.author.charAt(0).toUpperCase()}</span>
-        <strong id={titleId} className="comment-author">{comment.author}</strong>
+        {(!isMarkup || hasComment) && <span className="avatar">{comment.author.charAt(0).toUpperCase()}</span>}
+        <strong id={titleId} className="comment-author">{isMarkup && !hasComment ? `${comment.kind} options` : comment.author}</strong>
         <span className="comment-page">p. {comment.page}</span>
-        <button className="icon-button" title="Open in comments" aria-label="Open sidebar and show this comment" onClick={onOpenSidebar}><ArrowRight size={17} /></button>
+        {(!isMarkup || hasComment) && <button className="icon-button" title="Open in comments" aria-label="Open sidebar and show this comment" onClick={onOpenSidebar}><ArrowRight size={17} /></button>}
         <button className="icon-button" title="Close comment" aria-label="Close comment" onClick={close}><X size={17} /></button>
       </div>
-      <div className="comment-popup-body">{comment.text || '(Empty note)'}</div>
+      {(!isMarkup || hasComment) && <div className="comment-popup-body">
+        <div>{comment.text || (isMarkup ? comment.kind : '(Empty note)')}</div>
+        {!!comment.replies?.length && <div className="comment-popup-replies">
+          {comment.replies.map(reply => <div key={reply.id} className="comment-popup-reply"><strong>{reply.author}</strong><div dir="auto">{reply.text}</div></div>)}
+        </div>}
+      </div>}
+      {(!isMarkup || hasComment) && <button className="text-button comment-reply-action" disabled={colorDisabled} onClick={onReply}><Reply size={15} />Reply</button>}
       {markupKind(comment.kind) && comment.quadPoints?.length && <div className="comment-markup-color">
         <span>{comment.kind === 'Strikeout' ? 'Removal' : comment.kind === 'Underline' ? 'Replacement' : 'Highlight'} color</span>
         {!colorDisabled && <ColorPicker commentId={comment.id} value={comment.color ?? MARKUP_COLORS[comment.kind]} recent={recentColors}
           label="Change markup color" onChange={onColor} />}
+        <button className="icon-button" title={hasComment ? 'Edit comment' : 'Add comment'} aria-label={hasComment ? 'Edit markup comment' : 'Add comment to markup'}
+          disabled={colorDisabled} onClick={onAddComment}><MessageSquare size={17} /></button>
+        <button className="icon-button" title="Delete markup" aria-label="Delete markup" disabled={colorDisabled} onClick={onDelete}><Trash2 size={17} /></button>
       </div>}
     </div>, document.body)}
   </>;

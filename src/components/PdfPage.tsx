@@ -16,7 +16,7 @@ import OriginalTextEditor, { type TextEdit } from './OriginalTextEditor';
 
 export type Zoom = 'fit' | number;
 export type PageSize = { width: number; height: number };
-export type PendingPoint = { page: number; x: number; y: number };
+export type PendingPoint = { page: number; x: number; y: number; replyTo?: string };
 
 export function pageScale(size: PageSize, zoom: Zoom, viewerWidth: number): number {
   return zoom === 'fit'
@@ -49,6 +49,9 @@ type Props = {
   commentsActive: boolean;
   markingText: boolean;
   onCommentColor: (comment: PdfComment, color: string, remember?: boolean) => void;
+  onAddMarkupComment: (comment: PdfComment) => void;
+  onDeleteMarkup: (comment: PdfComment) => void;
+  onReplyComment: (comment: PdfComment) => void;
   recentColors: string[];
   commentEditingDisabled: boolean;
   placing: boolean;
@@ -85,7 +88,7 @@ type Props = {
 
 export default function PdfPage({
   document, sourceBytes, inspectOriginalText, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
-  popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, onCommentColor, recentColors, commentEditingDisabled,
+  popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
   overlayTool, drawActive, overlayColor, overlayLineWidth, drawStyle, overlayFontSize, textAppearance, overlayFontChoice, overlayImage, overlays, selectedOverlayId,
@@ -349,9 +352,11 @@ export default function PdfPage({
         return <CommentPin key={comment.id} comment={comment} left={Math.min(first[0], second[0])} top={Math.min(first[1], second[1])}
           selected={selectedId === comment.id} open={popupCommentId === comment.id && selectedId === comment.id}
           viewerRef={viewerRef} onSelect={() => onSelectComment(comment.id)} onClose={onCloseComment}
+          onAddComment={() => onAddMarkupComment(comment)} onDelete={() => onDeleteMarkup(comment)}
+          onReply={() => onReplyComment(comment)}
           onOpenSidebar={() => onOpenCommentSidebar(comment.id)} onColor={(color, remember) => onCommentColor(comment, color, remember)} recentColors={recentColors} colorDisabled={commentEditingDisabled} />;
       })}
-      {activeViewport && pendingPoint?.page === pageNumber && (() => {
+      {activeViewport && pendingPoint?.page === pageNumber && !pendingPoint.replyTo && (() => {
         const [left, top] = activeViewport.convertToViewportPoint(pendingPoint.x, pendingPoint.y);
         return <span className="pending-pin" style={{ left, top }}><MessageSquare size={14} fill="currentColor" /></span>;
       })()}
