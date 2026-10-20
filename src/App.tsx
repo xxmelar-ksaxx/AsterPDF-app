@@ -33,6 +33,7 @@ import { resolveTextFont } from './components/OriginalTextEditor';
 import UpdateSettings from './components/UpdateSettings';
 import SaveFeedback, { paintSaveFeedback } from './components/SaveFeedback';
 import CommentCard from './components/CommentCard';
+import ResizableSidebar from './components/ResizableSidebar';
 import { useUpdates } from './updates';
 import { finishInlineEdits } from './finish-inline-edit';
 
@@ -139,7 +140,7 @@ export default function App() {
     const clearSelection = () => { setSelectedId(null); setPopupCommentId(null); setPendingCommentScroll(null); };
     const dismissOutside = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Element && (target.closest('.comment-pin, .comment-popup') ||
+      if (target instanceof Element && (target.closest('.comment-pin, .comment-popup, .sidebar-resize') ||
         target.closest('[data-comment-color]')?.getAttribute('data-comment-color') === selectedId ||
         target.closest<HTMLElement>('[data-comment-id]')?.dataset.commentId === selectedId)) return;
       clearSelection();
@@ -1899,7 +1900,7 @@ export default function App() {
         <div className="viewer-footer"><span>{compressionProgress || source.path}</span><span>{document ? effectivePages.length : '…'} pages · Offline</span></div>
       </section>
 
-      <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`} aria-label="Document sidebar">
+      <ResizableSidebar collapsed={sidebarCollapsed}>
         {!sidebarCollapsed && <div className="sidebar-content">
         {sidebarTab === 'draw' ? (() => {
           const index = drawSelection ? effectivePages.findIndex((item) => item.id === drawSelection.pageId) : pageNumber - 1;
@@ -1955,7 +1956,7 @@ export default function App() {
           <button className={activeTool === 'compress' ? 'active' : ''} onClick={() => selectTool('compress')} disabled={placedSignatures.length > 0} aria-label="Compress tool" title={placedSignatures.length ? 'Confirm signatures first' : 'Compress'} aria-pressed={activeTool === 'compress'}><Shrink size={18} /></button>
           <button className={activeTool === 'files' ? 'active' : ''} onClick={() => selectTool('files')} disabled={placedSignatures.length > 0} aria-label="Add files tool" title={placedSignatures.length ? 'Confirm signatures first' : 'Add files'} aria-pressed={activeTool === 'files'}><Files size={18} /></button>
         </div>
-      </aside>
+      </ResizableSidebar>
     </main>}
 
     {compressionOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setCompressionOpen(false); }}><div className="settings-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="compression-title"><div className="modal-head"><div className="modal-icon"><Shrink size={21} /></div><button onClick={() => setCompressionOpen(false)} disabled={busy} aria-label="Close compression"><X size={19} /></button></div><h2 id="compression-title">Compress PDF</h2><p>Select a preset, then save a compressed copy. Compression starts after you choose where to save it.</p>
