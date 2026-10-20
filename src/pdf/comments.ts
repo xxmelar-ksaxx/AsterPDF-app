@@ -1,5 +1,14 @@
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString } from 'pdf-lib';
 
+export type MarkupKind = 'Highlight' | 'Strikeout' | 'Underline';
+export const MARKUP_COLORS: Record<MarkupKind, string> = { Highlight: '#ffdf32', Strikeout: '#e5484d', Underline: '#2784eb' };
+export type TextMarkupSelection = { page: number; text: string; quadPoints: number[] };
+export function markupKind(kind: string): kind is MarkupKind { return kind === 'Highlight' || kind === 'Strikeout' || kind === 'Underline'; }
+export function quadBounds(points: number[]): [number, number, number, number] {
+  const xs = points.filter((_, index) => index % 2 === 0), ys = points.filter((_, index) => index % 2 === 1);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+
 export interface PdfComment {
   id: string;
   page: number;
@@ -9,6 +18,9 @@ export interface PdfComment {
   date?: string;
   rect: [number, number, number, number];
   draft?: boolean;
+  quadPoints?: number[];
+  color?: string;
+  opacity?: number;
 }
 
 export interface NewNote {
@@ -19,17 +31,26 @@ export interface NewNote {
   author: string;
   text: string;
   date: string;
+  markup?: { kind: MarkupKind; quadPoints: number[]; color: string };
+}
+
+export function noteAsComment(note: NewNote, draft = false): PdfComment {
+  return { id: note.id, page: note.page, author: note.author, text: note.text, date: note.date, draft,
+    kind: note.markup?.kind ?? 'Text note', color: note.markup?.color, quadPoints: note.markup?.quadPoints,
+    opacity: note.markup?.kind === 'Highlight' ? .35 : 1,
+    rect: note.markup ? quadBounds(note.markup.quadPoints) : [note.x, note.y, note.x + 24, note.y + 24] };
 }
 
 export type CommentChange = {
   operationId: string;
   target: PdfComment;
-  type: 'edit' | 'delete';
+  type: 'edit' | 'delete' | 'color';
   text?: string;
+  color?: string;
   date: string;
 };
 
-export type CommentOverride = { text?: string; date?: string; deleted?: boolean };
+export type CommentOverride = { text?: string; date?: string; deleted?: boolean; color?: string };
 
 type AnnotationLike = {
   id?: string;
@@ -41,6 +62,11 @@ type AnnotationLike = {
   contents?: string;
   modificationDate?: string;
   creationDate?: string;
+  quadPoints?: ArrayLike<number> | null;
+  color?: ArrayLike<number> | null;
+  rotation?: number;
+  opacity?: number;
+  it?: string;
 };
 
 const COMMENT_KINDS: Record<number, string> = {
@@ -55,18 +81,54 @@ export function readPageComments(annotations: AnnotationLike[], page: number): P
     const text = (annotation.contentsObj?.str ?? annotation.contents ?? '').trim();
     const kind = COMMENT_KINDS[annotation.annotationType ?? 0] ?? 'Comment';
     // Popups are the display containers of parent annotations, not distinct comments.
-    if (annotation.annotationType === 2 || annotation.annotationType === 16 || (!text && annotation.annotationType !== 1)) return [];
+    if (annotation.annotationType === 2 || annotation.annotationType === 16 || (!text && annotation.annotationType !== 1 && !markupKind(kind))) return [];
     const rect = annotation.rect;
+    const quadPoints = annotation.quadPoints ? Array.from(annotation.quadPoints) : undefined;
+    // PDF.js normalizes quadrilaterals to PDF-axis rectangles. Restore the
+    // reading direction of markups authored on a rotated page in AsterPDF.
+    if (quadPoints && annotation.it === 'AsterPDFTextMarkup') {
+      const order = annotation.rotation === 90 ? [2, 0, 3, 1] : annotation.rotation === 180 ? [3, 2, 1, 0] : annotation.rotation === 270 ? [1, 3, 0, 2] : [0, 1, 2, 3];
+      for (let offset = 0; offset < quadPoints.length; offset += 8) {
+        const quad = quadPoints.slice(offset, offset + 8);
+        quadPoints.splice(offset, 8, ...order.flatMap(index => quad.slice(index * 2, index * 2 + 2)));
+      }
+    }
     return [{
       id: annotation.id ?? `${page}-${index}`,
       page,
       author: (annotation.titleObj?.str ?? annotation.title ?? '').trim() || 'Unknown author',
       text,
       kind,
+      quadPoints: quadPoints?.length && quadPoints.length % 8 === 0 && quadPoints.every(Number.isFinite) ? quadPoints : undefined,
+      color: annotation.color?.length === 3 ? '#' + Array.from(annotation.color).map(value => Math.round(value).toString(16).padStart(2, '0')).join('') : markupKind(kind) ? MARKUP_COLORS[kind] : undefined,
+      opacity: typeof annotation.opacity === 'number' ? Math.max(0, Math.min(1, annotation.opacity)) : kind === 'Highlight' ? .35 : 1,
       date: annotation.modificationDate ?? annotation.creationDate,
       rect: rect && rect.length === 4 ? [rect[0], rect[1], rect[2], rect[3]] as [number, number, number, number] : [0, 0, 0, 0]
     }];
   });
+}
+
+function writeMarkupAppearance(document: PDFDocument, annotation: PDFDict, kind: MarkupKind, points: number[], color: string, opacity = kind === 'Highlight' ? .35 : 1) {
+  if (!points.length || points.length % 8 || !points.every(Number.isFinite) || !/^#[0-9a-f]{6}$/i.test(color)) throw new Error('Invalid text markup.');
+  const channels = [1, 3, 5].map(offset => parseInt(color.slice(offset, offset + 2), 16) / 255);
+  const commands = ['q', '/GS gs', `${channels.join(' ')} rg`, `${channels.join(' ')} RG`];
+  for (let index = 0; index < points.length; index += 8) {
+    const [ax, ay, bx, by, cx, cy, dx, dy] = points.slice(index, index + 8);
+    if (kind === 'Highlight') commands.push(`${ax} ${ay} m ${bx} ${by} l ${dx} ${dy} l ${cx} ${cy} l h f`);
+    else {
+      const t = kind === 'Strikeout' ? .5 : .92;
+      commands.push(`${Math.max(.7, Math.hypot(cx - ax, cy - ay) * .065)} w`,
+        `${ax + (cx - ax) * t} ${ay + (cy - ay) * t} m ${bx + (dx - bx) * t} ${by + (dy - by) * t} l S`);
+    }
+  }
+  commands.push('Q');
+  const appearance = document.context.flateStream(commands.join('\n'), {
+    Type: 'XObject', Subtype: 'Form', BBox: quadBounds(points),
+    Resources: { ExtGState: { GS: { Type: 'ExtGState', ca: opacity, CA: opacity, BM: kind === 'Highlight' ? 'Multiply' : 'Normal' } } }
+  });
+  annotation.set(PDFName.of('C'), document.context.obj(channels));
+  annotation.set(PDFName.of('CA'), PDFNumber.of(opacity));
+  annotation.set(PDFName.of('AP'), document.context.obj({ N: document.context.register(appearance) }));
 }
 
 function pdfDate(iso: string): string {
@@ -87,8 +149,8 @@ export async function addTextNotes(source: Uint8Array, notes: NewNote[]): Promis
     const y = Math.max(cropY, Math.min(cropY + height - 24, note.y));
     const annotation = document.context.obj({
       Type: PDFName.of('Annot'),
-      Subtype: PDFName.of('Text'),
-      Rect: document.context.obj([x, y, x + 24, y + 24]),
+      Subtype: PDFName.of(note.markup?.kind === 'Strikeout' ? 'StrikeOut' : note.markup?.kind ?? 'Text'),
+      Rect: document.context.obj(note.markup ? quadBounds(note.markup.quadPoints) : [x, y, x + 24, y + 24]),
       Contents: PDFHexString.fromText(note.text.trim()),
       T: PDFHexString.fromText(note.author.trim()),
       M: PDFString.of(pdfDate(note.date)),
@@ -100,6 +162,14 @@ export async function addTextNotes(source: Uint8Array, notes: NewNote[]): Promis
       Open: false,
       P: page.ref
     });
+    if (note.markup) {
+      annotation.set(PDFName.of('QuadPoints'), document.context.obj(note.markup.quadPoints));
+      const [ax, ay, bx, by] = note.markup.quadPoints;
+      const angle = (Math.round(Math.atan2(by - ay, bx - ax) * 180 / Math.PI / 90) * 90 + 360) % 360;
+      annotation.set(PDFName.of('Rotate'), PDFNumber.of(angle));
+      annotation.set(PDFName.of('IT'), PDFName.of('AsterPDFTextMarkup'));
+      writeMarkupAppearance(document, annotation, note.markup.kind, note.markup.quadPoints, note.markup.color);
+    }
     const ref = document.context.register(annotation);
     let annots = page.node.Annots();
     if (!annots) {
@@ -147,7 +217,13 @@ export async function changeComments(source: Uint8Array, changes: CommentChange[
     if (matches.length !== 1) throw new Error('The comment could not be identified safely. Reopen the PDF and try again.');
     const { index, reference, annotation } = matches[0];
     if (!(annotation instanceof PDFDict)) throw new Error('Invalid PDF comment.');
-    if (change.type === 'edit') {
+    if (change.type === 'color') {
+      if (!markupKind(change.target.kind) || !change.color) throw new Error('This comment does not support markup colors.');
+      const points = annotation.lookupMaybe(PDFName.of('QuadPoints'), PDFArray)?.asArray().map(value => value instanceof PDFNumber ? value.asNumber() : NaN);
+      if (!points) throw new Error('This markup has no text geometry.');
+      writeMarkupAppearance(document, annotation, change.target.kind, points, change.color, change.target.opacity);
+      annotation.set(PDFName.of('M'), PDFString.of(pdfDate(change.date)));
+    } else if (change.type === 'edit') {
       if (!change.text?.trim()) throw new Error('A comment cannot be empty.');
       annotation.set(PDFName.of('Contents'), PDFHexString.fromText(change.text.trim()));
       annotation.set(PDFName.of('M'), PDFString.of(pdfDate(change.date)));

@@ -2,12 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEv
 import { MessageSquare } from 'lucide-react';
 import { onFinishInlineEdit } from '../finish-inline-edit';
 import { AnnotationType, OPS, type PDFDocumentProxy, type PageViewport } from 'pdfjs-dist';
-import type { PdfComment } from '../pdf/comments';
+import { markupKind, readPageComments, type PdfComment } from '../pdf/comments';
 import type { PlacedSignature, SavedSignature } from '../signatures/library';
 import OverlayLayer, { type OverlayTool, type PendingImage } from './OverlayLayer';
 import type { OverlayObject, TextAppearance } from '../pdf/overlays';
 import TextFrame from './TextFrame';
 import CommentPin from './CommentPin';
+import CommentMarkup, { markupAtPoint } from './CommentMarkup';
+import PdfTextSelection from './PdfTextSelection';
 import type { ColorCommand, FontCommand, FontSelection, InstalledFont } from './FontPicker';
 import type { OriginalPdfText } from '../types';
 import OriginalTextEditor, { type TextEdit } from './OriginalTextEditor';
@@ -44,6 +46,11 @@ type Props = {
   popupCommentId: string | null;
   onCloseComment: () => void;
   onOpenCommentSidebar: (id: string) => void;
+  commentsActive: boolean;
+  markingText: boolean;
+  onCommentColor: (comment: PdfComment, color: string, remember?: boolean) => void;
+  recentColors: string[];
+  commentEditingDisabled: boolean;
   placing: boolean;
   pendingPoint: PendingPoint | null;
   pageId: string;
@@ -78,7 +85,8 @@ type Props = {
 
 export default function PdfPage({
   document, sourceBytes, inspectOriginalText, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
-  popupCommentId, onCloseComment, onOpenCommentSidebar, placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
+  popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, onCommentColor, recentColors, commentEditingDisabled,
+  placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
   overlayTool, drawActive, overlayColor, overlayLineWidth, drawStyle, overlayFontSize, textAppearance, overlayFontChoice, overlayImage, overlays, selectedOverlayId,
   onAddOverlay, onUpdateOverlay, onDeleteOverlay, onSelectOverlay, onError
@@ -188,13 +196,15 @@ export default function PdfPage({
         const noteIds = new Set(annotations.filter((annotation) =>
           annotation.annotationType === AnnotationType.TEXT || annotation.annotationType === AnnotationType.POPUP
         ).map((annotation) => annotation.id));
+        for (const comment of readPageComments(annotations, pageNumber)) {
+          if (markupKind(comment.kind) && comment.quadPoints?.length) noteIds.add(comment.id);
+        }
         let insideNote = false;
         renderTask = page.render({
           canvas, canvasContext: context, viewport: currentViewport,
           transform: [pixelRatio, 0, 0, pixelRatio, 0, 0],
-          // Our interactive pins replace native sticky-note appearances. Keep
-          // them out of the bitmap so opacity and the eye toggle control every
-          // note marker. Other PDF artwork, forms and annotations still render.
+          // Interactive notes and text markups are drawn separately so color,
+          // deletion and visibility update immediately without repainting the PDF.
           operationsFilter: (index, operators) => {
             const operation = operators.fnArray[index];
             if (operation === OPS.beginAnnotation) insideNote = noteIds.has(operators.argsArray[index]?.[0]);
@@ -325,13 +335,21 @@ export default function PdfPage({
         color={overlayColor} lineWidth={overlayLineWidth} drawStyle={drawStyle} image={overlayImage} objects={overlays}
         selectedId={selectedOverlayId} onAdd={onAddOverlay} onUpdate={onUpdateOverlay} onDelete={onDeleteOverlay} onSelect={onSelectOverlay} />}
       {near && !ready && <span className="page-rendering">Rendering page {pageNumber}…</span>}
+      {activeViewport && comments.filter(comment => markupKind(comment.kind) && comment.quadPoints?.length).map(comment =>
+        <CommentMarkup key={`markup-${comment.id}`} comment={comment} viewport={activeViewport} selected={selectedId === comment.id}
+          onSelect={() => onSelectComment(comment.id)} />)}
+      {near && ready && activeViewport && commentsActive && !placing && <PdfTextSelection pdf={document} sourcePage={sourcePageNumber} page={pageNumber}
+        viewport={activeViewport} marking={markingText} onError={onError} onClickMarkup={(x, y) => {
+          const comment = markupAtPoint(comments, activeViewport, x, y);
+          if (comment) onSelectComment(comment.id);
+        }} />}
       {activeViewport && comments.map((comment) => {
         const first = activeViewport.convertToViewportPoint(comment.rect[0], comment.rect[1]);
         const second = activeViewport.convertToViewportPoint(comment.rect[2], comment.rect[3]);
         return <CommentPin key={comment.id} comment={comment} left={Math.min(first[0], second[0])} top={Math.min(first[1], second[1])}
           selected={selectedId === comment.id} open={popupCommentId === comment.id && selectedId === comment.id}
           viewerRef={viewerRef} onSelect={() => onSelectComment(comment.id)} onClose={onCloseComment}
-          onOpenSidebar={() => onOpenCommentSidebar(comment.id)} />;
+          onOpenSidebar={() => onOpenCommentSidebar(comment.id)} onColor={(color, remember) => onCommentColor(comment, color, remember)} recentColors={recentColors} colorDisabled={commentEditingDisabled} />;
       })}
       {activeViewport && pendingPoint?.page === pageNumber && (() => {
         const [left, top] = activeViewport.convertToViewportPoint(pendingPoint.x, pendingPoint.y);

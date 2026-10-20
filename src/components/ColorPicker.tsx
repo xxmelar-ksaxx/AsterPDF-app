@@ -17,8 +17,8 @@ function toHex({ h, s, v }: ReturnType<typeof toHsv>) {
 }
 type EyeDropperConstructor = new () => { open(): Promise<{ sRGBHex: string }> };
 
-export default function ColorPicker({ value, recent, onChange, label = 'Text and drawing color' }: {
-  value: string; recent: string[]; onChange: (value: string, remember?: boolean) => void; label?: string;
+export default function ColorPicker({ value, recent, onChange, label = 'Text and drawing color', commentId }: {
+  value: string; recent: string[]; onChange: (value: string, remember?: boolean) => void; label?: string; commentId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [hsv, setHsv] = useState(() => toHsv(value));
@@ -78,13 +78,13 @@ export default function ColorPicker({ value, recent, onChange, label = 'Text and
     catch (cause) { if (!(cause instanceof DOMException && cause.name === 'AbortError')) setError('Could not pick a screen color. Try again.'); }
     finally { setSampling(false); }
   };
-  return <div className="color-picker" data-added-text-controls>
+  return <div className="color-picker" data-added-text-controls data-comment-color={commentId}>
     <button ref={trigger} className="color-picker-trigger" aria-label={label} title={`Color ${value}`}
       aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(!open); setError(''); }}>
       <span style={{ background: value }} />
     </button>
     {open && createPortal(<div ref={menu} className="color-picker-menu" style={position} role="dialog" aria-label="Choose color"
-      data-added-text-controls onKeyDown={(event) => {
+      data-added-text-controls data-comment-color={commentId} onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === 'Escape') { event.preventDefault(); setOpen(false); trigger.current?.focus(); }
       }}>

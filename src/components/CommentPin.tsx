@@ -1,12 +1,14 @@
 import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRight, MessageSquare, X } from 'lucide-react';
-import type { PdfComment } from '../pdf/comments';
+import { MARKUP_COLORS, markupKind, type PdfComment } from '../pdf/comments';
+import ColorPicker from './ColorPicker';
 
-export default function CommentPin({ comment, left, top, selected, open, viewerRef, onSelect, onClose, onOpenSidebar }: {
+export default function CommentPin({ comment, left, top, selected, open, viewerRef, onSelect, onClose, onOpenSidebar, onColor, recentColors, colorDisabled }: {
   comment: PdfComment; left: number; top: number; selected: boolean; open: boolean;
   viewerRef: RefObject<HTMLDivElement | null>;
   onSelect: () => void; onClose: () => void; onOpenSidebar: () => void;
+  onColor: (color: string, remember?: boolean) => void; recentColors: string[]; colorDisabled: boolean;
 }) {
   const pinRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
@@ -52,7 +54,7 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
 
   const close = () => { onClose(); pinRef.current?.focus({ preventScroll: true }); };
   return <>
-    <button ref={pinRef} className={`comment-pin ${selected ? 'selected' : ''} ${comment.draft ? 'draft' : ''}`}
+    <button ref={pinRef} className={`comment-pin ${selected ? 'selected' : ''} ${comment.draft ? 'draft' : ''}${comment.quadPoints?.length ? ' markup-anchor' : ''}`}
       style={{ left, top }} aria-label={`Comment by ${comment.author} on page ${comment.page}`}
       aria-expanded={open} aria-controls={open ? popupId : undefined} aria-haspopup="dialog"
       onClick={(event) => { event.stopPropagation(); onSelect(); }}>
@@ -73,6 +75,11 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
         <button className="icon-button" title="Close comment" aria-label="Close comment" onClick={close}><X size={17} /></button>
       </div>
       <div className="comment-popup-body">{comment.text || '(Empty note)'}</div>
+      {markupKind(comment.kind) && comment.quadPoints?.length && <div className="comment-markup-color">
+        <span>{comment.kind === 'Strikeout' ? 'Removal' : comment.kind === 'Underline' ? 'Replacement' : 'Highlight'} color</span>
+        {!colorDisabled && <ColorPicker commentId={comment.id} value={comment.color ?? MARKUP_COLORS[comment.kind]} recent={recentColors}
+          label="Change markup color" onChange={onColor} />}
+      </div>}
     </div>, document.body)}
   </>;
 }

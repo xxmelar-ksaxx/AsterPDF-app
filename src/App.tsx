@@ -4,12 +4,13 @@ import {
   FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X,
   ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical, TriangleAlert,
   Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus, PanelRight,
-  Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, Eye, EyeOff
+  Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, Eye, EyeOff, Highlighter
 } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
-import { addTextNotes, changeComments, readPageComments, type CommentChange, type CommentOverride, type NewNote, type PdfComment } from './pdf/comments';
+import { addTextNotes, changeComments, readPageComments, noteAsComment, markupKind, MARKUP_COLORS, type MarkupKind, type TextMarkupSelection, type CommentChange, type CommentOverride, type NewNote, type PdfComment } from './pdf/comments';
+import { selectedPdfText } from './components/PdfTextSelection';
 import { prepareCommentSave } from './pdf/comment-save';
 import type { OpenedPdf, RecentPdf } from './types';
 import type { OpenedFile } from './types';
@@ -128,12 +129,15 @@ export default function App() {
   const pendingCommentCount = drafts.length + commentChanges.length;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [popupCommentId, setPopupCommentId] = useState<string | null>(null);
+  const [markupTool, setMarkupTool] = useState<MarkupKind | null>(null);
+  const [markupColors, setMarkupColors] = useState(MARKUP_COLORS);
   useEffect(() => {
     if (!selectedId) { setPopupCommentId(null); return; }
     const clearSelection = () => { setSelectedId(null); setPopupCommentId(null); setPendingCommentScroll(null); };
     const dismissOutside = (event: PointerEvent) => {
       const target = event.target;
       if (target instanceof Element && (target.closest('.comment-pin, .comment-popup') ||
+        target.closest('[data-comment-color]')?.getAttribute('data-comment-color') === selectedId ||
         target.closest<HTMLElement>('.comment-card')?.dataset.commentId === selectedId)) return;
       clearSelection();
     };
@@ -447,16 +451,7 @@ export default function App() {
 
   const allComments = useMemo(() => [
     ...visibleComments,
-    ...drafts.map((note): PdfComment => ({
-      id: note.id,
-      page: note.page,
-      author: note.author,
-      text: note.text,
-      kind: 'Text note',
-      date: note.date,
-      rect: [note.x, note.y, note.x + 24, note.y + 24],
-      draft: true
-    }))
+    ...drafts.map(note => noteAsComment(note, true))
   ].flatMap((comment) => {
     const override = commentOverrides[comment.id];
     return override?.deleted ? [] : [{ ...comment, ...override }];
@@ -1223,14 +1218,17 @@ export default function App() {
 
   useEffect(() => {
     if (!source || busy || commentSaving || returningHome || savingRef.current || pendingCommentCount === 0 || autoSaveRevision <= lastAutoAttemptRef.current) return;
+    // Text markups stay pending until an explicit save, including when a
+    // regular note triggers background saving in the same document.
+    const batch = drafts.filter(note => !note.markup);
+    const changes = commentChanges.filter(change => !markupKind(change.target.kind));
+    if (!batch.length && !changes.length) return;
     if (source.needsSave) {
       lastAutoAttemptRef.current = autoSaveRevision;
       setError('Save this PDF once to choose its location and enable automatic comment saving.'); return;
     }
     if (!savedFileBytesRef.current || editingDirty || placedSignatures.length || pagePlan) return;
     lastAutoAttemptRef.current = autoSaveRevision;
-    const batch = [...drafts];
-    const changes = [...commentChanges];
     const changeIds = new Set(changes.map((change) => change.operationId));
     const ids = new Set(batch.map((note) => note.id));
     const snapshot = savedFileBytesRef.current;
@@ -1248,13 +1246,10 @@ export default function App() {
         // Only the data changes. Keep the current PDF renderer, scroll, tools,
         // selected note, and the next comment's composer exactly as they are.
         setSourceState({ ...source, ...saved, bytes: base });
-        setSavedSessionComments((current) => [...current, ...batch.map((note): PdfComment => ({
-          id: note.id, page: note.page, author: note.author, text: note.text,
-          kind: 'Text note', date: note.date, rect: [note.x, note.y, note.x + 24, note.y + 24]
-        }))]);
+        setSavedSessionComments((current) => [...current, ...batch.map(note => noteAsComment(note))]);
         setDrafts((current) => current.filter((note) => !ids.has(note.id)));
         setCommentChanges((current) => current.filter((change) => !changeIds.has(change.operationId)));
-        if (changes.some((change) => change.target.kind !== 'Text note' && (change.type === 'delete' || change.target.kind === 'Free text'))) {
+        if (changes.some((change) => change.target.kind !== 'Text note' && !markupKind(change.target.kind) && (change.type === 'delete' || change.target.kind === 'Free text'))) {
           // Visible PDF markup needs a fresh bitmap; sticky notes only need the
           // interactive pin/list update and never interrupt the page renderer.
           restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
@@ -1303,6 +1298,7 @@ export default function App() {
   const startComment = () => {
     if (editingDirty || placedSignatures.length) { setError('Save your edits before adding a comment so only the comment is auto-saved.'); return; }
     if (!authorName) { setSettingsOpen(true); return; }
+    setMarkupTool(null);
     setSidebarTab('comments');
     setActiveTool('comments');
     setSidebarCollapsed(false);
@@ -1311,6 +1307,42 @@ export default function App() {
     setPendingPoint(null);
     setNoteText('');
   };
+
+  const addTextMarkup = useCallback((kind: MarkupKind, selections: TextMarkupSelection[]) => {
+    if (!selections.length || !source || busy || returningHome || editingDirty || placedSignatures.length || pagePlan) return;
+    if (!authorName) { setSettingsOpen(true); return; }
+    const notes: NewNote[] = selections.map(selection => ({
+      id: crypto.randomUUID(), page: selection.page, x: selection.quadPoints[0], y: selection.quadPoints[1],
+      author: authorName, text: selection.text.slice(0, 10000) || kind, date: new Date().toISOString(),
+      markup: { kind, quadPoints: selection.quadPoints, color: markupColors[kind] }
+    }));
+    window.aster.setDirty(true);
+    setDrafts(current => [...current, ...notes]);
+    setSelectedId(notes[notes.length - 1].id); setPopupCommentId(null);
+    window.getSelection()?.removeAllRanges();
+  }, [source, busy, returningHome, editingDirty, placedSignatures.length, pagePlan, authorName, markupColors]);
+
+  const chooseMarkupTool = (kind: MarkupKind) => {
+    if (!authorName) { setSettingsOpen(true); return; }
+    const selections = selectedPdfText();
+    setPlacing(false); setPendingPoint(null); setPopupCommentId(null);
+    setMarkupTool(current => current === kind && !selections.length ? null : kind);
+    if (selections.length) addTextMarkup(kind, selections);
+  };
+
+  useEffect(() => {
+    if (activeTool !== 'comments') { setMarkupTool(null); return; }
+    if (!markupTool) return;
+    let frame = 0;
+    const apply = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => addTextMarkup(markupTool, selectedPdfText()));
+    };
+    const keyboard = (event: KeyboardEvent) => { if (event.key === 'Shift') apply(); };
+    globalThis.document.addEventListener('pointerup', apply);
+    globalThis.document.addEventListener('keyup', keyboard);
+    return () => { cancelAnimationFrame(frame); globalThis.document.removeEventListener('pointerup', apply); globalThis.document.removeEventListener('keyup', keyboard); };
+  }, [activeTool, markupTool, addTextMarkup]);
 
   const startSignature = () => { setActiveTool('sign'); setSignatureMenuOpen((open) => !open); setPlacing(false); };
 
@@ -1476,11 +1508,23 @@ export default function App() {
     if (type === 'edit' && (!text?.trim() || text.trim() === comment.text)) { setEditingComment(null); return; }
     const date = new Date().toISOString();
     setCommentChanges((current) => [...current, { operationId: crypto.randomUUID(), target: comment, type, text: text?.trim(), date }]);
-    setCommentOverrides((current) => ({ ...current, [comment.id]: type === 'delete' ? { deleted: true } : { text: text!.trim(), date } }));
-    setAutoSaveRevision((revision) => revision + 1);
+    setCommentOverrides((current) => ({ ...current, [comment.id]: { ...current[comment.id], ...(type === 'delete' ? { deleted: true } : { text: text!.trim(), date }) } }));
+    if (!markupKind(comment.kind)) setAutoSaveRevision((revision) => revision + 1);
     window.aster.setDirty(true);
     if (editingComment?.comment.id === comment.id) setEditingComment(null);
     if (type === 'delete' && selectedId === comment.id) setSelectedId(null);
+  };
+
+  const changeMarkupColor = (comment: PdfComment, color: string, remember = true) => {
+    if (busy || returningHome || editingDirty || placedSignatures.length || pagePlan || !markupKind(comment.kind) || !/^#[0-9a-f]{6}$/i.test(color)) return;
+    setMarkupColors(current => ({ ...current, [comment.kind]: color }));
+    if (remember) rememberDrawColor(color);
+    if (comment.color === color) return;
+    const date = new Date().toISOString();
+    setCommentChanges(current => [...current.filter(change => change.target.id !== comment.id || change.type !== 'color'),
+      { operationId: crypto.randomUUID(), target: comment, type: 'color', color, date }]);
+    setCommentOverrides(current => ({ ...current, [comment.id]: { ...current[comment.id], color, date } }));
+    window.aster.setDirty(true);
   };
 
   const activeSignature = savedSignatures.find((item) => item.id === placingSignatureId) ?? null;
@@ -1580,7 +1624,20 @@ export default function App() {
             <span className="signature-review-label" role="status">{placedSignatures.length} {placedSignatures.length === 1 ? 'signature' : 'signatures'} pending · confirm to comment</span>
             <button className="button signature-confirm-action" onClick={() => void save()} disabled={busy} title="Confirm and save signatures" aria-label="Confirm and save signatures"><Check size={18} /><span>Confirm</span></button>
             <button className="button signature-discard-action" onClick={() => setPendingSignatureDiscard(true)} disabled={busy} title="Discard pending signatures" aria-label="Discard pending signatures"><X size={18} /><span>Discard</span></button>
-          </div> : activeTool === 'comments' ? <button className={`button ${placing ? 'placing-button' : 'outline'} tool-action context-action`} onClick={startComment} disabled={!document || busy || editingDirty} title={editingDirty ? 'Save edits before adding comments' : 'Add comment'}><MessageSquare size={17} />{placing ? 'Click on page…' : 'Comment'}</button>
+          </div> : activeTool === 'comments' ? <div className="comment-tools" role="group" aria-label="Comment and text markup tools">
+            <button className={`icon-button${!markupTool && !placing ? ' active' : ''}`} title="Select text or comments" aria-label="Select text or comments" aria-pressed={!markupTool && !placing}
+              onClick={() => { setMarkupTool(null); setPlacing(false); }}><MousePointer2 size={18} /></button>
+            <button className={`icon-button${placing ? ' active' : ''}`} onClick={startComment} disabled={!document || busy || editingDirty}
+              title={placing ? 'Click on page to add a comment' : 'Add comment'} aria-label="Add comment" aria-pressed={placing}><MessageSquare size={18} /></button>
+            {(['Highlight', 'Strikeout', 'Underline'] as const).map(kind => <button key={kind} className={`icon-button markup-tool${markupTool === kind ? ' active' : ''}`}
+              style={{ '--markup-color': markupColors[kind] } as React.CSSProperties} onMouseDown={event => event.preventDefault()}
+              onClick={() => chooseMarkupTool(kind)} disabled={!document || busy || editingDirty || Boolean(pagePlan)} aria-pressed={markupTool === kind}
+              aria-label={kind === 'Highlight' ? 'Highlight text' : kind === 'Strikeout' ? 'Mark text for removal' : 'Mark text for replacement'}
+              title={kind === 'Highlight' ? 'Highlight text' : kind === 'Strikeout' ? 'Removal — strikethrough' : 'Replacement — underline'}>
+              {kind === 'Highlight' ? <Highlighter size={18} /> : kind === 'Strikeout' ? <Strikethrough size={18} /> : <Underline size={18} />}
+            </button>)}
+            <span className="comment-tool-hint">{markupTool ? 'Drag across text' : placing ? 'Click on page…' : 'Select text to mark up'}</span>
+          </div>
           : activeTool === 'edit' || activeTool === 'draw' ? null
           : activeTool === 'pages' ? <div className="page-tools toolbar-page-tools" aria-label="Selected page actions">
             <button title="Undo edit" aria-label="Undo edit" disabled={busy || pendingCommentCount > 0 || !historyPast.length} onClick={undoEdit}><Undo2 size={16} /></button>
@@ -1695,6 +1752,8 @@ export default function App() {
                 registerPage={registerPage} onMeasure={measurePage} onPlace={choosePoint}
                 onAddSignature={addSignatureAt} onUpdateSignature={updateSignature} onSelectSignature={setSelectedSignatureId} onDeleteSignature={requestSignatureRemoval}
                 popupCommentId={popupCommentId}
+                commentsActive={activeTool === 'comments'} markingText={Boolean(markupTool)} onCommentColor={changeMarkupColor} recentColors={recentColors}
+                commentEditingDisabled={busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}
                 onSelectComment={(id) => { setSelectedId(id); setPopupCommentId(id); }}
                 onCloseComment={() => { setSelectedId(null); setPopupCommentId(null); }}
                 onOpenCommentSidebar={(id) => { setPopupCommentId(null); setSelectedId(id); selectTool('comments'); setPendingCommentScroll(id); }}
