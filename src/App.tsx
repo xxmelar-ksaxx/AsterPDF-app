@@ -11,6 +11,7 @@ import { PDFDocument } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { addTextNotes, changeComments, readPageComments, noteAsComment, markupKind, MARKUP_COLORS, type MarkupKind, type TextMarkupSelection, type CommentChange, type CommentOverride, type NewNote, type PdfComment } from './pdf/comments';
 import { selectedPdfText } from './components/PdfTextSelection';
+import { captureMarkups, restoreMarkupOverrides, type MarkupSnapshot } from './pdf/markup-history';
 import { prepareCommentSave } from './pdf/comment-save';
 import type { OpenedPdf, RecentPdf } from './types';
 import type { OpenedFile } from './types';
@@ -106,9 +107,11 @@ export default function App() {
   }, [preparingInstall, installing]);
   const [source, setSourceState] = useState<OpenedPdf | null>(null);
   const [previewSource, setPreviewSource] = useState<OpenedPdf | null>(null);
+  const markupHistoryRef = useRef<{ past: MarkupSnapshot[]; future: MarkupSnapshot[]; colorGroup: string | null }>({ past: [], future: [], colorGroup: null });
   const setSource = useCallback((next: OpenedPdf | null) => {
     setSourceState(next); setPreviewSource(next);
     setCommentOverrides({});
+    markupHistoryRef.current = { past: [], future: [], colorGroup: null };
   }, []);
   const [recentPdfs, setRecentPdfs] = useState<RecentPdf[]>([]);
   const [document, setDocument] = useState<PDFDocumentProxy | null>(null);
@@ -966,6 +969,36 @@ export default function App() {
     setPendingSignatureRemoval({ kind: 'placed', id });
   }, []);
 
+  const captureMarkupState = useCallback(() => captureMarkups(drafts, commentChanges, commentOverrides, [...comments, ...savedSessionComments]),
+    [drafts, commentChanges, commentOverrides, comments, savedSessionComments]);
+
+  const rememberMarkup = useCallback((colorId?: string, commit = true) => {
+    const history = markupHistoryRef.current;
+    // A continuous drag in the color picker is a single undo step.
+    if (!colorId || history.colorGroup !== colorId) {
+      history.past = [...history.past, captureMarkupState()].slice(-100);
+      history.future = [];
+    }
+    history.colorGroup = colorId && !commit ? colorId : null;
+  }, [captureMarkupState]);
+
+  const restoreMarkupHistory = useCallback((direction: 'undo' | 'redo') => {
+    if (!source || busy || returningHome || editingDirty || placedSignatures.length || pagePlan) return;
+    const history = markupHistoryRef.current;
+    const from = direction === 'undo' ? history.past : history.future;
+    const target = from.pop();
+    if (!target) return;
+    const current = captureMarkupState();
+    if (direction === 'undo') history.future = [...history.future, current].slice(-100);
+    else history.past = [...history.past, current].slice(-100);
+    history.colorGroup = null;
+    setDrafts(notes => [...notes.filter(note => !note.markup), ...target.drafts]);
+    setCommentChanges(changes => [...changes.filter(change => !markupKind(change.target.kind)), ...target.changes]);
+    setCommentOverrides(overrides => restoreMarkupOverrides(overrides, current, target));
+    setSelectedId(null); setPopupCommentId(null); setPendingCommentScroll(null); setEditingComment(null);
+    window.getSelection()?.removeAllRanges();
+  }, [source, busy, returningHome, editingDirty, placedSignatures.length, pagePlan, captureMarkupState]);
+
   const undoEdit = useCallback(() => {
     if (!source || busy || pendingCommentCount || !historyPast.length) return;
     const previous = historyPast[historyPast.length - 1];
@@ -1007,14 +1040,23 @@ export default function App() {
   }, [source, pagePlan, effectivePages.length, selectedPages, busy, pendingCommentCount, historyFuture, overlays]);
 
   useEffect(() => {
+    const isEditingText = (element: Element | null) => element instanceof HTMLElement && (
+      element.isContentEditable || element instanceof HTMLTextAreaElement ||
+      (element instanceof HTMLInputElement && ['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(element.type))
+    );
     const historyAction = (direction: 'undo' | 'redo') => {
       if (installLockRef.current) return;
       const focused = window.document.activeElement;
-      if (focused instanceof HTMLElement && (focused.isContentEditable || focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)) {
+      if (isEditingText(focused)) {
         window.document.execCommand(direction);
         return;
       }
       if (window.document.querySelector('.modal-backdrop')) return;
+      const markupHistory = markupHistoryRef.current;
+      if (activeTool === 'comments' || (!editingDirty && (markupHistory.past.length > 0 || markupHistory.future.length > 0))) {
+        restoreMarkupHistory(direction);
+        return;
+      }
       if (direction === 'undo') undoEdit(); else redoEdit();
     };
     const unsubscribeUndo = window.aster.onMenu('menu:undo', () => historyAction('undo'));
@@ -1023,13 +1065,13 @@ export default function App() {
       if (event.defaultPrevented || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey) ||
         (event.key.toLowerCase() !== 'z' && event.code !== 'KeyZ')) return;
       const focused = window.document.activeElement;
-      if (focused instanceof HTMLElement && (focused.isContentEditable || focused instanceof HTMLInputElement || focused instanceof HTMLTextAreaElement)) return;
+      if (isEditingText(focused)) return;
       event.preventDefault();
       historyAction(event.shiftKey ? 'redo' : 'undo');
     };
-    window.document.addEventListener('keydown', keyDown);
-    return () => { unsubscribeUndo(); unsubscribeRedo(); window.document.removeEventListener('keydown', keyDown); };
-  }, [undoEdit, redoEdit]);
+    window.document.addEventListener('keydown', keyDown, true);
+    return () => { unsubscribeUndo(); unsubscribeRedo(); window.document.removeEventListener('keydown', keyDown, true); };
+  }, [undoEdit, redoEdit, activeTool, editingDirty, restoreMarkupHistory]);
 
   useEffect(() => {
     const deselect = (event: PointerEvent) => {
@@ -1316,11 +1358,12 @@ export default function App() {
       author: authorName, text: selection.text.slice(0, 10000) || kind, date: new Date().toISOString(),
       markup: { kind, quadPoints: selection.quadPoints, color: markupColors[kind] }
     }));
+    rememberMarkup();
     window.aster.setDirty(true);
     setDrafts(current => [...current, ...notes]);
     setSelectedId(notes[notes.length - 1].id); setPopupCommentId(null);
     window.getSelection()?.removeAllRanges();
-  }, [source, busy, returningHome, editingDirty, placedSignatures.length, pagePlan, authorName, markupColors]);
+  }, [source, busy, returningHome, editingDirty, placedSignatures.length, pagePlan, authorName, markupColors, rememberMarkup]);
 
   const chooseMarkupTool = (kind: MarkupKind) => {
     if (!authorName) { setSettingsOpen(true); return; }
@@ -1506,6 +1549,7 @@ export default function App() {
   const changeComment = (comment: PdfComment, type: 'edit' | 'delete', text?: string) => {
     if (busy || returningHome || editingDirty || placedSignatures.length || pagePlan) return;
     if (type === 'edit' && (!text?.trim() || text.trim() === comment.text)) { setEditingComment(null); return; }
+    if (markupKind(comment.kind)) rememberMarkup();
     const date = new Date().toISOString();
     setCommentChanges((current) => [...current, { operationId: crypto.randomUUID(), target: comment, type, text: text?.trim(), date }]);
     setCommentOverrides((current) => ({ ...current, [comment.id]: { ...current[comment.id], ...(type === 'delete' ? { deleted: true } : { text: text!.trim(), date }) } }));
@@ -1519,7 +1563,11 @@ export default function App() {
     if (busy || returningHome || editingDirty || placedSignatures.length || pagePlan || !markupKind(comment.kind) || !/^#[0-9a-f]{6}$/i.test(color)) return;
     setMarkupColors(current => ({ ...current, [comment.kind]: color }));
     if (remember) rememberDrawColor(color);
-    if (comment.color === color) return;
+    if (comment.color === color) {
+      if (remember) markupHistoryRef.current.colorGroup = null;
+      return;
+    }
+    rememberMarkup(comment.id, remember);
     const date = new Date().toISOString();
     setCommentChanges(current => [...current.filter(change => change.target.id !== comment.id || change.type !== 'color'),
       { operationId: crypto.randomUUID(), target: comment, type: 'color', color, date }]);
