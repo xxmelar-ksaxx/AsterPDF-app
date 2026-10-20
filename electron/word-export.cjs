@@ -3,7 +3,9 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { Worker } = require('node:worker_threads');
 
-function createWordExport({ dialog, getWindow, getCurrentPath, sameFile, validatePdfBytes, listInstalledFonts }) {
+function createWordExport({ dialog, getWindow, getCurrentPath, sameFile, validatePdfBytes, listInstalledFonts, mode = 'word' }) {
+  const dataMode = mode === 'data';
+  const title = dataMode ? 'PDF to Data' : 'PDF to Word';
   let prepared = null, running = null, working = false;
   return {
     async prepare(expectedPath) {
@@ -13,8 +15,8 @@ function createWordExport({ dialog, getWindow, getCurrentPath, sameFile, validat
       const token = randomUUID();
       prepared = { token, expectedPath, target: null };
       try {
-        const result = await dialog.showSaveDialog(getWindow(), { title: 'PDF to Word — Save Word document',
-          defaultPath: path.join(path.dirname(expectedPath), `${path.parse(expectedPath).name}${path.extname(expectedPath).toLowerCase() === '.docx' ? '-converted' : ''}.docx`),
+        const result = await dialog.showSaveDialog(getWindow(), { title: `${title} — Save Word document`,
+          defaultPath: path.join(path.dirname(expectedPath), `${path.parse(expectedPath).name}${dataMode ? '-data' : path.extname(expectedPath).toLowerCase() === '.docx' ? '-converted' : ''}.docx`),
           filters: [{ name: 'Word document', extensions: ['docx'] }] });
         if (result.canceled || !result.filePath) { prepared = null; return null; }
         const target = path.extname(result.filePath) ? result.filePath : `${result.filePath}.docx`;
@@ -33,12 +35,13 @@ function createWordExport({ dialog, getWindow, getCurrentPath, sameFile, validat
       working = true;
       const temporary = path.join(path.dirname(job.target), `.${path.basename(job.target)}.${randomUUID()}.tmp`);
       try {
-        onProgress('Reading available fonts…');
-        const fonts = Object.fromEntries((await listInstalledFonts().catch(() => [])).flatMap(font =>
+        onProgress(dataMode ? 'Preparing content extraction…' : 'Reading available fonts…');
+        const fontCatalog = dataMode ? [] : await listInstalledFonts().catch(() => []);
+        const fonts = Object.fromEntries(fontCatalog.flatMap(font =>
           [font.postscriptName, font.family].filter(Boolean).map(name => [name.toLowerCase(), font.family])));
         const result = await new Promise((resolve, reject) => {
-          const worker = new Worker(path.join(__dirname, 'pdf-to-word.worker.cjs'), {
-            workerData: { bytes, fonts, title: path.parse(expectedPath).name }, transferList: [bytes.buffer]
+          const worker = new Worker(path.join(__dirname, dataMode ? 'pdf-to-data.worker.cjs' : 'pdf-to-word.worker.cjs'), {
+            workerData: { bytes, fonts, fontCatalog, title: path.parse(expectedPath).name }, transferList: [bytes.buffer]
           });
           running = worker;
           let settled = false;

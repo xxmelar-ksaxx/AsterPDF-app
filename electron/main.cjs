@@ -22,7 +22,9 @@ let saving = false;
 let preparedCompressedSave = null;
 const wordExport = createWordExport({ dialog, getWindow: () => mainWindow, getCurrentPath: () => currentPath,
   sameFile, validatePdfBytes, listInstalledFonts });
-app.on('will-quit', () => wordExport.dispose());
+const dataExport = createWordExport({ dialog, getWindow: () => mainWindow, getCurrentPath: () => currentPath,
+  sameFile, validatePdfBytes, listInstalledFonts, mode: 'data' });
+app.on('will-quit', () => { wordExport.dispose(); dataExport.dispose(); });
 let recentStore;
 let updateService;
 let updateInstaller;
@@ -312,7 +314,10 @@ function createWindow() {
       { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }
     ] },
     { label: 'View', submenu: [{ role: 'togglefullscreen' }] },
-    { label: 'Tools', submenu: [{ label: 'PDF to Word', click: () => send('menu:pdf-to-word') }] },
+    { label: 'Tools', submenu: [
+      { label: 'PDF to Word', click: () => send('menu:pdf-to-word') },
+      { label: 'PDF to Data', click: () => send('menu:pdf-to-data') }
+    ] },
     { label: 'Settings', submenu: [{ label: 'Settings…', click: () => send('menu:settings') }] }
   ]));
 }
@@ -372,6 +377,14 @@ app.whenReady().then(() => {
     });
   });
   ipcMain.handle('word:discard-export', (event, token) => { requireApp(event); wordExport.discard(token); });
+  ipcMain.handle('data:prepare-export', (event, expectedPath) => { requireApp(event); return dataExport.prepare(expectedPath); });
+  ipcMain.handle('data:convert', (event, bytes, token, expectedPath) => {
+    requireApp(event);
+    return dataExport.convert(bytes, token, expectedPath, message => {
+      if (!event.sender.isDestroyed()) event.sender.send('data:progress', { token, message });
+    });
+  });
+  ipcMain.handle('data:discard-export', (event, token) => { requireApp(event); dataExport.discard(token); });
   ipcMain.handle('pdf:close-document', async (event, expectedPath) => {
     requireApp(event);
     if (typeof expectedPath !== 'string' || currentPath !== expectedPath) return false;

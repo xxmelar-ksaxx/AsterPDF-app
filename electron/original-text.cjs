@@ -452,7 +452,9 @@ function conversionTextRuns(pdfium, textPage) {
         const scale = Math.hypot(memory.getValue(ptr + 8, 'float'), memory.getValue(ptr + 12, 'float'));
         if (Number.isFinite(scale) && scale > 0) size *= scale;
       }
-      return [{ object, text, font: objectFontName(pdfium, object), size,
+      const baseline = pdfium.FPDFText_GetCharOrigin(textPage, first, ptr, ptr + 8)
+        ? [memory.getValue(ptr, 'double'), memory.getValue(ptr + 8, 'double')] : null;
+      return [{ object, text, font: objectFontName(pdfium, object), size, baseline,
         bold: pdfium.FPDFText_GetFontWeight(textPage, first) >= 600,
         color: color.map(value => value.toString(16).padStart(2, '0')).join(''),
         box: [Math.min(...boxes.map(box => box[0])), Math.min(...boxes.map(box => box[1])),

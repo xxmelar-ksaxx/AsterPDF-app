@@ -24,6 +24,10 @@ declare global {
       prepareWordExport(expectedPath: string): Promise<{ token: string; path: string } | null>;
       convertToWord(bytes: Uint8Array, token: string, expectedPath: string): Promise<WordExportResult>;
       discardWordExport(token: string): Promise<void>;
+      prepareDataExport(expectedPath: string): Promise<{ token: string; path: string } | null>;
+      convertToData(bytes: Uint8Array, token: string, expectedPath: string): Promise<WordExportResult>;
+      discardDataExport(token: string): Promise<void>;
+      onDataProgress(handler: (progress: { token: string; message: string }) => void): () => void;
       onWordProgress(handler: (progress: { token: string; message: string }) => void): () => void;
       getRecentPdfs(): Promise<RecentPdf[]>;
       setRecentPreview(path: string, preview: string): Promise<void>;
@@ -38,7 +42,7 @@ declare global {
       setSaving(value: boolean): void;
       onDiscardRequest(handler: (id: string) => void): () => void;
       answerDiscardRequest(id: string, discard: boolean): void;
-      onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word', handler: () => void): () => void;
+      onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word' | 'menu:pdf-to-data', handler: () => void): () => void;
     };
   }
 }
