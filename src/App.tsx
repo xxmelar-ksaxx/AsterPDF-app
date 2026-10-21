@@ -885,6 +885,31 @@ export default function App() {
   const latestSave = useRef(save);
   useLayoutEffect(() => { latestSave.current = save; }, [save]);
 
+  useEffect(() => window.aster.onPrepareDocument(async mode => {
+    if (busy || openingRef.current || savingRef.current || returningHomeRef.current) {
+      setError('Please wait for this document to finish its current operation.');
+      return false;
+    }
+    setAboutOpen(false); setSettingsOpen(false); setLinkSelection(null);
+    await finishInlineEdits();
+    // Flush text edits and their dirty notification before the main process
+    // decides whether this tab needs an unsaved-changes prompt.
+    await paintSaveFeedback();
+    if (mode === 'close') return true;
+    if (editingComment && editingComment.text !== editingComment.comment.text) {
+      setError('Finish editing this comment before installing the update.');
+      return false;
+    }
+    const pendingNotes: NewNote[] = pendingPoint && noteText.trim() ? [{
+      id: crypto.randomUUID(), page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
+      author: authorName, text: noteText.trim(), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
+    }] : [];
+    if (pendingNotes.length && !authorName) { setError('Set your comment author name before saving.'); return false; }
+    const saved = await latestSave.current(false, pendingNotes);
+    await paintSaveFeedback();
+    return saved;
+  }), [busy, editingComment, pendingPoint, noteText, authorName]);
+
   const restartAndInstall = async () => {
     if (busy || savingRef.current || installLockRef.current) return;
     installLockRef.current = true;

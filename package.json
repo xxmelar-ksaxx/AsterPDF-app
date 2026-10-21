@@ -1,6 +1,6 @@
 {
   "name": "asterpdf-desktop",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Offline PDF reading, editing and conversion for Windows and macOS",
   "author": "AsterPDF Contributors",
@@ -19,6 +19,7 @@
     "smoke:arabic-source": "node scripts/smoke-arabic-source.cjs",
     "smoke:updates": "node scripts/smoke-updates.cjs",
     "smoke:file-open": "node scripts/smoke-file-open.cjs",
+    "smoke:workspaces": "node scripts/smoke-workspaces.cjs",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "build:win": "npm run build && electron-builder --win nsis --x64 --publish never",

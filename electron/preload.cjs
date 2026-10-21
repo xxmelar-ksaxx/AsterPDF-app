@@ -1,6 +1,27 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('aster', {
+  getWorkspace: () => ipcRenderer.invoke('workspace:state'),
+  workspaceAction: (action, id, value) => ipcRenderer.send('workspace:action', action, id, value),
+  onWorkspaceChanged: (handler) => {
+    const listener = (_event, state) => handler(state);
+    ipcRenderer.on('workspace:changed', listener);
+    return () => ipcRenderer.removeListener('workspace:changed', listener);
+  },
+  onWorkspaceDropHint: (handler) => {
+    const listener = (_event, point) => handler(point);
+    ipcRenderer.on('workspace:drop-hint', listener);
+    return () => ipcRenderer.removeListener('workspace:drop-hint', listener);
+  },
+  onPrepareDocument: (handler) => {
+    const listener = async (_event, request) => {
+      let ok = false;
+      try { ok = await handler(request.mode); } catch {}
+      ipcRenderer.send('workspace:prepared', request.id, ok === true);
+    };
+    ipcRenderer.on('workspace:prepare', listener);
+    return () => ipcRenderer.removeListener('workspace:prepare', listener);
+  },
   openDialog: () => ipcRenderer.invoke('pdf:open-dialog'),
   addDialog: () => ipcRenderer.invoke('pdf:add-dialog'),
   openPath: (filePath) => ipcRenderer.invoke('pdf:open-path', filePath),

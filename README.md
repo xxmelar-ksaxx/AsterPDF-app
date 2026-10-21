@@ -4,8 +4,10 @@ An offline PDF workspace for Windows, Apple Silicon Macs, and Intel Macs. It ope
 
 ## Features
 
+- Open multiple documents in tabs and separate windows. Opening another file creates a tab; reopening a file already open focuses its existing tab. Use the **+** button or **Ctrl/Cmd+T** for a new tab, and **Ctrl/Cmd+Shift+N** for a new window. Drag tabs to reorder them, drag one outside the window to detach it, or drag it into another AsterPDF window to attach it. The small move-to-window button provides an alternative to dragging. Moving tabs preserves unsaved edits, undo history, and scroll position. **Ctrl/Cmd+W** closes the current tab, with an unsaved-changes prompt when needed. Each document saves independently; Save As cannot overwrite a file open in another tab. Restart-and-install saves documents across all windows first.
+
 - Choose **Tools → PDF to Data** for a clean `.docx` with flowing text and editable detected tables, organized under source-page headings. It asks where to save first and shows extraction progress. Original page design, fonts and graphics are omitted. Numeric strings stay as extracted text: no rounding, localization, automatic date conversion or calculations. The exporter checks for missing character mappings, unplaced text, digit-count differences and ambiguous table assignments. Affected pages include review notes; where structured extraction loses text or digits, it uses the extracted character stream. This is a review aid, not a guarantee of correct reading order or figures: borderless tables, split numbers, scans, charts and incomplete PDF text mappings still need comparison with the source. No OCR is performed. Includes pending edits without saving over the PDF.
-- Open PDFs from Finder or Explorer using **Open With → AsterPDF**. A request launches AsterPDF or restores its existing window. Requests wait for the interface and any active save; switching documents uses the existing unsaved-changes confirmation, including text currently being edited inline. Opening the same path again keeps the current edits in place.
+- Open PDFs from Finder or Explorer using **Open With → AsterPDF**. A request launches AsterPDF or restores its existing window. Requests wait for the interface and any active save; additional files open in their own tabs, keeping the current document and its edits intact. Opening the same path again keeps the current edits in place.
 - Open a local PDF, DOCX, PNG, JPEG, or WebP file with the file picker or drag and drop it into the window. DOCX conversion uses a bundled browser renderer and Electron PDF printing; it does not require Word, LibreOffice, or a network connection. Text in a converted DOCX remains searchable.
 - Choose **Tools → PDF to Word** to export the current document, including pending edits, as a `.docx`. The save-location dialog appears first, then an offline worker reports conversion progress. The PDF remains open with its unsaved changes intact. Each Word section uses the source page's dimensions and orientation. Text is editable and detected ruled tables become Word tables, including rectangular merged cells. Numbers are exported as text without numeric reformatting. Diagrams and other graphics are retained as page backgrounds. Separate card and column text uses independently positioned text boxes aligned to source baselines, with internal wrapping disabled. Arabic shaping and direction are retained without mirroring page coordinates. Matching installed fonts are measured to size boxes and fit lines inside cells; fonts permitting editable embedding are included in the DOCX. When a source font is unavailable, an installed or bundled fallback covering the text is measured and fitted, and a warning names the substitution. Install the original font and export again for matching letter shapes. Embedding restrictions are also reported. Review the result: complex layouts, borderless tables, rotated text, and differences between Word's and PDF's text engines can still affect fidelity. Scanned documents require OCR, which this converter does not provide; mixed documents retain image-only pages and report which pages need OCR.
 - Add more PDFs, DOCX files, and images to the open PDF to make one document. Append them or insert them after a chosen page.
@@ -34,7 +36,7 @@ Install Node.js 20 or newer. The lockfile pins the dependency tree.
 
 ### Windows x64
 
-Run `build-windows.bat`. It installs the locked dependencies, checks TypeScript, bundles the interface, and creates an NSIS installer at `release/AsterPDF-0.5.1-Windows-x64-Setup.exe` plus a matching `.sha256` checksum file. The installer includes the app; installing it does not download anything.
+Run `build-windows.bat`. It installs the locked dependencies, checks TypeScript, bundles the interface, and creates an NSIS installer at `release/AsterPDF-0.5.2-Windows-x64-Setup.exe` plus a matching `.sha256` checksum file. The installer includes the app; installing it does not download anything.
 
 ### macOS Apple Silicon and Intel
 
@@ -90,7 +92,7 @@ Install the rebuilt Windows installer to register AsterPDF in **Open With** and 
 
 On macOS, rebuild with `build-macos.command`, copy **AsterPDF.app** from the DMG into **Applications**, and open it once. The app bundle declares PDF editing support so Finder can offer **Open With → AsterPDF**. Existing app bundles need to be replaced with the rebuilt version. Signing/notarization is a separate requirement for Gatekeeper approval.
 
-PDF is the registered file association. DOCX and image imports remain available inside the app. AsterPDF uses one document window; opening a different PDF switches that window after any unsaved-changes decision. Native file-open requests are queued before startup, and macOS can recreate a document window after the previous one was closed.
+PDF is the registered file association. DOCX and image imports remain available inside the app. AsterPDF supports multiple document tabs and windows; opening a different PDF adds a tab to the focused window. Native file-open requests are queued before startup, and macOS can recreate a document window after the previous one was closed.
 
 ## Development and verification
 
@@ -106,6 +108,8 @@ npm run desktop
 `npm run smoke` exercises the reader, recent-file previews, automatic saves, failed-save retry, and PDF annotations. `npm run smoke:editor` checks DOCX and image conversion, searchable DOCX text, page edits, signatures, and offline compression. `npm run smoke:updates` checks update progress, retry, and save-before-install with mocked network/installer operations and real PDF writes, including canceled Save As and failed writes. It never installs an update. `ASTERPDF_SMOKE_PACKAGED=1` runs the reader smoke test against `release/win-unpacked/AsterPDF.exe` after a Windows build.
 
 `npm run smoke:file-open` checks a PDF passed on startup, a real second process forwarding another PDF, spaces and Arabic filenames, window restoration, unsaved inline edits, canceled/accepted document switches, missing-file recovery, and queuing during Save As. It also exercises the macOS `open-file` listener and window recreation through simulated Electron events. On Windows, set `ASTERPDF_SMOKE_PACKAGED=1` to test the packaged EXE. Native Finder registration still needs verification on a Mac.
+
+`npm run smoke:workspaces` starts a temporary Vite development server and checks tab opening, duplicate-file focus, moving live tabs between windows, retained edits and undo/redo, isolated saving, Save As conflicts, and closing during a drag. It uses temporary PDFs and does not build the app.
 
 ## Implementation
 

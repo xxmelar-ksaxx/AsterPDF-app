@@ -1,8 +1,17 @@
 export {};
 
 declare global {
+  type WorkspaceState = {
+    activeId: string | null; dragging: boolean;
+    tabs: { id: string; name: string; path: string; dirty: boolean; busy: boolean; crashed: boolean }[];
+  };
   interface Window {
     aster: {
+      getWorkspace(): Promise<WorkspaceState>;
+      workspaceAction(action: 'new-tab' | 'new-window' | 'select' | 'close' | 'detach' | 'drag-start' | 'drag-move' | 'drag-end' | 'drop-index', id?: string, value?: number | boolean): void;
+      onWorkspaceChanged(handler: (state: WorkspaceState) => void): () => void;
+      onWorkspaceDropHint(handler: (point: { x: number; y: number } | null) => void): () => void;
+      onPrepareDocument(handler: (mode: 'close' | 'save') => Promise<boolean>): () => void;
       openDialog(): Promise<OpenedFile | null>;
       addDialog(): Promise<OpenedFile[] | null>;
       openPath(path: string): Promise<OpenedFile | null>;

@@ -488,3 +488,24 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .about-updates{border-top:1px solid #e8ede7;padding-top:18px;text-align:center}
 .about-updates p{font-size:12px;color:#65765f;line-height:1.5;margin:0 0 12px;overflow-wrap:anywhere}
 .about-updates .button{height:32px;padding:0 12px;font-size:12px;gap:7px}
+
+/* The native document views sit directly beneath this 42px tab strip. */
+.document-tabs-bar{height:42px;display:flex;align-items:center;gap:4px;padding:5px 8px 0;background:#eef2eb;border-bottom:1px solid #dce4d8;user-select:none;overflow:hidden}
+.document-tabs{display:flex;align-self:stretch;align-items:stretch;gap:3px;min-width:0;overflow-x:auto;scrollbar-width:none}
+.document-tabs::-webkit-scrollbar{display:none}
+.document-tab{position:relative;display:flex;align-items:center;min-width:136px;max-width:250px;width:210px;flex:0 1 auto;border:1px solid transparent;border-bottom:0;border-radius:9px 9px 0 0;color:#6d7b70;touch-action:none}
+.document-tab:hover{background:#e4ebdf}
+.document-tab.active{background:#fff;border-color:#dce4d8;color:#253b2c}
+.tab-select{display:flex;align-items:center;gap:7px;min-width:0;flex:1;align-self:stretch;padding:0 6px 0 10px;border:0;background:none;color:inherit;text-align:left;font-size:12px;cursor:default;outline-offset:-3px}
+.tab-select svg,.tab-dirty{flex:none}
+.tab-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab-dirty{width:6px;height:6px;background:#b89135;border-radius:50%}
+.tab-close,.tab-detach{display:grid;place-items:center;flex:none;width:23px;height:24px;padding:0;border:0;border-radius:5px;background:none;color:inherit;margin-right:3px}
+.tab-detach{display:none}
+.document-tab:hover .tab-detach,.document-tab:focus-within .tab-detach{display:grid}
+.tab-close:hover,.tab-detach:hover{background:#dce5d6;color:#25402b}
+.workspace-button{display:grid;place-items:center;flex:none;width:30px;height:30px;margin-bottom:4px;border:0;border-radius:7px;background:none;color:#687c61}
+.workspace-button:hover{background:#dfe8d9;color:#2b4422}
+.document-tab.drop-before:before,.document-tab.drop-after:after{content:'';position:absolute;top:3px;bottom:3px;width:3px;border-radius:2px;background:#7cab32;z-index:2}
+.document-tab.drop-before:before{left:-3px}.document-tab.drop-after:after{right:-3px}
+.document-tabs-bar.is-dragging,.document-tabs-bar.is-dragging button{cursor:grabbing}
