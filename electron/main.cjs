@@ -318,7 +318,10 @@ function createWindow() {
       { label: 'PDF to Word', click: () => send('menu:pdf-to-word') },
       { label: 'PDF to Data', click: () => send('menu:pdf-to-data') }
     ] },
-    { label: 'Settings', submenu: [{ label: 'Settings…', click: () => send('menu:settings') }] }
+    { label: 'Settings', submenu: [{ label: 'Settings…', click: () => send('menu:settings') }] },
+    { label: 'About', ...(process.platform === 'darwin'
+      ? { submenu: [{ label: 'About AsterPDF', click: () => send('menu:about') }] }
+      : { click: () => send('menu:about') }) }
   ]));
 }
 
@@ -359,6 +362,13 @@ app.whenReady().then(() => {
     prompt.resolve(discard === true);
   });
   ipcMain.handle('pdf:open-dialog', (event) => { requireApp(event); return selectFiles(); });
+  ipcMain.handle('pdf:open-link', async (event, address) => {
+    requireApp(event);
+    if (typeof address !== 'string' || address.length > 4096 || /[\u0000-\u001f\u007f]/.test(address)) throw new Error('Invalid link.');
+    const url = new URL(address);
+    if (!['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol) || url.username || url.password) throw new Error('Unsupported link type.');
+    await shell.openExternal(url.href);
+  });
   ipcMain.on('pdf:external-ready', (event, ready) => { if (appOrigin(event)) fileOpenQueue.setReady(ready === true); });
   ipcMain.on('pdf:external-complete', (event, id) => { if (appOrigin(event)) fileOpenQueue.complete(id); });
   ipcMain.handle('pdf:add-dialog', (event) => { requireApp(event); return selectFiles(true); });

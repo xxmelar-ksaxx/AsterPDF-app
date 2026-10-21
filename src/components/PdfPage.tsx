@@ -9,7 +9,9 @@ import type { OverlayObject, TextAppearance } from '../pdf/overlays';
 import TextFrame from './TextFrame';
 import CommentPin from './CommentPin';
 import CommentMarkup, { markupAtPoint } from './CommentMarkup';
-import PdfTextSelection from './PdfTextSelection';
+import PdfTextSelection, { registerSelectionPage, selectedPdfText } from './PdfTextSelection';
+import PdfLinks from './PdfLinks';
+import type { TextMarkupSelection } from '../pdf/comments';
 import type { ColorCommand, FontCommand, FontSelection, InstalledFont } from './FontPicker';
 import type { OriginalPdfText } from '../types';
 import OriginalTextEditor, { type TextEdit } from './OriginalTextEditor';
@@ -26,6 +28,7 @@ export function pageScale(size: PageSize, zoom: Zoom, viewerWidth: number): numb
 
 type Props = {
   document: PDFDocumentProxy;
+  onRenderSettled?: (document: PDFDocumentProxy, page: number) => void;
   sourceBytes: Uint8Array;
   inspectOriginalText: boolean;
   onCommitOriginalText: (pageIndex: number, objectIndex: number, oldText: string, nextText: string, fontChoice: string, color?: number[]) => Promise<void>;
@@ -48,6 +51,10 @@ type Props = {
   onOpenCommentSidebar: (id: string) => void;
   commentsActive: boolean;
   markingText: boolean;
+  selectingLinks: boolean;
+  editActive: boolean;
+  onLinkMenu: (x: number, y: number, selection: TextMarkupSelection[]) => void;
+  onNavigateLink: (sourcePage: number) => void;
   onCommentColor: (comment: PdfComment, color: string, remember?: boolean) => void;
   onAddMarkupComment: (comment: PdfComment) => void;
   onDeleteMarkup: (comment: PdfComment) => void;
@@ -88,11 +95,11 @@ type Props = {
 
 export default function PdfPage({
   document, sourceBytes, inspectOriginalText, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
-  popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
+  popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, selectingLinks, editActive, onLinkMenu, onNavigateLink, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
   overlayTool, drawActive, overlayColor, overlayLineWidth, drawStyle, overlayFontSize, textAppearance, overlayFontChoice, overlayImage, overlays, selectedOverlayId,
-  onAddOverlay, onUpdateOverlay, onDeleteOverlay, onSelectOverlay, onError
+  onAddOverlay, onUpdateOverlay, onDeleteOverlay, onSelectOverlay, onError, onRenderSettled
 }: Props) {
   const sheetRef = useRef<HTMLDivElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -231,19 +238,24 @@ export default function PdfPage({
         setReady(true);
       } catch (cause) {
         if (!cancelled) onError(`Could not render page ${pageNumber}: ${cause instanceof Error ? cause.message : String(cause)}`);
+      } finally {
+        if (!cancelled) onRenderSettled?.(document, pageNumber);
       }
     })();
     return () => {
       cancelled = true;
       renderTask?.cancel();
     };
-  }, [document, sourcePageNumber, rotation, near, zoom, viewerWidth, onMeasure, onError]);
+  }, [document, sourcePageNumber, pageNumber, rotation, near, zoom, viewerWidth, onMeasure, onError, onRenderSettled]);
 
   const scale = pageScale(size, zoom, viewerWidth);
   const activeViewport = viewport && Math.abs(viewport.width - size.width * scale) < 1
     && Math.abs(viewport.height - size.height * scale) < 1 ? viewport : null;
   const width = activeViewport?.width ?? size.width * scale;
   const height = activeViewport?.height ?? size.height * scale;
+  useEffect(() => {
+    if (stageRef.current && activeViewport) return registerSelectionPage(stageRef.current, pageNumber, activeViewport);
+  }, [activeViewport, pageNumber]);
 
   const choosePoint = (event: MouseEvent<HTMLDivElement>) => {
     if (!activeViewport || !stageRef.current) return;
@@ -293,6 +305,12 @@ export default function PdfPage({
   return <div className="page-sheet" data-page-number={pageNumber} ref={setSheet}>
     <span className="page-label">Page {pageNumber}</span>
     <div className={`page-stage ${placing || placingSignature ? 'is-placing' : ''}${editingOriginal ? ' is-editing-text' : ''}`} ref={stageRef} onClick={choosePoint}
+      onContextMenuCapture={event => {
+        if (!editActive || (event.target as Element).closest('[data-overlay-kind="image"], .editable-signature')) return;
+        const selection = selectedPdfText();
+        if (!selection.length && !selectingLinks) return;
+        event.preventDefault(); event.stopPropagation(); onLinkMenu(event.clientX, event.clientY, selection);
+      }}
       onPointerMove={(event) => { if (placingSignature && activeViewport && stageRef.current) {
         const bounds = stageRef.current.getBoundingClientRect();
         setSignatureCursor({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
@@ -341,11 +359,14 @@ export default function PdfPage({
       {activeViewport && comments.filter(comment => markupKind(comment.kind) && comment.quadPoints?.length).map(comment =>
         <CommentMarkup key={`markup-${comment.id}`} comment={comment} viewport={activeViewport} selected={selectedId === comment.id}
           onSelect={() => onSelectComment(comment.id)} />)}
-      {near && ready && activeViewport && commentsActive && !placing && <PdfTextSelection pdf={document} sourcePage={sourcePageNumber} page={pageNumber}
+      {near && ready && activeViewport && (commentsActive || selectingLinks) && !placing && <PdfTextSelection pdf={document} sourcePage={sourcePageNumber} page={pageNumber}
         viewport={activeViewport} marking={markingText} onError={onError} onClickMarkup={(x, y) => {
           const comment = markupAtPoint(comments, activeViewport, x, y);
           if (comment) onSelectComment(comment.id);
         }} />}
+      {near && ready && activeViewport && <PdfLinks pdf={document} sourcePage={sourcePageNumber} viewport={activeViewport}
+        selecting={editActive || markingText || placing || Boolean(overlayTool) || Boolean(placingSignature)}
+        onNavigate={onNavigateLink} onError={onError} />}
       {activeViewport && comments.map((comment) => {
         const first = activeViewport.convertToViewportPoint(comment.rect[0], comment.rect[1]);
         const second = activeViewport.convertToViewportPoint(comment.rect[2], comment.rect[3]);

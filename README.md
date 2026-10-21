@@ -18,6 +18,7 @@ An offline PDF workspace for Windows, Apple Silicon Macs, and Intel Macs. It ope
 - Reopen a recent PDF from the opening screen. The list shows a locally cached preview of its first page and keeps up to eight available files.
 - Scroll continuously through every page. Nearby pages render on demand, and the page counter follows the scroll position. You can still jump from the toolbar, page list, or a comment.
 - Read embedded text notes and comments attached to markup annotations. Authors are shown from the PDF's annotation author field; unnamed comments display **Unknown author**.
+- Follow embedded web/email links in the system browser or mail app, and PDF destination links within the viewer. While editing or selecting text, use **Ctrl-click** (**Cmd-click** on Mac) to follow a link. In **Edit**, use **Select PDF text**, select words, then click the hyperlink icon or right-click → **Add hyperlink**. Selections inside inline text editors are also supported. Enter the destination and choose **Add link**, then **Save PDF** to persist it. New links participate in edit undo/redo; each selected line receives its own clickable area.
 - Place new text notes on a page. Set your comment author name in **Settings** before adding a note.
 - Reply from a comment's page popup or sidebar card. Replies appear beneath their parent, support editing and deletion, and use standard PDF `/IRT` and `/RT` links so threads survive reopening. Post with **Reply** or **Ctrl+Enter** (**Cmd+Enter** on Mac). Sticky-note replies save in the background; replies within highlight, removal, and replacement threads retain those tools' manual-save and undo behavior. Deleting a parent preserves its replies as independent comments.
 - Each conversation shares one sidebar card with a line connecting its replies. Comment loading includes annotations with hidden page appearances and plain-text content from rich-text notes. Reopening a PDF with AsterPDF editing data retains the current file's comments, replies, annotation edits and deletions made in other PDF readers instead of restoring stale annotations from the embedded editing copy.
@@ -33,7 +34,7 @@ Install Node.js 20 or newer. The lockfile pins the dependency tree.
 
 ### Windows x64
 
-Run `build-windows.bat`. It installs the locked dependencies, checks TypeScript, bundles the interface, and creates an NSIS installer at `release/AsterPDF-0.5.0-Windows-x64-Setup.exe` plus a matching `.sha256` checksum file. The installer includes the app; installing it does not download anything.
+Run `build-windows.bat`. It installs the locked dependencies, checks TypeScript, bundles the interface, and creates an NSIS installer at `release/AsterPDF-0.5.1-Windows-x64-Setup.exe` plus a matching `.sha256` checksum file. The installer includes the app; installing it does not download anything.
 
 ### macOS Apple Silicon and Intel
 

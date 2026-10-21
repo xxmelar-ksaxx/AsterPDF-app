@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('aster', {
   openDialog: () => ipcRenderer.invoke('pdf:open-dialog'),
   addDialog: () => ipcRenderer.invoke('pdf:add-dialog'),
   openPath: (filePath) => ipcRenderer.invoke('pdf:open-path', filePath),
+  openLink: (url) => ipcRenderer.invoke('pdf:open-link', url),
   closeDocument: (expectedPath) => ipcRenderer.invoke('pdf:close-document', expectedPath),
   onExternalOpen: (handler) => {
     const listener = (_event, request) => handler(request);
@@ -64,7 +65,7 @@ embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-tex
   },
   answerDiscardRequest: (id, discard) => ipcRenderer.send('pdf:confirm-discard-result', id, discard),
   onMenu: (channel, handler) => {
-    if (!['menu:open', 'menu:save', 'menu:save-as', 'menu:settings', 'menu:undo', 'menu:redo', 'menu:pdf-to-word', 'menu:pdf-to-data'].includes(channel)) return () => {};
+    if (!['menu:open', 'menu:save', 'menu:save-as', 'menu:settings', 'menu:about', 'menu:undo', 'menu:redo', 'menu:pdf-to-word', 'menu:pdf-to-data'].includes(channel)) return () => {};
     const listener = () => handler();
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);

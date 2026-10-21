@@ -3,9 +3,54 @@ import { TextLayer, type PDFDocumentProxy, type PageViewport } from 'pdfjs-dist'
 import type { TextMarkupSelection } from '../pdf/comments';
 
 const layers = new Map<HTMLElement, { page: number; viewport: PageViewport }>();
+const pages = new Map<HTMLElement, { page: number; viewport: PageViewport }>();
+export function registerSelectionPage(stage: HTMLElement, page: number, viewport: PageViewport) {
+  pages.set(stage, { page, viewport });
+  return () => { pages.delete(stage); };
+}
+
+function selectedEditorText(): TextMarkupSelection[] {
+  const input = document.activeElement;
+  let mirror: HTMLElement | undefined;
+  let range: Range | undefined;
+  let stage: HTMLElement | null = null;
+  if (input instanceof HTMLTextAreaElement && input.matches('.original-text-editable') && input.selectionStart !== input.selectionEnd) {
+    stage = input.closest('.page-stage');
+    mirror = document.createElement('div');
+    const style = getComputedStyle(input);
+    for (const key of Array.from(style)) mirror.style.setProperty(key, style.getPropertyValue(key));
+    mirror.style.visibility = 'hidden'; mirror.style.pointerEvents = 'none';
+    mirror.style.whiteSpace = input.wrap === 'off' ? 'pre' : 'pre-wrap';
+    mirror.textContent = input.value;
+    input.parentElement!.append(mirror);
+    mirror.scrollTop = input.scrollTop; mirror.scrollLeft = input.scrollLeft;
+    range = document.createRange();
+    range.setStart(mirror.firstChild!, input.selectionStart); range.setEnd(mirror.firstChild!, input.selectionEnd);
+  } else {
+    const selection = window.getSelection();
+    if (selection?.rangeCount && !selection.isCollapsed) {
+      const element = selection.anchorNode?.parentElement?.closest('.original-text-editable');
+      if (element) { stage = element.closest('.page-stage'); range = selection.getRangeAt(0); }
+    }
+  }
+  try {
+    const entry = stage && pages.get(stage);
+    if (!entry || !range || !range.toString().trim()) return [];
+    const bounds = stage!.getBoundingClientRect();
+    const quadPoints = Array.from(range.getClientRects()).filter(rect => rect.width > .5 && rect.height > .5).flatMap(rect => [
+      ...entry.viewport.convertToPdfPoint(rect.left - bounds.left, rect.top - bounds.top),
+      ...entry.viewport.convertToPdfPoint(rect.right - bounds.left, rect.top - bounds.top),
+      ...entry.viewport.convertToPdfPoint(rect.left - bounds.left, rect.bottom - bounds.top),
+      ...entry.viewport.convertToPdfPoint(rect.right - bounds.left, rect.bottom - bounds.top)
+    ]);
+    return quadPoints.length ? [{ page: entry.page, text: range.toString(), quadPoints }] : [];
+  } finally { mirror?.remove(); }
+}
 
 /** Read only selected text runs, never the large bounding rectangle of a paragraph. */
 export function selectedPdfText(): TextMarkupSelection[] {
+  const editor = selectedEditorText();
+  if (editor.length) return editor;
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount) return [];
   const selected = selection.getRangeAt(0);

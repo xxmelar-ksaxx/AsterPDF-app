@@ -4,7 +4,7 @@ import {
   FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X,
   ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical, TriangleAlert,
   Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus, PanelRight,
-  Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, Eye, EyeOff, Highlighter
+  Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, Eye, EyeOff, Highlighter, Link2, TextSelect
 } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
 import { PDFDocument } from 'pdf-lib';
@@ -31,9 +31,12 @@ import SmartJustifyIcon from './components/SmartJustifyIcon';
 import { prepareTextForExport, textOverlaySize } from './components/text-overlay-size';
 import { resolveTextFont } from './components/OriginalTextEditor';
 import UpdateSettings from './components/UpdateSettings';
+import AboutDialog from './components/AboutDialog';
 import SaveFeedback, { paintSaveFeedback } from './components/SaveFeedback';
 import CommentCard from './components/CommentCard';
 import ResizableSidebar from './components/ResizableSidebar';
+import { HyperlinkDialog, HyperlinkMenu } from './components/HyperlinkTools';
+import { addPdfLinks } from './pdf/links';
 import { useUpdates } from './updates';
 import { finishInlineEdits } from './finish-inline-edit';
 
@@ -134,6 +137,13 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [popupCommentId, setPopupCommentId] = useState<string | null>(null);
   const [markupTool, setMarkupTool] = useState<MarkupKind | null>(null);
+  const [selectingLinks, setSelectingLinks] = useState(false);
+  const [linkSelection, setLinkSelection] = useState<TextMarkupSelection[] | null>(null);
+  const [linkMenu, setLinkMenu] = useState<{ x: number; y: number; selection: TextMarkupSelection[] } | null>(null);
+  useEffect(() => {
+    if (activeTool !== 'edit') { setSelectingLinks(false); setLinkMenu(null); setLinkSelection(null); }
+  }, [activeTool]);
+  useEffect(() => { setLinkSelection(null); setLinkMenu(null); setSelectingLinks(false); }, [source?.path]);
   const [markupColors, setMarkupColors] = useState(MARKUP_COLORS);
   useEffect(() => {
     if (!selectedId) { setPopupCommentId(null); return; }
@@ -163,12 +173,22 @@ export default function App() {
   const [authorName, setAuthorName] = useState('');
   const [authorInput, setAuthorInput] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [discardRequestId, setDiscardRequestId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [commentSaving, setCommentSaving] = useState(false);
   const [returningHome, setReturningHome] = useState(false);
   const returningHomeRef = useRef(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [openingMessage, setOpeningMessage] = useState<string | null>(null);
+  const openingRef = useRef<{ bytes?: Uint8Array; pdf?: PDFDocumentProxy } | null>(null);
+  const finishOpening = useCallback(() => {
+    openingRef.current = null;
+    setOpeningMessage(null);
+  }, []);
+  const pageRendered = useCallback((pdf: PDFDocumentProxy, page: number) => {
+    if (page === 1 && openingRef.current?.pdf === pdf) finishOpening();
+  }, [finishOpening]);
   const [wordExporting, setWordExporting] = useState<'word' | 'data' | null>(null);
   const [wordExportResult, setWordExportResult] = useState<(WordExportResult & { kind: 'word' | 'data' }) | null>(null);
   const [editingDirty, setEditingDirty] = useState(false);
@@ -367,6 +387,10 @@ export default function App() {
         const firstViewport = first.getViewport({ scale: 1 });
         measurePage(1, { width: firstViewport.width, height: firstViewport.height });
         documentTasksRef.current.set(pdf, task);
+        if (openingRef.current?.bytes === source.bytes) {
+          openingRef.current.pdf = pdf;
+          setOpeningMessage('Rendering the first page…');
+        }
         published = true;
         setDocument(pdf);
         if (!refreshing) setPageNumber(1);
@@ -401,7 +425,10 @@ export default function App() {
         }
         if (!cancelled) setComments(nextComments);
       } catch (cause) {
-        if (!cancelled) setError(`Could not open PDF: ${messageOf(cause)}`);
+        if (!cancelled) {
+          if (openingRef.current?.bytes === source.bytes) finishOpening();
+          setError(`Could not open PDF: ${messageOf(cause)}`);
+        }
       } finally {
         if (!cancelled) setScanning(false);
       }
@@ -412,7 +439,7 @@ export default function App() {
       // Published documents stay alive until React has replaced their pages.
       if (!published) void task?.destroy();
     };
-  }, [previewSource, measurePage, refreshRecent]);
+  }, [previewSource, measurePage, refreshRecent, finishOpening]);
 
   useEffect(() => () => {
     if (document) {
@@ -579,6 +606,10 @@ export default function App() {
       }));
       await Promise.all([...fontSpecs].map((spec) => window.document.fonts.load(spec)));
       const bytes = editable?.base ?? imported;
+      if (openingRef.current) {
+        openingRef.current.bytes = bytes;
+        setOpeningMessage('Preparing the first page…');
+      }
       restoreScrollRef.current = null;
       gridReturnScrollRef.current = null;
       gridJumpPageRef.current = null;
@@ -611,6 +642,7 @@ export default function App() {
       setPlacing(false);
       setError('');
       void refreshRecent();
+      return true;
     } catch (cause) {
       setSource(null);
       setDrafts([]);
@@ -627,12 +659,13 @@ export default function App() {
       setPlacingSignatureId(null);
       window.aster.setDirty(false);
       setError(`Could not open file: ${messageOf(cause)}`);
+      return false;
     }
     finally { setBusy(false); }
   }, [refreshRecent, ensureInstalledFonts]);
 
   const openSelected = useCallback(async () => {
-    if (returningHomeRef.current) return;
+    if (returningHomeRef.current || openingRef.current) return;
     if (savingRef.current) { setError('Please wait for the PDF to finish saving.'); return; }
     try {
       const opened = await window.aster.openDialog();
@@ -641,13 +674,22 @@ export default function App() {
   }, [installOpened]);
 
   const openPath = useCallback(async (filePath: string) => {
-    if (returningHomeRef.current) return;
+    if (returningHomeRef.current || openingRef.current) return;
     if (savingRef.current) { setError('Please wait for the PDF to finish saving.'); return; }
+    openingRef.current = {};
+    setOpeningMessage('Reading your file…');
+    let installed = false;
     try {
+      await paintSaveFeedback();
       const opened = await window.aster.openPath(filePath);
-      if (opened) await installOpened(opened);
+      if (opened) {
+        setOpeningMessage('Preparing your PDF…');
+        await paintSaveFeedback();
+        installed = await installOpened(opened);
+      }
     } catch (cause) { setError(messageOf(cause)); }
-  }, [installOpened]);
+    finally { if (!installed) finishOpening(); }
+  }, [installOpened, finishOpening]);
 
   const goHome = async () => {
     if (!source || busy || savingRef.current || returningHomeRef.current || installLockRef.current) return;
@@ -1169,6 +1211,28 @@ export default function App() {
     } catch (cause) { setError(`Could not move original PDF text: ${originalTextError(cause)}`); }
     finally { setBusy(false); window.aster.setSaving(false); }
   }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
+  const startHyperlink = async (selection = selectedPdfText()) => {
+    if (busy || pendingCommentCount || pagePlan) return;
+    setLinkMenu(null);
+    try {
+      await finishInlineEdits();
+      if (!selection.length) {
+        setSelectingLinks(true); setOverlayTool('select'); setSelectedOverlayId(null);
+      } else setLinkSelection(selection);
+    } catch (cause) { setError(`Could not prepare hyperlink: ${messageOf(cause)}`); }
+  };
+  const applyHyperlink = async (url: string) => {
+    if (!source || !linkSelection || busy || pendingCommentCount || pagePlan) throw new Error('Save pending comment or page changes before adding a link.');
+    setBusy(true); window.aster.setSaving(true);
+    try {
+      const bytes = await addPdfLinks(source.bytes, linkSelection, url);
+      setHistoryPast(history => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
+      setHistoryFuture([]);
+      restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
+      setSource({ ...source, bytes }); setEditingDirty(true); window.aster.setDirty(true);
+      setLinkSelection(null); setSelectingLinks(false); window.getSelection()?.removeAllRanges();
+    } finally { setBusy(false); window.aster.setSaving(false); }
+  };
   const addOverlay = (object: OverlayObject) => { commitOverlays([...overlays, { ...object, editingTool: object.editingTool ?? (activeTool === 'draw' ? 'draw' : 'edit') }]); setSelectedOverlayId(object.id);
     if (object.kind === 'image' || ['rectangle', 'ellipse', 'line'].includes(object.kind)) { setOverlayTool('select'); setOverlayImage(null); } };
   const updateOverlay = (object: OverlayObject) => {
@@ -1363,6 +1427,7 @@ export default function App() {
       window.aster.onMenu('menu:save', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current()).catch((cause) => setError(messageOf(cause))); }),
       window.aster.onMenu('menu:save-as', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current(true)).catch((cause) => setError(messageOf(cause))); }),
       window.aster.onMenu('menu:settings', () => { if (!installLockRef.current) setSettingsOpen(true); }),
+      window.aster.onMenu('menu:about', () => { if (!installLockRef.current && !openingRef.current && !savingRef.current) setAboutOpen(true); }),
       window.aster.onMenu('menu:pdf-to-word', () => { void exportDocument('word'); }),
       window.aster.onMenu('menu:pdf-to-data', () => { void exportDocument('data'); })
     ];
@@ -1789,9 +1854,16 @@ export default function App() {
           </div> : activeTool === 'compress' ? <button className="button outline tool-action context-action" onClick={() => { setCompressionError(''); setCompressionOpen(true); }} disabled={!document || busy || pendingCommentCount > 0}><Shrink size={16} />Compress</button>
           : <button className="button outline tool-action context-action" onClick={() => void addFiles()} disabled={!document || busy || pendingCommentCount > 0}><Files size={16} />Add files</button>}
         {(activeTool === 'edit' || activeTool === 'draw') && <div className="overlay-toolbar" role="toolbar" aria-label={activeTool === 'edit' ? 'Edit tools' : 'Draw tools'}>
-          <button className={overlayTool === 'select' ? 'active' : ''} onClick={() => setOverlayTool('select')} aria-label="Select objects" aria-pressed={overlayTool === 'select'} title="Select and move objects (V)"><MousePointer2 size={17} /></button>
+          <button className={overlayTool === 'select' && !selectingLinks ? 'active' : ''} onClick={() => { setSelectingLinks(false); setOverlayTool('select'); }} aria-label="Select objects" aria-pressed={overlayTool === 'select' && !selectingLinks} title="Select and move objects (V)"><MousePointer2 size={17} /></button>
           {activeTool === 'edit' ? <>
-            <button className={overlayTool === 'text' ? 'active' : ''} onClick={() => setOverlayTool('text')} aria-label="Add text overlay" title="Add editable text over the PDF"><Type size={17} /></button>
+            <button className={selectingLinks ? 'active' : ''} aria-label="Select PDF text" aria-pressed={selectingLinks} title="Select text for copying or adding a hyperlink"
+              disabled={busy || pendingCommentCount > 0 || Boolean(pagePlan)} onClick={() => {
+                if (selectingLinks) setSelectingLinks(false); else void startHyperlink([]);
+              }}><TextSelect size={17} /></button>
+            <button aria-label="Add hyperlink" title="Add hyperlink to selected text" data-added-text-controls
+              disabled={busy || pendingCommentCount > 0 || Boolean(pagePlan)} onMouseDown={event => event.preventDefault()}
+              onClick={() => void startHyperlink()}><Link2 size={17} /></button>
+            <button className={overlayTool === 'text' ? 'active' : ''} onClick={() => { setSelectingLinks(false); setOverlayTool('text'); }} aria-label="Add text overlay" title="Add editable text over the PDF"><Type size={17} /></button>
             <FontPicker selection={textFontSelection} fonts={installedFonts} loading={fontsStatus === 'loading'} onSelect={(choice) => {
               if (selectedText && fontEditing?.overlayId !== selectedText.id) {
                 const updated = { ...selectedText, fontChoice: choice as OverlayObject['fontChoice'] };
@@ -1865,14 +1937,15 @@ export default function App() {
             {document && effectivePages.map((planned, index) => {
               const page = index + 1;
               return <PdfPage key={planned.id} document={document} pageNumber={page} sourcePageNumber={planned.sourceIndex + 1} rotation={planned.turns * 90}
-                sourceBytes={source.bytes} inspectOriginalText={!pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
+                onRenderSettled={pageRendered}
+                sourceBytes={source.bytes} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
                 onFontEditChange={changeFontEditing} fontCommand={fontCommand} colorCommand={colorCommand} installedFonts={installedFonts}
                 size={displayPageSize(page)}
                 zoom={zoom} viewerWidth={viewerWidth} viewerRef={viewerRef}
                 comments={showCommentPins ? commentsByPage.get(page) ?? EMPTY_COMMENTS : EMPTY_COMMENTS} selectedId={selectedId}
                 placing={placing} pendingPoint={pendingPoint} pageId={planned.id}
                 signatures={placedSignatures.filter((signature) => signature.pageId === planned.id)} selectedSignatureId={selectedSignatureId} placingSignature={activeSignature}
-                overlayTool={!pendingCommentCount && (activeTool === 'edit' || activeTool === 'draw') ? overlayTool : null}
+                overlayTool={!selectingLinks && !pendingCommentCount && (activeTool === 'edit' || activeTool === 'draw') ? overlayTool : null}
                 drawActive={activeTool === 'draw'}
                 textAppearance={textAppearance}
                 overlayColor={activeTool === 'draw' ? drawDefaults.color : overlayColor} overlayLineWidth={activeTool === 'draw' ? drawDefaults.lineWidth : overlayLineWidth} drawStyle={drawDefaults} overlayFontSize={overlayFontSize} overlayFontChoice={overlayFontChoice} overlayImage={overlayImage}
@@ -1883,6 +1956,12 @@ export default function App() {
                 onAddSignature={addSignatureAt} onUpdateSignature={updateSignature} onSelectSignature={setSelectedSignatureId} onDeleteSignature={requestSignatureRemoval}
                 popupCommentId={popupCommentId}
                 commentsActive={activeTool === 'comments'} markingText={Boolean(markupTool)} onCommentColor={changeMarkupColor} recentColors={recentColors}
+                editActive={activeTool === 'edit'} selectingLinks={activeTool === 'edit' && selectingLinks}
+                onLinkMenu={(x, y, selection) => { if (!busy && !pendingCommentCount && !pagePlan) setLinkMenu({ x, y, selection }); }}
+                onNavigateLink={sourcePage => {
+                  const index = effectivePages.findIndex(page => page.sourceIndex === sourcePage - 1);
+                  if (index >= 0) scrollToPage(index + 1);
+                }}
                 onAddMarkupComment={(comment) => {
                   setPopupCommentId(null); setSelectedId(comment.id); selectTool('comments');
                   setMarkupTool(null); setEditingComment({ comment, text: comment.text }); setPendingCommentScroll(comment.id);
@@ -1958,6 +2037,9 @@ export default function App() {
         </div>
       </ResizableSidebar>
     </main>}
+    {linkMenu && <HyperlinkMenu {...linkMenu} onClose={() => setLinkMenu(null)}
+      onAdd={() => void startHyperlink(linkMenu.selection)} onSelectText={() => void startHyperlink([])} />}
+    {linkSelection && <HyperlinkDialog selection={linkSelection} onSave={applyHyperlink} onClose={() => setLinkSelection(null)} />}
 
     {compressionOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setCompressionOpen(false); }}><div className="settings-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="compression-title"><div className="modal-head"><div className="modal-icon"><Shrink size={21} /></div><button onClick={() => setCompressionOpen(false)} disabled={busy} aria-label="Close compression"><X size={19} /></button></div><h2 id="compression-title">Compress PDF</h2><p>Select a preset, then save a compressed copy. Compression starts after you choose where to save it.</p>
       <div className="compression-estimate-status" role="status">{visibleCompressionEstimate.status === 'ready'
@@ -1989,6 +2071,7 @@ export default function App() {
       <p id="discard-signatures-description">Remove {placedSignatures.length} {placedSignatures.length === 1 ? 'signature' : 'signatures'} placed since the last save? Your saved signature list stays on this computer.</p>
       <div className="modal-actions"><button className="button subtle" autoFocus onClick={() => setPendingSignatureDiscard(false)}>Keep signatures</button><button className="button danger" onClick={discardPendingSignatures}>Discard signatures</button></div>
     </div></div>}
+    {aboutOpen && <AboutDialog updates={updates} busy={busy || preparingInstall || installing} onClose={() => setAboutOpen(false)} />}
     {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
       <div className="settings-modal application-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div className="modal-head"><div className="modal-icon"><Settings2 size={21} /></div><button onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={19} /></button></div>
@@ -2013,8 +2096,8 @@ export default function App() {
       </div>
       <button className="icon-button" aria-label="Dismiss Word export result" onClick={() => setWordExportResult(null)}><X size={17} /></button>
     </div>}
-    <SaveFeedback message={saveMessage ? (wordExporting ? saveMessage : compressionProgress || saveMessage) : null}
-      title={wordExporting === 'data' ? 'Extracting PDF data' : wordExporting ? 'Converting to Word' : 'Saving your PDF'} />
+    <SaveFeedback message={discardRequestId ? null : openingMessage || (saveMessage ? (wordExporting ? saveMessage : compressionProgress || saveMessage) : null)}
+      title={openingMessage ? 'Opening your PDF' : wordExporting === 'data' ? 'Extracting PDF data' : wordExporting ? 'Converting to Word' : 'Saving your PDF'} />
     {discardRequestId && <div className="modal-backdrop discard-backdrop"><div className="settings-modal discard-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-description">
       <div className="discard-icon"><TriangleAlert size={23} /></div>
       <h2 id="discard-title">Discard unsaved changes?</h2>

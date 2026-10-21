@@ -63,6 +63,14 @@
 .comment-popup-body{overflow:auto;min-height:0;margin-top:10px;font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
 .comment-reply-action{display:flex;align-items:center;gap:5px;align-self:flex-start;margin-top:9px;font-size:12px}
 .comment-entry{position:relative;min-width:0}
+.pdf-links{position:absolute;inset:0;z-index:5}
+.pdf-link{position:absolute;display:block;cursor:pointer;border-radius:2px}
+.pdf-link:hover,.pdf-link:focus-visible{background:#5089d421;outline:1px solid #5089d480}
+.hyperlink-menu{position:fixed;z-index:95;width:212px;padding:5px;border:1px solid #dce6d5;border-radius:10px;background:#fff;box-shadow:0 8px 28px #26331f29}
+.hyperlink-menu button{display:flex;align-items:center;gap:10px;width:100%;padding:10px;border:0;border-radius:6px;background:transparent;color:#34483e;text-align:left;font-size:13px}
+.hyperlink-menu button:hover:not(:disabled),.hyperlink-menu button:focus-visible{background:#eff6e6;outline:none}
+.hyperlink-dialog .hyperlink-selected{max-height:100px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#f5f7f1;padding:10px;border-radius:8px}
+.hyperlink-dialog .hyperlink-error{color:#b6453b;margin:12px 0 0}
 .sidebar{position:relative;flex-shrink:0}
 .sidebar-resize{position:absolute;left:-5px;top:0;bottom:0;width:10px;z-index:10;cursor:col-resize;touch-action:none;outline:none}
 .sidebar-resize::after{content:"";position:absolute;left:4px;top:0;bottom:0;width:2px;background:transparent;transition:background .12s ease-out}
@@ -466,3 +474,17 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .save-feedback p{min-height:38px;margin:0;color:#788677;font-size:12px;line-height:1.6;text-wrap:balance}
 @keyframes save-feedback-turn{from{transform:rotate(-90deg)}to{transform:rotate(270deg)}}
 @media(prefers-reduced-motion:reduce){.save-feedback,.save-feedback::backdrop{transition:none;backdrop-filter:none}.save-feedback-ring{animation:none;transform:rotate(-90deg)}}
+
+.about-dialog{width:min(380px,calc(100vw - 40px));max-height:calc(100vh - 40px);padding:0;border:1px solid #e2e8df;border-radius:18px;background:#fff;color:#24342e;box-shadow:0 24px 80px #09251b40}
+.about-dialog::backdrop{background:#14271e66}
+.about-content{position:relative;padding:32px 28px 24px}
+.about-close{position:absolute;top:10px;right:10px}
+.about-content h2{margin:8px 0 6px;font-size:23px;letter-spacing:-.6px}
+.about-version{margin:0;color:#7d8b83;font-size:13px}
+.about-details{margin:26px 0;display:grid;gap:14px;font-size:13px}
+.about-details>div{display:flex;align-items:baseline;justify-content:space-between;gap:18px}
+.about-details dt{color:#7d8b83}
+.about-details dd{margin:0;font-weight:600}
+.about-updates{border-top:1px solid #e8ede7;padding-top:18px;text-align:center}
+.about-updates p{font-size:12px;color:#65765f;line-height:1.5;margin:0 0 12px;overflow-wrap:anywhere}
+.about-updates .button{height:32px;padding:0 12px;font-size:12px;gap:7px}

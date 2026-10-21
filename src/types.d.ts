@@ -6,6 +6,7 @@ declare global {
       openDialog(): Promise<OpenedFile | null>;
       addDialog(): Promise<OpenedFile[] | null>;
       openPath(path: string): Promise<OpenedFile | null>;
+      openLink(url: string): Promise<void>;
       closeDocument(expectedPath: string): Promise<boolean>;
       onExternalOpen(handler: (request: { id: string; path: string }) => void): () => void;
       completeExternalOpen(id: string): void;
@@ -42,7 +43,7 @@ declare global {
       setSaving(value: boolean): void;
       onDiscardRequest(handler: (id: string) => void): () => void;
       answerDiscardRequest(id: string, discard: boolean): void;
-      onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word' | 'menu:pdf-to-data', handler: () => void): () => void;
+      onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:about' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word' | 'menu:pdf-to-data', handler: () => void): () => void;
     };
   }
 }
