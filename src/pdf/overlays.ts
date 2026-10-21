@@ -4,6 +4,7 @@ import type { PageViewport } from 'pdfjs-dist';
 import fontkit from '@pdf-lib/fontkit';
 import { shapePath } from './draw-geometry';
 import { restoreEditableAnnotations } from './editable-annotations';
+import { pruneUnusedObjects } from './prune-unused';
 
 export type OverlayKind = 'pen' | 'rectangle' | 'ellipse' | 'line' | 'text' | 'image';
 export type TextAppearance = { bold?: boolean; italic?: boolean; underline?: boolean; strikeThrough?: boolean; textAlign?: 'left' | 'center' | 'right' | 'justify' | 'smart-justify'; textSizing?: 'auto' | 'fixed' };
@@ -40,8 +41,8 @@ const OBJECTS_KEY = PDFName.of('AsterPDFEditableObjectsV1');
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export async function readOverlayPackage(bytes: Uint8Array): Promise<{ base: Uint8Array; objects: OverlayObject[] } | null> {
-  const pdf = await PDFDocument.load(bytes);
+export async function readOverlayPackage(bytes: Uint8Array, loaded?: PDFDocument): Promise<{ base: Uint8Array; objects: OverlayObject[] } | null> {
+  const pdf = loaded ?? await PDFDocument.load(bytes);
   const baseRef = pdf.catalog.get(BASE_KEY);
   const objectsRef = pdf.catalog.get(OBJECTS_KEY);
   if (!baseRef && !objectsRef) return null;
@@ -50,7 +51,7 @@ export async function readOverlayPackage(bytes: Uint8Array): Promise<{ base: Uin
     const baseStream = pdf.context.lookup(baseRef);
     const objectsStream = pdf.context.lookup(objectsRef);
     if (!(baseStream instanceof PDFRawStream) || !(objectsStream instanceof PDFRawStream)) throw new Error('Invalid editing streams');
-    const base = new Uint8Array(decodePDFRawStream(baseStream).decode());
+    const base = decodePDFRawStream(baseStream).decode();
     const parsed: unknown = JSON.parse(decoder.decode(decodePDFRawStream(objectsStream).decode()));
     if (!base.length || !Array.isArray(parsed) || parsed.some((item) => !item || typeof item !== 'object' ||
       typeof item.id !== 'string' || typeof item.pageId !== 'string' || typeof item.kind !== 'string' ||
@@ -82,6 +83,7 @@ export async function attachOverlayPackage(bytes: Uint8Array, base: Uint8Array, 
   const pdf = await PDFDocument.load(bytes);
   pdf.catalog.set(BASE_KEY, pdf.context.register(pdf.context.flateStream(base)));
   pdf.catalog.set(OBJECTS_KEY, pdf.context.register(pdf.context.flateStream(encoder.encode(JSON.stringify(objects)))));
+  pruneUnusedObjects(pdf);
   return new Uint8Array(await pdf.save());
 }
 const colorOf = (hex: string) => rgb(

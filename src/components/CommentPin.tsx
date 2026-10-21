@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { ArrowRight, MessageSquare, Reply, Trash2, X } from 'lucide-react';
 import { MARKUP_COLORS, markupKind, type PdfComment } from '../pdf/comments';
 import ColorPicker from './ColorPicker';
+import { CommentBody } from './CommentEditor';
 
 export default function CommentPin({ comment, left, top, selected, open, viewerRef, onSelect, onClose, onOpenSidebar, onAddComment, onDelete, onReply, onColor, recentColors, colorDisabled }: {
   comment: PdfComment; left: number; top: number; selected: boolean; open: boolean;
@@ -79,9 +80,9 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
         <button className="icon-button" title="Close comment" aria-label="Close comment" onClick={close}><X size={17} /></button>
       </div>
       {(!isMarkup || hasComment) && <div className="comment-popup-body">
-        <div>{comment.text || (isMarkup ? comment.kind : '(Empty note)')}</div>
+        <CommentBody text={comment.text || (isMarkup ? comment.kind : '(Empty note)')} bold={comment.bold} />
         {!!comment.replies?.length && <div className="comment-popup-replies">
-          {comment.replies.map(reply => <div key={reply.id} className="comment-popup-reply"><strong>{reply.author}</strong><div dir="auto">{reply.text}</div></div>)}
+          {comment.replies.map(reply => <div key={reply.id} className="comment-popup-reply"><strong>{reply.author}</strong><CommentBody text={reply.text} bold={reply.bold} /></div>)}
         </div>}
       </div>}
       {(!isMarkup || hasComment) && <button className="text-button comment-reply-action" disabled={colorDisabled} onClick={onReply}><Reply size={15} />Reply</button>}

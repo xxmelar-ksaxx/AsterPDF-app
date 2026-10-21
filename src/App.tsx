@@ -34,6 +34,8 @@ import UpdateSettings from './components/UpdateSettings';
 import AboutDialog from './components/AboutDialog';
 import SaveFeedback, { paintSaveFeedback } from './components/SaveFeedback';
 import CommentCard from './components/CommentCard';
+import CommentEditor from './components/CommentEditor';
+import { sameComment, trimComment, type BoldRanges } from './pdf/comment-text';
 import ResizableSidebar from './components/ResizableSidebar';
 import { HyperlinkDialog, HyperlinkMenu } from './components/HyperlinkTools';
 import { addPdfLinks } from './pdf/links';
@@ -111,6 +113,12 @@ export default function App() {
   }, [preparingInstall, installing]);
   const [source, setSourceState] = useState<OpenedPdf | null>(null);
   const [previewSource, setPreviewSource] = useState<OpenedPdf | null>(null);
+  // Keep large binary buffers out of component props. React's development
+  // profiler enumerates changed object props, including every PDF byte.
+  const getSourceBytes = useCallback(() => {
+    if (!source) throw new Error('No PDF is open.');
+    return source.bytes;
+  }, [source?.bytes]);
   const markupHistoryRef = useRef<{ past: MarkupSnapshot[]; future: MarkupSnapshot[]; colorGroup: string | null }>({ past: [], future: [], colorGroup: null });
   const setSource = useCallback((next: OpenedPdf | null) => {
     setSourceState(next); setPreviewSource(next);
@@ -132,7 +140,7 @@ export default function App() {
   const [drafts, setDrafts] = useState<NewNote[]>([]);
   const [commentChanges, setCommentChanges] = useState<CommentChange[]>([]);
   const [commentOverrides, setCommentOverrides] = useState<Record<string, CommentOverride>>({});
-  const [editingComment, setEditingComment] = useState<{ comment: PdfComment; text: string } | null>(null);
+  const [editingComment, setEditingComment] = useState<{ comment: PdfComment; text: string; bold?: BoldRanges } | null>(null);
   const pendingCommentCount = drafts.length + commentChanges.length;
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [popupCommentId, setPopupCommentId] = useState<string | null>(null);
@@ -170,6 +178,7 @@ export default function App() {
   const [placing, setPlacing] = useState(false);
   const [pendingPoint, setPendingPoint] = useState<PendingPoint | null>(null);
   const [noteText, setNoteText] = useState('');
+  const [noteBold, setNoteBold] = useState<BoldRanges>([]);
   const [authorName, setAuthorName] = useState('');
   const [authorInput, setAuthorInput] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -345,7 +354,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.aster.setDirty(pendingCommentCount > 0 || editingDirty || placedSignatures.length > 0 || Boolean(source?.needsSave) || Boolean(pendingPoint && noteText.trim()) || Boolean(editingComment && editingComment.text !== editingComment.comment.text));
+    window.aster.setDirty(pendingCommentCount > 0 || editingDirty || placedSignatures.length > 0 || Boolean(source?.needsSave) || Boolean(pendingPoint && noteText.trim()) || Boolean(editingComment && !sameComment(editingComment, editingComment.comment)));
   }, [pendingCommentCount, editingDirty, placedSignatures.length, source?.needsSave, pendingPoint, noteText, editingComment]);
 
   useEffect(() => {
@@ -451,6 +460,9 @@ export default function App() {
   useEffect(() => {
     setCompressionChoice(null);
     if (!source) { estimateForRef.current = null; setCompressionEstimate({ status: 'idle' }); return; }
+    // Estimating every preset parses/renders the PDF too. Do this only when
+    // requested, never alongside a background comment save on a large file.
+    if (!compressionOpen) return;
     estimateForRef.current = { bytes: source.bytes, plan: pagePlan };
     setCompressionEstimate({ status: 'calculating', progress: 'Starting size estimates…' });
     const worker = new Worker(new URL('./pdf/compression-estimator.worker.ts', import.meta.url), { type: 'module' });
@@ -473,7 +485,7 @@ export default function App() {
     const bytes = source.bytes.slice();
     worker.postMessage({ bytes, plan: pagePlan }, [bytes.buffer]);
     return () => { active = false; worker.terminate(); };
-  }, [source?.bytes, pagePlan]);
+  }, [source?.bytes, pagePlan, compressionOpen]);
 
   const effectivePages = useMemo(() => document ? (pagePlan ?? initialPagePlan(document.numPages)) : [], [document, pagePlan]);
   const visibleComments = useMemo(() => pagePlan
@@ -702,7 +714,7 @@ export default function App() {
       setDrafts([]); setEditingDirty(false); setPagePlan(null);
       setCommentChanges([]); setEditingComment(null);
       setComments([]); setSavedSessionComments([]); setSelectedId(null); setPendingCommentScroll(null);
-      setPendingPoint(null); setNoteText(''); setPlacing(false);
+      setPendingPoint(null); setNoteText(''); setNoteBold([]); setPlacing(false);
       setOverlays([]); setSelectedOverlayId(null); setDrawPreview(null); setOverlayImage(null);
       setPlacedSignatures([]); setSelectedSignatureId(null); setPlacingSignatureId(null);
       setSignatureMenuOpen(false); setSignatureOpen(false);
@@ -818,7 +830,7 @@ export default function App() {
       });
       const additionalNotes: NewNote[] = pendingPoint && noteText.trim() && authorName ? [{
         id: crypto.randomUUID(), page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
-        author: authorName, text: noteText.trim(), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
+        author: authorName, ...trimComment({ text: noteText, bold: noteBold }), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
       }] : [];
       const { bytes } = await latestWordBuild.current(additionalNotes);
       const result = await (kind === 'data' ? window.aster.convertToData : window.aster.convertToWord)(bytes, prepared.token, source.path);
@@ -832,7 +844,7 @@ export default function App() {
       window.aster.setSaving(false);
       setBusy(false); setSaveMessage(null); setWordExporting(null);
     }
-  }, [source, document, busy, pendingPoint, noteText, authorName]);
+  }, [source, document, busy, pendingPoint, noteText, noteBold, authorName]);
 
   const save = useCallback(async (saveAs = false, additionalNotes: NewNote[] = []): Promise<boolean> => {
     if (returningHomeRef.current) return false;
@@ -865,7 +877,7 @@ export default function App() {
         savedBytesRef.current = base;
         savedFileBytesRef.current = bytes;
         setSource({ ...saved, bytes: base });
-        if (additionalNotes.length) { setPendingPoint(null); setNoteText(''); }
+        if (additionalNotes.length) { setPendingPoint(null); setNoteText(''); setNoteBold([]); }
         window.aster.setDirty(false);
         setError('');
         void refreshRecent();
@@ -896,19 +908,19 @@ export default function App() {
     // decides whether this tab needs an unsaved-changes prompt.
     await paintSaveFeedback();
     if (mode === 'close') return true;
-    if (editingComment && editingComment.text !== editingComment.comment.text) {
+    if (editingComment && !sameComment(editingComment, editingComment.comment)) {
       setError('Finish editing this comment before installing the update.');
       return false;
     }
     const pendingNotes: NewNote[] = pendingPoint && noteText.trim() ? [{
       id: crypto.randomUUID(), page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
-      author: authorName, text: noteText.trim(), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
+      author: authorName, ...trimComment({ text: noteText, bold: noteBold }), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
     }] : [];
     if (pendingNotes.length && !authorName) { setError('Set your comment author name before saving.'); return false; }
     const saved = await latestSave.current(false, pendingNotes);
     await paintSaveFeedback();
     return saved;
-  }), [busy, editingComment, pendingPoint, noteText, authorName]);
+  }), [busy, editingComment, pendingPoint, noteText, noteBold, authorName]);
 
   const restartAndInstall = async () => {
     if (busy || savingRef.current || installLockRef.current) return;
@@ -917,7 +929,7 @@ export default function App() {
     try {
       const pendingNotes: NewNote[] = pendingPoint && noteText.trim() ? [{
         id: crypto.randomUUID(), page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
-        author: authorName, text: noteText.trim(), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
+        author: authorName, ...trimComment({ text: noteText, bold: noteBold }), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
       }] : [];
       if (pendingNotes.length && !authorName) throw new Error('Set your comment author name before saving this comment.');
       if (!(await save(false, pendingNotes))) {
@@ -1395,55 +1407,60 @@ export default function App() {
 
   useEffect(() => {
     if (!source || busy || commentSaving || returningHome || savingRef.current || pendingCommentCount === 0 || autoSaveRevision <= lastAutoAttemptRef.current) return;
-    // Text markups stay pending until an explicit save, including when a
-    // regular note triggers background saving in the same document.
-    const batch = drafts.filter(note => !inMarkupThread(noteAsComment(note), threadComments));
-    const changes = commentChanges.filter(change => !inMarkupThread(change.target, threadComments));
-    if (!batch.length && !changes.length) return;
-    if (source.needsSave) {
-      lastAutoAttemptRef.current = autoSaveRevision;
-      setError('Save this PDF once to choose its location and enable automatic comment saving.'); return;
-    }
-    if (!savedFileBytesRef.current || editingDirty || placedSignatures.length || pagePlan) return;
-    lastAutoAttemptRef.current = autoSaveRevision;
-    const changeIds = new Set(changes.map((change) => change.operationId));
-    const ids = new Set(batch.map((note) => note.id));
-    const snapshot = savedFileBytesRef.current;
-    savingCommentIdsRef.current = new Set([...ids, ...changes.map((change) => change.target.id)]);
-    savingRef.current = true;
-    setCommentSaving(true);
-    window.aster.setSaving(true);
-    void (async () => {
-      try {
-        const { bytes, base } = await prepareCommentSave(snapshot, batch, changes);
-        const saved = await window.aster.save(bytes, false, source.path);
-        if (!saved) throw new Error('The comments were not saved.');
-        savedFileBytesRef.current = bytes;
-        savedBytesRef.current = base;
-        // Only the data changes. Keep the current PDF renderer, scroll, tools,
-        // selected note, and the next comment's composer exactly as they are.
-        setSourceState({ ...source, ...saved, bytes: base });
-        setSavedSessionComments((current) => [...current, ...batch.map(note => noteAsComment(note))]);
-        setDrafts((current) => current.filter((note) => !ids.has(note.id)));
-        setCommentChanges((current) => current.filter((change) => !changeIds.has(change.operationId)));
-        if (changes.some((change) => change.target.kind !== 'Text note' && !markupKind(change.target.kind) && (change.type === 'delete' || change.target.kind === 'Free text'))) {
-          // Visible PDF markup needs a fresh bitmap; sticky notes only need the
-          // interactive pin/list update and never interrupt the page renderer.
-          restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
-          setPreviewSource({ ...source, ...saved, bytes: base });
-        }
-        // The dirty-state effect accounts for newer comments and an unfinished
-        // composer; never clear it unconditionally for an older saved batch.
-        setError('');
-      } catch (cause) {
-        setError(`Could not auto-save comments: ${messageOf(cause)} Your comments are still here. Use Save PDF to retry.`);
-      } finally {
-        savingCommentIdsRef.current = new Set();
-        savingRef.current = false;
-        window.aster.setSaving(false);
-        setCommentSaving(false);
+    // Coalesce quick submissions into one disk write without blocking typing.
+    const timer = setTimeout(() => {
+      if (savingRef.current || returningHomeRef.current) return;
+      // Text markups stay pending until an explicit save, including when a
+      // regular note triggers background saving in the same document.
+      const batch = drafts.filter(note => !inMarkupThread(noteAsComment(note), threadComments));
+      const changes = commentChanges.filter(change => !inMarkupThread(change.target, threadComments));
+      if (!batch.length && !changes.length) return;
+      if (source.needsSave) {
+        lastAutoAttemptRef.current = autoSaveRevision;
+        setError('Save this PDF once to choose its location and enable automatic comment saving.'); return;
       }
-    })();
+      if (!savedFileBytesRef.current || editingDirty || placedSignatures.length || pagePlan) return;
+      lastAutoAttemptRef.current = autoSaveRevision;
+      const changeIds = new Set(changes.map((change) => change.operationId));
+      const ids = new Set(batch.map((note) => note.id));
+      const snapshot = savedFileBytesRef.current;
+      savingCommentIdsRef.current = new Set([...ids, ...changes.map((change) => change.target.id)]);
+      savingRef.current = true;
+      setCommentSaving(true);
+      window.aster.setSaving(true);
+      void (async () => {
+        try {
+          const { bytes, base } = await prepareCommentSave(snapshot, batch, changes);
+          const saved = await window.aster.save(bytes, false, source.path);
+          if (!saved) throw new Error('The comments were not saved.');
+          savedFileBytesRef.current = bytes;
+          savedBytesRef.current = base;
+          // Only the data changes. Keep the current PDF renderer, scroll, tools,
+          // selected note, and the next comment's composer exactly as they are.
+          setSourceState({ ...source, ...saved, bytes: base });
+          setSavedSessionComments((current) => [...current, ...batch.map(note => noteAsComment(note))]);
+          setDrafts((current) => current.filter((note) => !ids.has(note.id)));
+          setCommentChanges((current) => current.filter((change) => !changeIds.has(change.operationId)));
+          if (changes.some((change) => change.target.kind !== 'Text note' && !markupKind(change.target.kind) && (change.type === 'delete' || change.target.kind === 'Free text'))) {
+            // Visible PDF markup needs a fresh bitmap; sticky notes only need the
+            // interactive pin/list update and never interrupt the page renderer.
+            restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
+            setPreviewSource({ ...source, ...saved, bytes: base });
+          }
+          // The dirty-state effect accounts for newer comments and an unfinished
+          // composer; never clear it unconditionally for an older saved batch.
+          setError('');
+        } catch (cause) {
+          setError(`Could not auto-save comments: ${messageOf(cause)} Your comments are still here. Use Save PDF to retry.`);
+        } finally {
+          savingCommentIdsRef.current = new Set();
+          savingRef.current = false;
+          window.aster.setSaving(false);
+          setCommentSaving(false);
+        }
+      })();
+    }, 600);
+    return () => clearTimeout(timer);
   }, [autoSaveRevision, busy, commentSaving, returningHome, drafts, commentChanges, pendingCommentCount, source, editingDirty, placedSignatures.length, pagePlan, threadComments]);
 
   useEffect(() => {
@@ -1486,7 +1503,7 @@ export default function App() {
     setPlacingSignatureId(null);
     setPlacing((value) => !value);
     setPendingPoint(null);
-    setNoteText('');
+    setNoteText(''); setNoteBold([]);
   };
 
   const addTextMarkup = useCallback((kind: MarkupKind, selections: TextMarkupSelection[]) => {
@@ -1683,13 +1700,13 @@ export default function App() {
     window.aster.setDirty(true);
     setDrafts((current) => [...current, {
       id, page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
-      author: authorName, text: noteText.trim(), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
+      author: authorName, ...trimComment({ text: noteText, bold: noteBold }), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
     }]);
     if (!manual) setAutoSaveRevision((revision) => revision + 1);
     setSelectedId(pendingPoint.replyTo ?? id);
     setPendingCommentScroll(id);
     setPendingPoint(null);
-    setNoteText('');
+    setNoteText(''); setNoteBold([]);
   };
 
   const startReply = (comment: PdfComment) => {
@@ -1703,16 +1720,17 @@ export default function App() {
     selectTool('comments'); setMarkupTool(null); setPlacing(false); setPopupCommentId(null);
     setSelectedId(root.id); setPendingCommentScroll(root.id);
     setPendingPoint({ page: root.page, x: root.rect[0], y: root.rect[1], replyTo: root.id });
-    setNoteText('');
+    setNoteText(''); setNoteBold([]);
   };
 
-  const changeComment = (comment: PdfComment, type: 'edit' | 'delete', text?: string) => {
+  const changeComment = (comment: PdfComment, type: 'edit' | 'delete', text?: string, bold?: BoldRanges) => {
     if (busy || returningHome || editingDirty || placedSignatures.length || pagePlan) return;
-    if (type === 'edit' && (!text?.trim() || text.trim() === comment.text)) { setEditingComment(null); return; }
+    const formatted = trimComment({ text: text || '', bold });
+    if (type === 'edit' && (!formatted.text || sameComment(formatted, comment))) { setEditingComment(null); return; }
     if (inMarkupThread(comment, threadComments)) rememberMarkup();
     const date = new Date().toISOString();
-    setCommentChanges((current) => [...current, { operationId: crypto.randomUUID(), target: comment, type, text: text?.trim(), date }]);
-    setCommentOverrides((current) => ({ ...current, [comment.id]: { ...current[comment.id], ...(type === 'delete' ? { deleted: true } : { text: text!.trim(), date }) } }));
+    setCommentChanges((current) => [...current, { operationId: crypto.randomUUID(), target: comment, type, ...formatted, date }]);
+    setCommentOverrides((current) => ({ ...current, [comment.id]: { ...current[comment.id], ...(type === 'delete' ? { deleted: true } : { ...formatted, date }) } }));
     if (!inMarkupThread(comment, threadComments)) setAutoSaveRevision((revision) => revision + 1);
     window.aster.setDirty(true);
     if (editingComment?.comment.id === comment.id) setEditingComment(null);
@@ -1785,9 +1803,10 @@ export default function App() {
     disabled={busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}
     editingText={editingComment?.comment.id === comment.id ? editingComment.text : undefined}
     onSelect={() => void jumpToComment(root)} onReply={() => startReply(comment)}
-    onEdit={() => { setPopupCommentId(null); setEditingComment({ comment, text: comment.text }); setSelectedId(comment.id); }}
-    onTextChange={text => setEditingComment(current => current ? { ...current, text } : null)}
-    onSave={() => { if (editingComment) changeComment(editingComment.comment, 'edit', editingComment.text); }}
+    onEdit={() => { setPopupCommentId(null); setEditingComment({ comment, text: comment.text, bold: comment.bold }); setSelectedId(comment.id); }}
+    editingBold={editingComment?.comment.id === comment.id ? editingComment.bold : undefined}
+    onTextChange={(text, bold) => setEditingComment(current => current ? { ...current, text, bold } : null)}
+    onSave={() => { if (editingComment) changeComment(editingComment.comment, 'edit', editingComment.text, editingComment.bold); }}
     onCancel={() => setEditingComment(null)} onDelete={() => changeComment(comment, 'delete')} />;
 
   return <div className="app-shell" onDragOver={(event) => {
@@ -1963,7 +1982,7 @@ export default function App() {
               const page = index + 1;
               return <PdfPage key={planned.id} document={document} pageNumber={page} sourcePageNumber={planned.sourceIndex + 1} rotation={planned.turns * 90}
                 onRenderSettled={pageRendered}
-                sourceBytes={source.bytes} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
+                getSourceBytes={getSourceBytes} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
                 onFontEditChange={changeFontEditing} fontCommand={fontCommand} colorCommand={colorCommand} installedFonts={installedFonts}
                 size={displayPageSize(page)}
                 zoom={zoom} viewerWidth={viewerWidth} viewerRef={viewerRef}
@@ -1989,7 +2008,7 @@ export default function App() {
                 }}
                 onAddMarkupComment={(comment) => {
                   setPopupCommentId(null); setSelectedId(comment.id); selectTool('comments');
-                  setMarkupTool(null); setEditingComment({ comment, text: comment.text }); setPendingCommentScroll(comment.id);
+                  setMarkupTool(null); setEditingComment({ comment, text: comment.text, bold: comment.bold }); setPendingCommentScroll(comment.id);
                 }}
                 onDeleteMarkup={(comment) => changeComment(comment, 'delete')}
                 onReplyComment={startReply}
@@ -2029,9 +2048,9 @@ export default function App() {
               </div>}
             </section>)}
           </div>
-          {pendingPoint && <div className="compose"><div className="compose-title"><span className="avatar">{authorName.charAt(0).toUpperCase()}</span><strong>{pendingPoint.replyTo ? 'Reply' : 'New comment'}</strong><button onClick={() => { setPendingPoint(null); setNoteText(''); }} aria-label={pendingPoint.replyTo ? 'Cancel reply' : 'Cancel comment'}><X size={17} /></button></div>
+          {pendingPoint && <div className="compose"><div className="compose-title"><span className="avatar">{authorName.charAt(0).toUpperCase()}</span><strong>{pendingPoint.replyTo ? 'Reply' : 'New comment'}</strong><button onClick={() => { setPendingPoint(null); setNoteText(''); setNoteBold([]); }} aria-label={pendingPoint.replyTo ? 'Cancel reply' : 'Cancel comment'}><X size={17} /></button></div>
             {pendingPoint.replyTo && <div className="reply-context">Replying to {allComments.find(comment => comment.id === pendingPoint.replyTo)?.author ?? 'comment'}</div>}
-            <textarea key={pendingPoint.replyTo ?? 'new'} autoFocus aria-label={pendingPoint.replyTo ? 'Write a reply' : 'Write a comment'} placeholder={pendingPoint.replyTo ? 'Write your reply…' : 'Write your comment…'} value={noteText} onChange={(event) => setNoteText(event.target.value)} maxLength={10000}
+            <CommentEditor key={pendingPoint.replyTo ?? 'new'} label={pendingPoint.replyTo ? 'Write a reply' : 'Write a comment'} placeholder={pendingPoint.replyTo ? 'Write your reply…' : 'Write your comment…'} value={noteText} bold={noteBold} onChange={(text, bold) => { setNoteText(text); setNoteBold(bold); }}
               onKeyDown={event => { if (!event.nativeEvent.isComposing && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); addComment(); } }} />
             <div className="compose-footer"><span>Page {pendingPoint.page} · {authorName}</span><button className="button primary" onClick={addComment} disabled={!noteText.trim() || busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}>{pendingPoint.replyTo ? 'Reply' : 'Add comment'}</button></div></div>}
           <div className="sidebar-bottom"><CircleHelp size={16} /><span>Comments are saved inside the PDF.</span></div>

@@ -2,12 +2,14 @@ import { useEffect, useId, useRef, useState, type Ref } from 'react';
 import { Check, MoreHorizontal, Pencil, Reply, Trash2, X } from 'lucide-react';
 import type { PdfComment } from '../pdf/comments';
 import { onFinishInlineEdit } from '../finish-inline-edit';
+import CommentEditor, { CommentBody } from './CommentEditor';
+import type { BoldRanges } from '../pdf/comment-text';
 
-export default function CommentCard({ comment, selected, label, date, saving, pending, disabled, editingText,
+export default function CommentCard({ comment, selected, label, date, saving, pending, disabled, editingText, editingBold,
   cardRef, onSelect, onEdit, onTextChange, onSave, onCancel, onDelete, onReply }: {
   comment: PdfComment; selected: boolean; label: string; date: string; saving: boolean; pending: boolean; disabled: boolean;
-  editingText?: string; cardRef: Ref<HTMLDivElement>;
-  onSelect: () => void; onEdit: () => void; onTextChange: (text: string) => void;
+  editingText?: string; editingBold?: BoldRanges; cardRef: Ref<HTMLDivElement>;
+  onSelect: () => void; onEdit: () => void; onTextChange: (text: string, bold: BoldRanges) => void;
   onSave: () => void; onCancel: () => void; onDelete: () => void;
   onReply: () => void;
 }) {
@@ -51,12 +53,12 @@ export default function CommentCard({ comment, selected, label, date, saving, pe
         </div>}
       </div>
     </div>
-    {!editing && <button className="comment-jump" onClick={onSelect}><span className="comment-body" dir="auto">{label}</span></button>}
+    {!editing && <button className="comment-jump" onClick={onSelect}><span className="comment-body"><CommentBody text={label} bold={comment.bold} /></span></button>}
     {editing && <div className="comment-edit" onBlur={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget as Node | null) && editingText.trim()) onSave();
     }}>
-      <textarea autoFocus aria-label="Edit comment" value={editingText} maxLength={10000} disabled={disabled}
-        onChange={(event) => onTextChange(event.target.value)} onKeyDown={(event) => {
+      <CommentEditor label="Edit comment" value={editingText} bold={editingBold} disabled={disabled}
+        onChange={onTextChange} onKeyDown={(event) => {
           event.stopPropagation();
           if (event.nativeEvent.isComposing) return;
           if (event.key === 'Escape') { event.preventDefault(); onCancel(); }

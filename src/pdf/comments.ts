@@ -1,3 +1,4 @@
+import { commentRichText, readRichBold, type BoldRanges, type RichNode } from './comment-text';
 import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFNumber, PDFRef, PDFString } from 'pdf-lib';
 
 export type MarkupKind = 'Highlight' | 'Strikeout' | 'Underline';
@@ -14,6 +15,7 @@ export interface PdfComment {
   page: number;
   author: string;
   text: string;
+  bold?: BoldRanges;
   kind: string;
   date?: string;
   rect: [number, number, number, number];
@@ -32,13 +34,14 @@ export interface NewNote {
   y: number;
   author: string;
   text: string;
+  bold?: BoldRanges;
   date: string;
   replyTo?: string;
   markup?: { kind: MarkupKind; quadPoints: number[]; color: string };
 }
 
 export function noteAsComment(note: NewNote, draft = false): PdfComment {
-  return { id: note.id, page: note.page, author: note.author, text: note.text, date: note.date, draft, replyTo: note.replyTo,
+  return { id: note.id, page: note.page, author: note.author, text: note.text, bold: note.bold, date: note.date, draft, replyTo: note.replyTo,
     kind: note.markup?.kind ?? 'Text note', color: note.markup?.color, quadPoints: note.markup?.quadPoints,
     opacity: note.markup?.kind === 'Highlight' ? .35 : 1,
     rect: note.markup ? quadBounds(note.markup.quadPoints) : [note.x, note.y, note.x + 24, note.y + 24] };
@@ -49,11 +52,12 @@ export type CommentChange = {
   target: PdfComment;
   type: 'edit' | 'delete' | 'color';
   text?: string;
+  bold?: BoldRanges;
   color?: string;
   date: string;
 };
 
-export type CommentOverride = { text?: string; date?: string; deleted?: boolean; color?: string };
+export type CommentOverride = { text?: string; bold?: BoldRanges; date?: string; deleted?: boolean; color?: string };
 
 type AnnotationLike = {
   id?: string;
@@ -63,7 +67,7 @@ type AnnotationLike = {
   contentsObj?: { str?: string };
   title?: string;
   contents?: string;
-  richText?: { str?: string } | null;
+  richText?: { str?: string; html?: RichNode } | null;
   modificationDate?: string;
   creationDate?: string;
   quadPoints?: ArrayLike<number> | null;
@@ -113,6 +117,7 @@ export function readPageComments(annotations: AnnotationLike[], page: number): P
       page,
       author: (annotation.titleObj?.str ?? annotation.title ?? '').trim() || 'Unknown author',
       text,
+      bold: readRichBold(annotation.richText?.html, text),
       kind,
       replyTo: annotation.replyType !== 'Group' ? annotation.inReplyTo || undefined : undefined,
       quadPoints: quadPoints?.length && quadPoints.length % 8 === 0 && quadPoints.every(Number.isFinite) ? quadPoints : undefined,
@@ -182,7 +187,12 @@ function pdfDate(iso: string): string {
 
 /** Writes interoperable PDF /Text annotations; the author lives in /T and the note in /Contents. */
 export async function addTextNotes(source: Uint8Array, notes: NewNote[]): Promise<Uint8Array> {
-  const document = await PDFDocument.load(source.slice(), { updateMetadata: false });
+  const document = await PDFDocument.load(source, { updateMetadata: false });
+  addNotesToDocument(document, notes);
+  return document.save({ useObjectStreams: false });
+}
+
+export function addNotesToDocument(document: PDFDocument, notes: NewNote[]) {
   const pages = document.getPages();
   const pendingReplies: { note: NewNote; annotation: PDFDict }[] = [];
   for (const note of notes) {
@@ -207,6 +217,7 @@ export async function addTextNotes(source: Uint8Array, notes: NewNote[]): Promis
       Open: false,
       P: page.ref
     });
+    if (note.text.trim()) annotation.set(PDFName.of('RC'), PDFString.of(commentRichText(note).replace(/[\\()]/g, char => `\\${char}`)));
     if (note.markup) {
       annotation.set(PDFName.of('QuadPoints'), document.context.obj(note.markup.quadPoints));
       const [ax, ay, bx, by] = note.markup.quadPoints;
@@ -242,13 +253,17 @@ export async function addTextNotes(source: Uint8Array, notes: NewNote[]): Promis
     annotation.set(PDFName.of('IRT'), reference);
     annotation.set(PDFName.of('RT'), PDFName.of('R'));
   }
-  return document.save({ useObjectStreams: false });
 }
 
 /** Change annotation dictionaries in place, keeping their author and geometry. */
 export async function changeComments(source: Uint8Array, changes: CommentChange[]): Promise<Uint8Array> {
   if (!changes.length) return source;
-  const document = await PDFDocument.load(source.slice(), { updateMetadata: false });
+  const document = await PDFDocument.load(source, { updateMetadata: false });
+  changeDocumentComments(document, changes);
+  return document.save({ useObjectStreams: false });
+}
+
+export function changeDocumentComments(document: PDFDocument, changes: CommentChange[]) {
   const stringValue = (value: unknown) => value instanceof PDFString || value instanceof PDFHexString ? value.decodeText() : '';
   const refId = (value: unknown) => value instanceof PDFRef ? `${value.objectNumber}R${value.generationNumber || ''}` : '';
   for (const change of changes) {
@@ -291,7 +306,7 @@ export async function changeComments(source: Uint8Array, changes: CommentChange[
       if (!change.text?.trim()) throw new Error('A comment cannot be empty.');
       annotation.set(PDFName.of('Contents'), PDFHexString.fromText(change.text.trim()));
       annotation.set(PDFName.of('M'), PDFString.of(pdfDate(change.date)));
-      annotation.delete(PDFName.of('RC')); // Avoid stale rich-text content overriding the edit.
+      annotation.set(PDFName.of('RC'), PDFString.of(commentRichText({ text: change.text, bold: change.bold }).replace(/[\\()]/g, char => `\\${char}`)));
       if (annotation.get(PDFName.of('Subtype')) === PDFName.of('FreeText')) annotation.delete(PDFName.of('AP'));
     } else {
       const popup = annotation.get(PDFName.of('Popup'));
@@ -308,5 +323,4 @@ export async function changeComments(source: Uint8Array, changes: CommentChange[
       }
     }
   }
-  return document.save({ useObjectStreams: false });
 }

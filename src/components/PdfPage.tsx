@@ -29,7 +29,7 @@ export function pageScale(size: PageSize, zoom: Zoom, viewerWidth: number): numb
 type Props = {
   document: PDFDocumentProxy;
   onRenderSettled?: (document: PDFDocumentProxy, page: number) => void;
-  sourceBytes: Uint8Array;
+  getSourceBytes: () => Uint8Array;
   inspectOriginalText: boolean;
   onCommitOriginalText: (pageIndex: number, objectIndex: number, oldText: string, nextText: string, fontChoice: string, color?: number[]) => Promise<void>;
   onFontEditChange: (selection: FontSelection | null) => void;
@@ -94,7 +94,7 @@ type Props = {
 };
 
 export default function PdfPage({
-  document, sourceBytes, inspectOriginalText, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
+  document, getSourceBytes, inspectOriginalText, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
   popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, selectingLinks, editActive, onLinkMenu, onNavigateLink, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
@@ -120,11 +120,11 @@ export default function PdfPage({
   useEffect(() => {
     if (!inspectOriginalText || !near) { setOriginalText([]); return; }
     let cancelled = false;
-    window.aster.listOriginalText(sourceBytes, sourcePageNumber - 1).then((objects) => {
+    window.aster.listOriginalText(getSourceBytes(), sourcePageNumber - 1).then((objects) => {
       if (!cancelled) setOriginalText(objects.filter((object) => !/[\r\n]/.test(object.text)));
     }).catch((cause) => { if (!cancelled) onError(`Could not inspect original text on page ${pageNumber}: ${cause instanceof Error ? cause.message : String(cause)}`); });
     return () => { cancelled = true; };
-  }, [inspectOriginalText, near, sourceBytes, sourcePageNumber, pageNumber, onError]);
+  }, [inspectOriginalText, near, getSourceBytes, sourcePageNumber, pageNumber, onError]);
   const finishOriginalText = (commit: boolean) => {
     const current = editingOriginalRef.current;
     if (!current) return;

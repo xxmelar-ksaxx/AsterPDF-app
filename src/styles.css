@@ -86,7 +86,7 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .comment-popup-replies{margin:12px 0 0 4px;padding-left:12px;border-left:2px solid #dce6d5}
 .comment-popup-reply{position:relative;margin-top:12px}
 .comment-popup-reply::before{content:"";position:absolute;left:-14px;top:8px;width:8px;height:2px;background:#dce6d5}
-.comment-popup-reply strong{display:block;font-size:11px;color:#718078}
+.comment-popup-reply>strong{display:block;font-size:11px;color:#718078}
 .reply-context{font-size:12px;color:#718078;margin:8px 0;overflow-wrap:anywhere}
 @keyframes comment-popup-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
 @media(prefers-reduced-motion:reduce){.comment-popup{animation:none}}
@@ -509,3 +509,11 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .document-tab.drop-before:before,.document-tab.drop-after:after{content:'';position:absolute;top:3px;bottom:3px;width:3px;border-radius:2px;background:#7cab32;z-index:2}
 .document-tab.drop-before:before{left:-3px}.document-tab.drop-after:after{right:-3px}
 .document-tabs-bar.is-dragging,.document-tabs-bar.is-dragging button{cursor:grabbing}
+
+.comment-editor{display:block;width:100%;min-height:102px;max-height:300px;overflow:auto;resize:vertical;border:1px solid #dfe8dd;border-radius:10px;padding:12px;font-size:13px;line-height:1.5;outline:none;white-space:pre-wrap;overflow-wrap:anywhere;text-align:start;background:#fff;color:#24342e;cursor:text}
+.comment-editor:focus{border-color:#a3c85c;box-shadow:0 0 0 3px #c7e3913d}
+.comment-editor:empty:before{content:attr(data-placeholder);color:#98a49e;pointer-events:none}
+.comment-editor[aria-disabled=true]{opacity:.55}
+.comment-formatted-text{display:block;text-align:start;white-space:pre-wrap;overflow-wrap:anywhere;unicode-bidi:isolate}
+.comment-editor strong,.comment-editor b,.comment-formatted-text strong{font-weight:700}
+.comment-edit .comment-editor{margin-top:10px;min-height:90px}

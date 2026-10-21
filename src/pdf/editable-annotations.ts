@@ -1,4 +1,5 @@
 import { PDFArray, PDFDict, PDFDocument, PDFName, PDFObject, PDFRawStream, PDFRef } from 'pdf-lib';
+import { pruneUnusedObjects } from './prune-unused';
 
 function annotationState(pdf: PDFDocument, object: PDFObject | undefined, seen = new Set<string>()): string {
   if (!object) return '';
@@ -44,5 +45,6 @@ export async function restoreEditableAnnotations(current: PDFDocument, base: PDF
     current.catalog.delete(key);
     if (ref instanceof PDFRef) current.context.delete(ref);
   }
+  pruneUnusedObjects(current);
   return current.save({ useObjectStreams: false });
 }
