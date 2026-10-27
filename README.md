@@ -4,6 +4,8 @@ An offline PDF workspace for Windows, Apple Silicon Macs, and Intel Macs. It ope
 
 ## Features
 
+- Present the current document using the presentation icon at the bottom left. Pages fit the full screen with app controls and comments hidden; document artwork remains visible. Use arrow keys or Space to navigate, **L** to toggle the laser pointer, and **Escape** to exit. While the laser is enabled, clicking points without advancing the page. Presentation does not save or change the PDF.
+
 - Open multiple documents in tabs and separate windows. Opening another file creates a tab; reopening a file already open focuses its existing tab. Use the **+** button or **Ctrl/Cmd+T** for a new tab, and **Ctrl/Cmd+Shift+N** for a new window. Drag tabs to reorder them, drag one outside the window to detach it, or drag it into another AsterPDF window to attach it. The small move-to-window button provides an alternative to dragging. Moving tabs preserves unsaved edits, undo history, and scroll position. **Ctrl/Cmd+W** closes the current tab, with an unsaved-changes prompt when needed. Each document saves independently; Save As cannot overwrite a file open in another tab. Restart-and-install saves documents across all windows first.
 
 - Choose **Tools → PDF to Data** for a clean `.docx` with flowing text and editable detected tables, organized under source-page headings. It asks where to save first and shows extraction progress. Original page design, fonts and graphics are omitted. Numeric strings stay as extracted text: no rounding, localization, automatic date conversion or calculations. The exporter checks for missing character mappings, unplaced text, digit-count differences and ambiguous table assignments. Affected pages include review notes; where structured extraction loses text or digits, it uses the extracted character stream. This is a review aid, not a guarantee of correct reading order or figures: borderless tables, split numbers, scans, charts and incomplete PDF text mappings still need comparison with the source. No OCR is performed. Includes pending edits without saving over the PDF.
@@ -36,7 +38,7 @@ Install Node.js 20 or newer. The lockfile pins the dependency tree.
 
 ### Windows x64
 
-Run `build-windows.bat`. It installs the locked dependencies, checks TypeScript, bundles the interface, and creates an NSIS installer at `release/AsterPDF-0.5.2-Windows-x64-Setup.exe` plus a matching `.sha256` checksum file. The installer includes the app; installing it does not download anything.
+Run `build-windows.bat`. It installs the locked dependencies, checks TypeScript, bundles the interface, and creates an NSIS installer at `release/AsterPDF-0.5.3-Windows-x64-Setup.exe` plus a matching `.sha256` checksum file. The installer includes the app; installing it does not download anything.
 
 ### macOS Apple Silicon and Intel
 
