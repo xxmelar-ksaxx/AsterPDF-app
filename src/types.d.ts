@@ -12,6 +12,8 @@ declare global {
       onWorkspaceChanged(handler: (state: WorkspaceState) => void): () => void;
       onWorkspaceDropHint(handler: (point: { x: number; y: number } | null) => void): () => void;
       onPrepareDocument(handler: (mode: 'close' | 'save') => Promise<boolean>): () => void;
+      setPresentation(enabled: boolean): Promise<boolean>;
+      onPresentationChanged(handler: (enabled: boolean) => void): () => void;
       openDialog(): Promise<OpenedFile | null>;
       addDialog(): Promise<OpenedFile[] | null>;
       openPath(path: string): Promise<OpenedFile | null>;

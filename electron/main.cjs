@@ -208,6 +208,7 @@ async function finishCompressedSave(rawBytes, token, expectedPath) {
     prompt.resolve(discard === true);
   });
   documentIpc.handle('pdf:open-dialog', (event) => { requireApp(event); return selectFiles(); });
+  documentIpc.handle('pdf:presentation', (_event, enabled) => workspace.setPresentation(tab, enabled === true));
   documentIpc.handle('pdf:open-link', async (event, address) => {
     requireApp(event);
     if (typeof address !== 'string' || address.length > 4096 || /[\u0000-\u001f\u007f]/.test(address)) throw new Error('Invalid link.');

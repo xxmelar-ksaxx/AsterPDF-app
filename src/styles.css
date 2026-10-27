@@ -517,3 +517,8 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .comment-formatted-text{display:block;text-align:start;white-space:pre-wrap;overflow-wrap:anywhere;unicode-bidi:isolate}
 .comment-editor strong,.comment-editor b,.comment-formatted-text strong{font-weight:700}
 .comment-edit .comment-editor{margin-top:10px;min-height:90px}
+.viewer-footer .presentation-button{width:27px;height:25px;flex:none;color:#61725f;border-radius:5px}.viewer-footer{gap:10px}.viewer-footer .footer-document-path{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.presentation-view{position:fixed;inset:0;margin:0;padding:0;border:0;width:100vw;height:100vh;max-width:none;max-height:none;background:#000;color:#fff;overflow:hidden;outline:none;cursor:none;user-select:none}
+.presentation-view[open]{display:flex;align-items:center;justify-content:center}.presentation-view::backdrop{background:#000}.presentation-view.cursor-visible{cursor:default}
+.presentation-slide{position:relative;flex:none;overflow:hidden;background:#fff}.presentation-slide canvas{display:block}.presentation-artwork{position:absolute;inset:0;pointer-events:none}.presentation-signature{position:absolute;object-fit:fill;pointer-events:none}
+.presentation-announcement{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}.presentation-error{position:absolute;bottom:24px;left:50%;transform:translateX(-50%);padding:12px 20px;background:#222;color:#fff;border-radius:8px;font-size:14px}

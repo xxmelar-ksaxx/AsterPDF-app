@@ -1,6 +1,12 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('aster', {
+  setPresentation: enabled => ipcRenderer.invoke('pdf:presentation', enabled),
+  onPresentationChanged: handler => {
+    const listener = (_event, enabled) => handler(enabled);
+    ipcRenderer.on('presentation:changed', listener);
+    return () => ipcRenderer.removeListener('presentation:changed', listener);
+  },
   getWorkspace: () => ipcRenderer.invoke('workspace:state'),
   workspaceAction: (action, id, value) => ipcRenderer.send('workspace:action', action, id, value),
   onWorkspaceChanged: (handler) => {

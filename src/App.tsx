@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
-  FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X,
+  FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X, Presentation,
   ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical, TriangleAlert,
   Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus, PanelRight,
   Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, Eye, EyeOff, Highlighter, Link2, TextSelect
@@ -16,6 +16,7 @@ import { prepareCommentSave } from './pdf/comment-save';
 import type { OpenedPdf, RecentPdf, WordExportResult } from './types';
 import type { OpenedFile } from './types';
 import PdfPage, { pageScale, type PageSize, type PendingPoint, type Zoom } from './components/PdfPage';
+import PresentationView from './components/PresentationView';
 import PageThumbnail from './components/PageThumbnail';
 import { convertToPdf } from './import/convert';
 import { appendPdfs, composePagePlan, compressPdf, embedSignatures, type CompressionLevel, type PageEdit, type SignatureDraw } from './pdf/edit';
@@ -113,6 +114,14 @@ export default function App() {
   }, [preparingInstall, installing]);
   const [source, setSourceState] = useState<OpenedPdf | null>(null);
   const [previewSource, setPreviewSource] = useState<OpenedPdf | null>(null);
+  const [presenting, setPresenting] = useState(false);
+  const presentationStarting = useRef(false);
+  const presentationScroll = useRef<number | null>(null);
+  useEffect(() => window.aster.onPresentationChanged(setPresenting), []);
+  const exitPresentation = useCallback(() => {
+    setPresenting(false);
+    void window.aster.setPresentation(false);
+  }, []);
   // Keep large binary buffers out of component props. React's development
   // profiler enumerates changed object props, including every PDF byte.
   const getSourceBytes = useCallback(() => {
@@ -1809,6 +1818,33 @@ export default function App() {
     onSave={() => { if (editingComment) changeComment(editingComment.comment, 'edit', editingComment.text, editingComment.bold); }}
     onCancel={() => setEditingComment(null)} onDelete={() => changeComment(comment, 'delete')} />;
 
+  const startPresentation = async () => {
+    if (!document || busy || presentationStarting.current) return;
+    presentationStarting.current = true;
+    try {
+      await finishInlineEdits();
+      presentationScroll.current = viewerRef.current?.scrollTop ?? 0;
+      setPresenting(true);
+      await window.aster.setPresentation(true);
+    } catch (cause) { setPresenting(false); setError(`Could not start presentation: ${messageOf(cause)}`); }
+    finally { presentationStarting.current = false; }
+  };
+
+  useEffect(() => {
+    if (presenting || presentationScroll.current === null) return;
+    const top = presentationScroll.current;
+    let frame = 0;
+    // Fullscreen changes the viewer's measured width. Restore after its pages
+    // have settled back to the normal window size, including native exits.
+    const restore = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => { if (viewerRef.current) viewerRef.current.scrollTop = top; }); });
+    };
+    restore(); window.addEventListener('resize', restore);
+    const timer = setTimeout(() => { window.removeEventListener('resize', restore); presentationScroll.current = null; }, 1000);
+    return () => { clearTimeout(timer); cancelAnimationFrame(frame); window.removeEventListener('resize', restore); };
+  }, [presenting]);
+
   return <div className="app-shell" onDragOver={(event) => {
     if (event.dataTransfer.types.includes('Files')) event.preventDefault();
   }} onDrop={(event) => {
@@ -2020,7 +2056,7 @@ export default function App() {
             })}
           </div>
         </div>}
-        <div className="viewer-footer"><span>{compressionProgress || source.path}</span><span>{document ? effectivePages.length : '…'} pages · Offline</span></div>
+        <div className="viewer-footer"><button className="icon-button presentation-button" aria-label="Start presentation" title="Present full screen · Arrow keys to navigate · Esc to exit" disabled={!document || busy || preparingInstall || installing} onClick={() => void startPresentation()}><Presentation size={17} /></button><span className="footer-document-path">{compressionProgress || source.path}</span><span>{document ? effectivePages.length : '…'} pages · Offline</span></div>
       </section>
 
       <ResizableSidebar collapsed={sidebarCollapsed}>
@@ -2148,5 +2184,7 @@ export default function App() {
       <p id="discard-description">Your changes to this PDF have not been saved. Save them before leaving this document if you want to keep them.</p>
       <div className="discard-actions"><button className="button confirm-keep" autoFocus onClick={() => answerDiscard(false)}><Check size={17} />Keep editing</button><button className="button danger" onClick={() => answerDiscard(true)}><Trash2 size={16} />Discard changes</button></div>
     </div></div>}
+    {presenting && document && <PresentationView pdf={document} pages={effectivePages} initialPage={pageNumber}
+      objects={visibleOverlays} signatures={placedSignatures} fonts={installedFonts} onExit={exitPresentation} />}
   </div>;
 }

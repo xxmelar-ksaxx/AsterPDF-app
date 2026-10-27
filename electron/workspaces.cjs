@@ -28,13 +28,41 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
     if (owner.window.isDestroyed()) return;
     const [width, height] = owner.window.getContentSize();
     for (const tab of owner.tabs) {
-      tab.view.setBounds({ x: 0, y: TAB_BAR_HEIGHT, width, height: Math.max(0, height - TAB_BAR_HEIGHT) });
+      const top = owner.presentation ? 0 : TAB_BAR_HEIGHT;
+      tab.view.setBounds({ x: 0, y: top, width, height: Math.max(0, height - top) });
       tab.view.setVisible(tab.id === owner.activeId);
     }
+  }
+  function endPresentation(owner, restore = true) {
+    const previous = owner.presentation;
+    if (!previous) return;
+    owner.presentation = null;
+    if (!owner.window.isDestroyed()) {
+      if (restore) {
+        if (!previous.fullscreen) owner.restorePresentationMenu = previous.menuVisible;
+        owner.window.setFullScreen(previous.fullscreen);
+      }
+      owner.window.setMenuBarVisibility(previous.menuVisible);
+      layout(owner);
+    }
+    send(previous.tab.contents, 'presentation:changed', false);
+  }
+  function setPresentation(tab, enabled) {
+    const owner = tab.owner;
+    if (!enabled) { if (owner.presentation?.tab === tab) endPresentation(owner); return false; }
+    if (owner.activeId !== tab.id || !tab.controller.currentPath || tab.crashed) throw new Error('Open a PDF in the active tab to present it.');
+    if (owner.presentation?.tab === tab) return true;
+    endPresentation(owner);
+    owner.presentation = { tab, fullscreen: owner.window.isFullScreen(), menuVisible: owner.window.isMenuBarVisible() };
+    owner.window.setMenuBarVisibility(false);
+    owner.window.setFullScreen(true);
+    layout(owner); tab.contents.focus();
+    return true;
   }
   function activate(tab, focus = true) {
     const owner = tab.owner;
     if (owner.window.isDestroyed() || tab.contents.isDestroyed()) return;
+    if (owner.presentation && owner.presentation.tab !== tab) endPresentation(owner);
     owner.activeId = tab.id;
     layout(owner); publish(owner);
     if (focus) {
@@ -43,6 +71,7 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
     }
   }
   function dispose(tab) {
+    if (tab.owner.presentation?.tab === tab) endPresentation(tab.owner);
     for (const [id, request] of requests) if (request.tab === tab) { requests.delete(id); clearTimeout(request.timer); request.resolve(false); }
     documents.delete(tab.contentsId); tab.controller.dispose();
     if (!tab.contents.isDestroyed()) tab.contents.close();
@@ -56,6 +85,7 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
     else publish(owner);
   }
   async function prepare(tab, mode = 'close') {
+    if (tab.owner.presentation?.tab === tab) endPresentation(tab.owner);
     if (tab.crashed) return !tab.controller.dirty && !tab.controller.saving && !tab.controller.writing;
     if (!tab.ready || tab.pendingPath || tab.controller.writing) return false;
     const id = randomUUID();
@@ -92,9 +122,15 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
     owner.window.contentView.addChildView(view);
     view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     view.webContents.on('will-navigate', event => event.preventDefault());
-    view.webContents.on('render-process-gone', () => { tab.crashed = true; tab.ready = false; publish(tab.owner); });
+    view.webContents.on('render-process-gone', () => { if (tab.owner.presentation?.tab === tab) endPresentation(tab.owner); tab.crashed = true; tab.ready = false; publish(tab.owner); });
+    view.webContents.on('did-start-navigation', (_event, _url, inPlace, mainFrame) => { if (mainFrame && !inPlace && tab.owner.presentation?.tab === tab) endPresentation(tab.owner); });
     view.webContents.on('before-input-event', (event, input) => {
       if (input.type !== 'keyDown') return;
+      if (tab.owner.presentation?.tab === tab) {
+        if (input.key === 'Escape') { event.preventDefault(); endPresentation(tab.owner); }
+        else if ((input.control || input.meta) && input.key.toLowerCase() !== 'q') event.preventDefault();
+        return;
+      }
       if (drag && input.key === 'Escape') { event.preventDefault(); cancelDrag(); return; }
       const modifier = process.platform === 'darwin' ? input.meta : input.control;
       if (!modifier || input.alt) return;
@@ -120,6 +156,13 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
     }
     window.on('focus', () => { lastWindow = owner; owner.order = ++focusOrder; });
     window.on('resize', () => layout(owner));
+    window.on('leave-full-screen', () => {
+      endPresentation(owner, false);
+      if (owner.restorePresentationMenu !== undefined) {
+        window.setMenuBarVisibility(owner.restorePresentationMenu);
+        delete owner.restorePresentationMenu;
+      }
+    });
     window.once('ready-to-show', () => window.show());
     window.on('close', event => {
       if (owner.approved || quitting) return;
@@ -179,6 +222,7 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
   function move(tab, target, index = target.tabs.length) {
     const source = tab.owner;
     if (source.closing || target.closing || closingAll || savingAll || installing() || requests.size) return;
+    if (source.presentation?.tab === tab) endPresentation(source);
     const old = source.tabs.indexOf(tab);
     source.tabs.splice(old, 1);
     if (source === target && old < index) index--;
@@ -220,12 +264,12 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
     }
   }
   const api = {
-    createWindow, newTab, activate, publish, openFile, closeTab,
+    createWindow, newTab, activate, publish, openFile, closeTab, setPresentation,
     get documents() { return [...documents.values()]; },
     documentFor: contents => documents.get(contents.id),
     ownerFor: contents => windows.get(contents.id) || documents.get(contents.id)?.owner,
     currentOwner,
-    sendMenu(channel) { const owner = currentOwner(), tab = owner?.tabs.find(t => t.id === owner.activeId); if (tab) send(tab.contents, channel); },
+    sendMenu(channel) { const owner = currentOwner(), tab = owner?.tabs.find(t => t.id === owner.activeId); if (tab) { endPresentation(owner); send(tab.contents, channel); } },
     newDocumentWindow() { if (!installing() && !closingAll && !savingAll) createWindow(); },
     newDocumentTab() { if (!installing() && !closingAll && !savingAll) newTab(currentOwner() || createWindow({ empty: true })); },
     closeActive() { const owner = currentOwner(), tab = owner?.tabs.find(t => t.id === owner.activeId); if (tab) void closeTab(tab); },
