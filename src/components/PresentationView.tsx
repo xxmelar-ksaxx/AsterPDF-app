@@ -18,6 +18,8 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
   const [slide, setSlide] = useState<{ page: PlannedPage; viewport: PageViewport; index: number } | null>(null);
   const [error, setError] = useState('');
   const [cursorVisible, setCursorVisible] = useState(false);
+  const [laserEnabled, setLaserEnabled] = useState(false);
+  const laser = useRef<HTMLSpanElement>(null);
   const cursorTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastWheel = useRef(0);
   const advance = (step: number) => setIndex(value => Math.max(0, Math.min(pages.length - 1, value + step)));
@@ -34,7 +36,8 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
       event.preventDefault(); event.stopImmediatePropagation();
       if (event.key === 'Escape') onExit();
       if (event.ctrlKey || event.metaKey || event.altKey) return;
-      if (['ArrowRight', 'ArrowDown', 'PageDown', 'Enter'].includes(event.key)) advance(1);
+      if (event.key.toLowerCase() === 'l') { if (!event.repeat) setLaserEnabled(value => !value); }
+      else if (['ArrowRight', 'ArrowDown', 'PageDown', 'Enter'].includes(event.key)) advance(1);
       else if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(event.key)) advance(-1);
       else if (event.key === ' ') advance(event.shiftKey ? -1 : 1);
       else if (event.key === 'Home') setIndex(0);
@@ -43,6 +46,11 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
     window.addEventListener('keydown', keyboard, true);
     return () => window.removeEventListener('keydown', keyboard, true);
   }, [pages.length, onExit]);
+  useEffect(() => {
+    const hide = () => { if (laser.current) laser.current.style.visibility = 'hidden'; };
+    window.addEventListener('blur', hide);
+    return () => window.removeEventListener('blur', hide);
+  }, []);
   useEffect(() => {
     let cancelled = false;
     let render: ReturnType<Awaited<ReturnType<PDFDocumentProxy['getPage']>>['render']> | undefined;
@@ -76,10 +84,18 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
     return () => { cancelled = true; render?.cancel(); };
   }, [pdf, pages, index, bounds.width, bounds.height]);
 
-  return <dialog ref={dialog} className={`presentation-view${cursorVisible ? ' cursor-visible' : ''}`} aria-label="PDF presentation" tabIndex={-1}
+  return <dialog ref={dialog} className={`presentation-view${cursorVisible ? ' cursor-visible' : ''}${laserEnabled ? ' laser-enabled' : ''}`} aria-label="PDF presentation" tabIndex={-1}
     onCancel={event => { event.preventDefault(); onExit(); }}
-    onClick={() => advance(1)} onContextMenu={event => { event.preventDefault(); advance(-1); }}
-    onPointerMove={() => { setCursorVisible(true); clearTimeout(cursorTimer.current); cursorTimer.current = setTimeout(() => setCursorVisible(false), 1500); }}
+    onClick={() => { if (!laserEnabled) advance(1); }} onContextMenu={event => { event.preventDefault(); if (!laserEnabled) advance(-1); }}
+    onPointerLeave={() => { if (laser.current) laser.current.style.visibility = 'hidden'; }}
+    onPointerMove={event => {
+      // Move just the dot, without rerendering the slide or its artwork.
+      if (laser.current) {
+        laser.current.style.transform = `translate3d(${event.clientX}px, ${event.clientY}px, 0)`;
+        laser.current.style.visibility = 'visible';
+      }
+      setCursorVisible(true); clearTimeout(cursorTimer.current); cursorTimer.current = setTimeout(() => setCursorVisible(false), 1500);
+    }}
     onWheel={event => { if (Math.abs(event.deltaY) < 10 || Date.now() - lastWheel.current < 350) return; lastWheel.current = Date.now(); advance(event.deltaY > 0 ? 1 : -1); }}>
     <div className="presentation-slide" data-page={slide ? slide.index + 1 : undefined}
       style={slide ? { width: slide.viewport.width, height: slide.viewport.height } : undefined}>
@@ -95,7 +111,8 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
           style={{ left: `${signature.x * 100}%`, top: `${signature.y * 100}%`, width: `${signature.width * 100}%`, height: `${signature.height * 100}%` }} />)}
       </div>}
     </div>
-    <span className="presentation-announcement" aria-live="polite">Page {slide ? slide.index + 1 : index + 1} of {pages.length}. Use arrow keys to navigate. Escape exits presentation.</span>
+    <span ref={laser} className="presentation-laser" hidden={!laserEnabled} aria-hidden="true" />
+    <span className="presentation-announcement" aria-live="polite">Page {slide ? slide.index + 1 : index + 1} of {pages.length}. Use arrow keys to navigate. Laser pointer {laserEnabled ? 'on' : 'off'}; press L to toggle. Escape exits presentation.</span>
     {error && <p className="presentation-error" role="alert">{error}</p>}
   </dialog>;
 }

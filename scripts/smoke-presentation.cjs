@@ -48,7 +48,25 @@ async function main(){
   assert.ok(await presentation.locator('[data-overlay-id="shape"]').count(),'Added drawing must remain visible');
   const pixel=await presentation.locator('canvas').evaluate(canvas=>{const c=canvas.getContext('2d');return [...c.getImageData(Math.floor(canvas.width*.5),Math.floor(canvas.height*.49),1,1).data];});
   assert.deepEqual(pixel,[255,255,255,255],'Embedded comment appearance must be hidden');
+  const laser=presentation.locator('.presentation-laser');
+  assert.equal(await laser.isVisible(),false);
+  await doc.evaluate(()=>{window.presentationCanvas=document.querySelector('.presentation-slide canvas');window.presentationPixels=window.presentationCanvas.toDataURL();});
+  await doc.mouse.move(240,220);
+  await doc.keyboard.press('l');
+  await laser.waitFor({state:'visible'});
+  await doc.mouse.move(330,270);
+  const laserBox=await laser.boundingBox();
+  assert.ok(Math.abs(laserBox.x+laserBox.width/2-330)<1&&Math.abs(laserBox.y+laserBox.height/2-270)<1,'Laser follows the pointer');
+  assert.equal(await presentation.evaluate(el=>getComputedStyle(el).cursor),'none');
+  await doc.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'l',repeat:true,bubbles:true})));
+  assert.equal(await laser.isVisible(),true,'Holding L must not toggle repeatedly');
+  await doc.mouse.click(330,270);
+  assert.equal(await presentation.locator('.presentation-slide').getAttribute('data-page'),'2','Pointing must not advance the slide');
+  assert.equal(await doc.evaluate(()=>window.presentationCanvas===document.querySelector('.presentation-slide canvas')&&window.presentationCanvas.toDataURL()===window.presentationPixels),true,'The laser must not change or rerender PDF pixels');
   await doc.keyboard.press('ArrowLeft');await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='1');
+  assert.equal(await laser.isVisible(),true,'Laser stays enabled when navigating');
+  await doc.keyboard.press('Shift+l');
+  await laser.waitFor({state:'hidden'});
   await doc.keyboard.press('Space');await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='2');
   await doc.keyboard.press('Home');await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='1');
   await doc.keyboard.press('End');await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='2');
@@ -57,10 +75,11 @@ async function main(){
   assert.deepEqual(restored,{full:false,menu:initialMenu,top:42});
   await doc.waitForFunction(top=>Math.abs(document.querySelector('.viewer-scroll').scrollTop-top)<2,beforeScroll);
   await doc.getByRole('button',{name:'Start presentation'}).click();await presentation.waitFor();
+  assert.equal(await laser.isVisible(),false,'A new presentation starts with the laser off');
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setFullScreen(false));
   await presentation.waitFor({state:'hidden'});
   assert.deepEqual(errors,[]);assert.deepEqual(await fs.readFile(file),original,'Presenting must not write the PDF');
-  console.log('Presentation passed: fullscreen, hidden app/comment controls, embedded annotations hidden, artwork visible, page fitting/navigation, Escape and native exit, scroll restored, file unchanged.');
+  console.log('Presentation passed: laser toggle/tracking, repeat protection, safe pointing, unchanged slide pixels, navigation, fullscreen exit, scroll restored, file unchanged.');
  }finally{if(app){await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>{});await app.close().catch(()=>{});}await server.close();await fs.rm(file,{force:true});}
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

@@ -2056,7 +2056,7 @@ export default function App() {
             })}
           </div>
         </div>}
-        <div className="viewer-footer"><button className="icon-button presentation-button" aria-label="Start presentation" title="Present full screen · Arrow keys to navigate · Esc to exit" disabled={!document || busy || preparingInstall || installing} onClick={() => void startPresentation()}><Presentation size={17} /></button><span className="footer-document-path">{compressionProgress || source.path}</span><span>{document ? effectivePages.length : '…'} pages · Offline</span></div>
+        <div className="viewer-footer"><button className="icon-button presentation-button" aria-label="Start presentation" title="Present full screen · Arrow keys to navigate · L for laser pointer · Esc to exit" disabled={!document || busy || preparingInstall || installing} onClick={() => void startPresentation()}><Presentation size={17} /></button><span className="footer-document-path">{compressionProgress || source.path}</span><span>{document ? effectivePages.length : '…'} pages · Offline</span></div>
       </section>
 
       <ResizableSidebar collapsed={sidebarCollapsed}>
