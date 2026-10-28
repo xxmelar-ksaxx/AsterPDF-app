@@ -5,8 +5,9 @@ import fontkit from '@pdf-lib/fontkit';
 import { shapePath } from './draw-geometry';
 import { restoreEditableAnnotations } from './editable-annotations';
 import { pruneUnusedObjects } from './prune-unused';
+import { addVideoAnnotation, restoreVideoAssets, writeVideoAssets } from './video-assets';
 
-export type OverlayKind = 'pen' | 'rectangle' | 'ellipse' | 'line' | 'text' | 'image';
+export type OverlayKind = 'pen' | 'rectangle' | 'ellipse' | 'line' | 'text' | 'image' | 'video';
 export type TextAppearance = { bold?: boolean; italic?: boolean; underline?: boolean; strikeThrough?: boolean; textAlign?: 'left' | 'center' | 'right' | 'justify' | 'smart-justify'; textSizing?: 'auto' | 'fixed' };
 export type OverlayObject = TextAppearance & {
   id: string;
@@ -29,6 +30,7 @@ export type OverlayObject = TextAppearance & {
   text?: string;
   fontChoice?: 'helvetica' | 'noto-sans' | 'noto-serif' | 'noto-naskh-arabic' | `system:${string}`;
   image?: string;
+  videoId?: string;
 };
 
 export type OverlayPage = { pageId: string; index: number; viewport: PageViewport };
@@ -55,6 +57,7 @@ export async function readOverlayPackage(bytes: Uint8Array, loaded?: PDFDocument
     const parsed: unknown = JSON.parse(decoder.decode(decodePDFRawStream(objectsStream).decode()));
     if (!base.length || !Array.isArray(parsed) || parsed.some((item) => !item || typeof item !== 'object' ||
       typeof item.id !== 'string' || typeof item.pageId !== 'string' || typeof item.kind !== 'string' ||
+      (item.kind === 'video' && (typeof item.videoId !== 'string' || !/^[a-zA-Z0-9-]+$/.test(item.videoId) || typeof item.image !== 'string' || !item.image.startsWith('data:image/png;base64,'))) ||
       (item.editingTool !== undefined && item.editingTool !== 'draw' && item.editingTool !== 'edit') ||
       (['bold', 'italic', 'underline', 'strikeThrough'].some((key) => item[key] !== undefined && typeof item[key] !== 'boolean')) ||
       (item.textAlign !== undefined && !['left', 'center', 'right', 'justify', 'smart-justify'].includes(item.textAlign)) ||
@@ -74,6 +77,7 @@ export async function readOverlayPackage(bytes: Uint8Array, loaded?: PDFDocument
     // A different page count means the saved artwork no longer maps safely.
     // Open the current PDF normally instead of restoring a stale page layout.
     if (basePdf.getPageCount() !== pdf.getPageCount()) return null;
+    restoreVideoAssets(pdf, parsed as OverlayObject[]);
     return { base: await restoreEditableAnnotations(pdf, basePdf, base), objects: parsed as OverlayObject[] };
   } catch { throw new Error('This PDF has damaged AsterPDF editing data. Keep the original and open a healthy copy.'); }
 }
@@ -96,6 +100,7 @@ export async function embedOverlays(bytes: Uint8Array, objects: OverlayObject[],
   if (!objects.length) return bytes;
   const pdf = await PDFDocument.load(bytes);
   const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const videoAssets = await writeVideoAssets(pdf, objects);
   const fontCache = new Map<string, typeof font>([['helvetica', font]]);
   const chooseFont = async (choice: OverlayObject['fontChoice'], appearance: TextAppearance = {}) => {
     if (!choice || choice === 'helvetica') {
@@ -187,7 +192,7 @@ export async function embedOverlays(bytes: Uint8Array, objects: OverlayObject[],
         ySkew: degrees(object.italic && !standard ? 12 : 0), lineHeight: fontSize * 1.2, opacity }); }
       catch { throw new Error('This text contains characters unsupported by the PDF text font. Use an image overlay for this text.'); }
       finally { page.pushOperators(popGraphicsState()); }
-    } else if (object.kind === 'image' && object.image) {
+    } else if ((object.kind === 'image' || object.kind === 'video') && object.image) {
       const match = /^data:image\/png;base64,(.+)$/.exec(object.image);
       if (!match) throw new Error('The inserted image is not a PNG.');
       let image = imageCache.get(object.image);
@@ -200,6 +205,12 @@ export async function embedOverlays(bytes: Uint8Array, objects: OverlayObject[],
       const [topX, topY] = at(left, top);
       page.drawImage(image, { x, y, width: Math.hypot(rightX - x, rightY - y), height: Math.hypot(topX - x, topY - y),
         rotate: degrees(Math.atan2(rightY - y, rightX - x) * 180 / Math.PI), opacity });
+      if (object.kind === 'video') {
+        const corners = [at(left, top), at(right, top), at(left, bottom), at(right, bottom)];
+        const rect = [Math.min(...corners.map(p => p[0])), Math.min(...corners.map(p => p[1])), Math.max(...corners.map(p => p[0])), Math.max(...corners.map(p => p[1]))];
+        addVideoAnnotation(pdf, target.index, object, videoAssets.get(object.videoId!)!,
+          rect, { image: image.ref, matrix: [rightX - x, rightY - y, topX - x, topY - y, x - rect[0], y - rect[1]] });
+      }
     }
   }
   return new Uint8Array(await pdf.save());

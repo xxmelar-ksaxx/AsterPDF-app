@@ -4,7 +4,7 @@ import type { OverlayObject } from '../pdf/overlays';
 import ColorPicker from './ColorPicker';
 
 export type DrawStyle = Pick<OverlayObject, 'color' | 'lineWidth' | 'fill' | 'fillHidden' | 'radius' | 'opacity'>;
-export const layerName = (object: OverlayObject) => object.name || ({ rectangle: 'Rectangle', ellipse: 'Ellipse', line: 'Line', pen: 'Pen stroke', image: 'Image', text: 'Text' }[object.kind]);
+export const layerName = (object: OverlayObject) => object.name || ({ rectangle: 'Rectangle', ellipse: 'Ellipse', line: 'Line', pen: 'Pen stroke', image: 'Image', video: 'Video', text: 'Text' }[object.kind]);
 
 export function NumberField({ label, value, min = -100000, max = 100000, icon, unit, onChange, onPreview }: {
   label: string; value: number; min?: number; max?: number; icon?: ReactNode; unit?: string;
@@ -157,7 +157,7 @@ export default function DrawInspector({ objects, selected, page, pageWidth, page
         <p className="draw-layer-hint">Top layer is in front. Drag to reorder.</p>
         {!objects.length && <p className="draw-layer-empty">Your shapes and images will appear here.</p>}
         {[...objects].reverse().map((object) => {
-          const Icon = { rectangle: Square, ellipse: Circle, line: Minus, pen: Pencil, image: Image, text: Pencil }[object.kind];
+          const Icon = { rectangle: Square, ellipse: Circle, line: Minus, pen: Pencil, image: Image, video: Image, text: Pencil }[object.kind];
           return <div key={object.id} data-layer-id={object.id} className={`draw-layer${object.id === selected?.id ? ' selected' : ''}${object.hidden ? ' hidden-layer' : ''}${dropId === object.id ? ' drop-target' : ''}`}
             draggable={!busy && !object.locked} onDragStart={(event) => { dragId.current = object.id; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', object.id); }}
             onDragOver={(event) => { if (dragId.current && dragId.current !== object.id) { event.preventDefault(); setDropId(object.id); } }}

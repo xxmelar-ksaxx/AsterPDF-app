@@ -5,6 +5,7 @@ import type { OverlayObject } from '../pdf/overlays';
 import type { PlacedSignature } from '../signatures/library';
 import type { InstalledFont } from './FontPicker';
 import OverlayLayer from './OverlayLayer';
+import VideoPlayer from './VideoPlayer';
 
 const noop = () => {};
 export default function PresentationView({ pdf, pages, initialPage, objects, signatures, fonts, onExit }: {
@@ -33,6 +34,10 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
   }, []);
   useEffect(() => {
     const keyboard = (event: KeyboardEvent) => {
+      // Keep native media controls usable; page navigation remains available
+      // with Page Up/Down, and L/Escape always control the presentation.
+      if (event.target instanceof Element && event.target.closest('.pdf-video') &&
+          !['Escape', 'PageUp', 'PageDown', 'l'].includes(event.key.toLowerCase() === 'l' ? 'l' : event.key)) return;
       event.preventDefault(); event.stopImmediatePropagation();
       if (event.key === 'Escape') onExit();
       if (event.ctrlKey || event.metaKey || event.altKey) return;
@@ -104,12 +109,15 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
         <OverlayLayer key={slide.page.id} pageId={slide.page.id} width={slide.viewport.width} height={slide.viewport.height}
           scale={slide.viewport.scale} viewport={slide.viewport} fonts={fonts} objects={objects.filter(object => object.pageId === slide.page.id)}
           tool={null} drawActive={false} selectedId={null} image={null} fontCommand={null} onFontEditChange={noop}
+          showVideoPlayers={false}
           color="#000000" lineWidth={1} drawStyle={{}} fontSize={16} fontChoice="helvetica" textAppearance={{}}
           onAdd={noop} onUpdate={noop} onDelete={noop} onSelect={noop} />
         {signatures.filter(signature => signature.pageId === slide.page.id).map(signature => <img key={signature.id}
           className="presentation-signature" src={signature.dataUrl} alt="Signature" draggable={false}
           style={{ left: `${signature.x * 100}%`, top: `${signature.y * 100}%`, width: `${signature.width * 100}%`, height: `${signature.height * 100}%` }} />)}
       </div>}
+      {slide && objects.filter(object => object.kind === 'video' && !object.hidden && object.pageId === slide.page.id).map(object =>
+        <VideoPlayer key={`${slide.page.id}-${object.id}`} object={object} width={slide.viewport.width} height={slide.viewport.height} />)}
     </div>
     <span ref={laser} className="presentation-laser" hidden={!laserEnabled} aria-hidden="true" />
     <span className="presentation-announcement" aria-live="polite">Page {slide ? slide.index + 1 : index + 1} of {pages.length}. Use arrow keys to navigate. Laser pointer {laserEnabled ? 'on' : 'off'}; press L to toggle. Escape exits presentation.</span>

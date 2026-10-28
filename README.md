@@ -32,13 +32,19 @@ PDF parsing, DOCX and image conversion, editing, compression, file access, and s
 
 After download verification, choose **Restart and install** in Settings. AsterPDF saves pending document changes (including placed signatures and a composed comment) first. Converted files prompt for a PDF location. Canceling that dialog or a save error keeps the application open and leaves the update ready to install. Updates never install automatically on normal exit. Download failures offer a retry. An interrupted download can be retried on the next launch; completed cached downloads are revalidated before reuse. In-app installation is available in packaged builds; development builds display an explanation. Update requests contain no PDF content, file paths, comments, or author settings. Failed checks and downloads leave document work available offline.
 
+## Embedded videos (0.5.4)
+
+In **Edit**, choose the video icon and select an MP4 (up to 250 MB; H.264 video with AAC audio recommended). A thumbnail follows the pointer; click to place it. Drag the thumbnail to move it, use its edges or corners to resize, and hold **Shift** to preserve proportions. Right-click to delete; undo and redo work as with images. Press **Esc** to cancel placement.
+
+Click the play button to watch the video, including in presentation mode. Playback pauses when the video leaves view or you leave its presentation page. **Save PDF** embeds the video so it is available after reopening, without the original MP4. Playback is supported in AsterPDF; support in other PDF viewers varies. A thumbnail remains visible when playback is unavailable. Videos are stored once per asset, including when a page is duplicated, and are not copied into editing-history snapshots.
+
 ## Build from source
 
 Install Node.js 20 or newer. The lockfile pins the dependency tree.
 
 ### Windows x64
 
-Run `build-windows.bat`. It installs the locked dependencies, checks TypeScript, bundles the interface, and creates an NSIS installer at `release/AsterPDF-0.5.3-Windows-x64-Setup.exe` plus a matching `.sha256` checksum file. The installer includes the app; installing it does not download anything.
+Run `build-windows.bat`. It installs the locked dependencies, checks TypeScript, bundles the interface, and creates an NSIS installer at `release/AsterPDF-0.5.4-Windows-x64-Setup.exe` plus a matching `.sha256` checksum file. The installer includes the app; installing it does not download anything.
 
 ### macOS Apple Silicon and Intel
 
@@ -112,6 +118,8 @@ npm run desktop
 `npm run smoke:file-open` checks a PDF passed on startup, a real second process forwarding another PDF, spaces and Arabic filenames, window restoration, unsaved inline edits, canceled/accepted document switches, missing-file recovery, and queuing during Save As. It also exercises the macOS `open-file` listener and window recreation through simulated Electron events. On Windows, set `ASTERPDF_SMOKE_PACKAGED=1` to test the packaged EXE. Native Finder registration still needs verification on a Mac.
 
 `npm run smoke:workspaces` starts a temporary Vite development server and checks tab opening, duplicate-file focus, moving live tabs between windows, retained edits and undo/redo, isolated saving, Save As conflicts, and closing during a drag. It uses temporary PDFs and does not build the app.
+
+Video checks: `node --import tsx --test tests/videos.test.ts` checks embedding, reopening, asset reuse and comment autosaves. `node scripts/smoke-video.cjs` checks placement, movement, resizing, delete/undo, playback, reopening without the source MP4, and presentation playback using a temporary development server. The smoke check requires FFmpeg on PATH (or set `FFMPEG_PATH`); FFmpeg is a test-fixture dependency only, not an app dependency. Neither command builds the app.
 
 ## Implementation
 

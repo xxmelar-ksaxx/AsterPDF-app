@@ -10,9 +10,10 @@ import type { FontCommand, FontSelection, InstalledFont } from './FontPicker';
 import { imagePlacement, resizeImage, type ResizeHandle } from '../pdf/image-geometry';
 import { constrainDraw, shapePath } from '../pdf/draw-geometry';
 import { textOverlayLayout, textOverlaySize } from './text-overlay-size';
+import VideoPlayer from './VideoPlayer';
 
 export type OverlayTool = 'select' | 'eraser' | OverlayKind;
-export type PendingImage = { dataUrl: string; aspect: number };
+export type PendingImage = { dataUrl: string; aspect: number; videoId?: string; videoFile?: File; name?: string };
 type Props = {
   pageId: string; width: number; height: number; scale: number;
   tool: OverlayTool | null; color: string; lineWidth: number;
@@ -23,6 +24,7 @@ type Props = {
   fontCommand: FontCommand | null; onFontEditChange: (selection: FontSelection | null) => void;
   image: PendingImage | null;
   objects: OverlayObject[]; selectedId: string | null;
+  showVideoPlayers?: boolean;
   onAdd: (object: OverlayObject) => void;
   onUpdate: (object: OverlayObject) => void;
   onDelete: (id: string) => void;
@@ -35,7 +37,7 @@ const clamp = (value: number) => Math.max(0, Math.min(1, value));
 type TextEdit = { object: OverlayObject; isNew: boolean; value: string };
 
 export default function OverlayLayer({ pageId, width, height, scale, tool, drawActive, color, lineWidth, drawStyle, fontSize, fontChoice, textAppearance, viewport, fonts, fontCommand, onFontEditChange, image,
-  objects, selectedId, onAdd, onUpdate, onDelete, onSelect }: Props) {
+  objects, selectedId, onAdd, onUpdate, onDelete, onSelect, showVideoPlayers = true }: Props) {
   const layer = useRef<SVGSVGElement>(null);
   const gesture = useRef<Gesture | null>(null);
   const [preview, setPreviewState] = useState<OverlayObject | null>(null);
@@ -146,8 +148,8 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
     if (tool === 'image') {
       if (!image) return;
       event.preventDefault();
-      onAdd({ id: crypto.randomUUID(), pageId, kind: 'image', ...imagePlacement(start, image.aspect, width, height),
-        color, lineWidth, image: image.dataUrl });
+      onAdd({ id: crypto.randomUUID(), pageId, kind: image.videoId ? 'video' : 'image', ...imagePlacement(start, image.aspect, width, height),
+        color, lineWidth, image: image.dataUrl, videoId: image.videoId, name: image.name });
       setImageCursor(null);
       return;
     }
@@ -298,10 +300,12 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
         width={box.width * width} height={box.height * height} opacity="0.5" pointerEvents="none" />;
     })()}
   </svg>
+    {showVideoPlayers && objects.filter(object => object.kind === 'video' && !object.hidden).map(object =>
+      <VideoPlayer key={object.id} object={preview?.id === object.id ? preview : object} width={width} height={height} />)}
     {imageMenu && createPortal(<div className="image-context-menu" role="menu" aria-label="Object actions"
       style={{ left: imageMenu.x, top: imageMenu.y }} onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => { if (event.key === 'Escape' || event.key === 'Tab') { setImageMenu(null); if (event.key === 'Escape') event.preventDefault(); } }}>
-      <button role="menuitem" autoFocus onClick={() => { onDelete(imageMenu.id); setImageMenu(null); }}><Trash2 size={15} />Delete {objects.find((object) => object.id === imageMenu.id)?.kind === 'image' ? 'image' : 'object'}</button>
+      <button role="menuitem" autoFocus onClick={() => { onDelete(imageMenu.id); setImageMenu(null); }}><Trash2 size={15} />Delete {({ image: 'image', video: 'video' } as Record<string, string>)[objects.find(object => object.id === imageMenu.id)?.kind || ''] || 'object'}</button>
     </div>, document.body)}
     {editing && (() => {
       const object = editing.object, size = textSize(object);

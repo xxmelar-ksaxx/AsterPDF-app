@@ -3,7 +3,7 @@ import {
   ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
   FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X, Presentation,
   ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical, TriangleAlert,
-  Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus, PanelRight,
+  Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus, Video, PanelRight,
   Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify, Eye, EyeOff, Highlighter, Link2, TextSelect
 } from 'lucide-react';
 import * as pdfjs from 'pdfjs-dist';
@@ -19,6 +19,8 @@ import PdfPage, { pageScale, type PageSize, type PendingPoint, type Zoom } from 
 import PresentationView from './components/PresentationView';
 import PageThumbnail from './components/PageThumbnail';
 import { convertToPdf } from './import/convert';
+import { importVideo } from './import/video';
+import { clearVideos, storeVideo } from './pdf/video-assets';
 import { appendPdfs, composePagePlan, compressPdf, embedSignatures, type CompressionLevel, type PageEdit, type SignatureDraw } from './pdf/edit';
 import { changePagePlan, initialPagePlan, remapPageSelection, type PlannedPage } from './pdf/page-plan';
 import { cropSignature, importSignature, loadSignatures, storeSignatures, type PlacedSignature, type SavedSignature, type SignatureStroke } from './signatures/library';
@@ -290,6 +292,10 @@ export default function App() {
   const signatureStrokesRef = useRef<SignatureStroke[]>([]);
   const signatureImportRef = useRef<HTMLInputElement>(null);
   const overlayImageRef = useRef<HTMLInputElement>(null);
+  const overlayVideoRef = useRef<HTMLInputElement>(null);
+  const [videoImporting, setVideoImporting] = useState(false);
+  const videoImportSource = useRef(source?.path); videoImportSource.current = source?.path;
+  useEffect(() => () => clearVideos(), []);
   const savedBytesRef = useRef<Uint8Array | null>(null);
   const savedFileBytesRef = useRef<Uint8Array | null>(null);
   const savingCommentIdsRef = useRef(new Set<string>());
@@ -616,6 +622,7 @@ export default function App() {
     setBusy(true);
     try {
       const imported = await convertToPdf(opened);
+      clearVideos();
       const editable = opened.kind === 'pdf' ? await readOverlayPackage(imported) : null;
       // Editable objects replace the flattened PDF text in our preview. Resolve
       // their fonts before showing them, even when opening in Comments mode.
@@ -666,6 +673,7 @@ export default function App() {
       return true;
     } catch (cause) {
       setSource(null);
+      clearVideos();
       setDrafts([]);
       setCommentChanges([]); setEditingComment(null);
       setEditingDirty(false);
@@ -1279,8 +1287,12 @@ export default function App() {
       setLinkSelection(null); setSelectingLinks(false); window.getSelection()?.removeAllRanges();
     } finally { setBusy(false); window.aster.setSaving(false); }
   };
-  const addOverlay = (object: OverlayObject) => { commitOverlays([...overlays, { ...object, editingTool: object.editingTool ?? (activeTool === 'draw' ? 'draw' : 'edit') }]); setSelectedOverlayId(object.id);
-    if (object.kind === 'image' || ['rectangle', 'ellipse', 'line'].includes(object.kind)) { setOverlayTool('select'); setOverlayImage(null); } };
+  const addOverlay = (object: OverlayObject) => {
+    // Retain binary video data only once it is placed. Cancelled imports can
+    // be collected without adding large files to undo snapshots.
+    if (object.videoId && overlayImage?.videoFile) storeVideo(object.videoId, overlayImage.videoFile);
+    commitOverlays([...overlays, { ...object, editingTool: object.editingTool ?? (activeTool === 'draw' ? 'draw' : 'edit') }]); setSelectedOverlayId(object.id);
+    if (object.kind === 'image' || object.kind === 'video' || ['rectangle', 'ellipse', 'line'].includes(object.kind)) { setOverlayTool('select'); setOverlayImage(null); } };
   const updateOverlay = (object: OverlayObject) => {
     const previous = overlays.find((item) => item.id === object.id);
     if (previous && isDrawingObject(previous) && activeTool !== 'draw') return;
@@ -1303,7 +1315,7 @@ export default function App() {
         setOverlayFontSize(textSize(selected)); setOverlayFontChoice(selected.fontChoice || 'helvetica');
         setTextAppearance({ bold: selected.bold, italic: selected.italic, underline: selected.underline, strikeThrough: selected.strikeThrough, textAlign: selected.textAlign, textSizing: selected.textSizing });
       }
-      if (selected.kind !== 'text' && selected.kind !== 'image') setDrawDefaults({ color: selected.color, lineWidth: selected.lineWidth,
+      if (selected.kind !== 'text' && selected.kind !== 'image' && selected.kind !== 'video') setDrawDefaults({ color: selected.color, lineWidth: selected.lineWidth,
         fill: selected.fill ?? null, fillHidden: selected.fillHidden ?? false, opacity: selected.opacity ?? 1, radius: selected.radius ?? 0 });
     }
   };
@@ -1395,6 +1407,18 @@ export default function App() {
     if (fontEditing && !fontEditing.overlayId) setColorCommand((previous) => ({ pageId: fontEditing.pageId, index: fontEditing.index, color: value, sequence: (previous?.sequence || 0) + 1 }));
     else if (rememberColor && selected && !fontEditing?.overlayId && selected.color !== value) updateOverlay({ ...selected, color: value });
   };
+  const importOverlayVideo = async (file: File | undefined) => {
+    if (!file || videoImporting) return;
+    setVideoImporting(true);
+    const path = source?.path;
+    try {
+      const image = await importVideo(file);
+      if (videoImportSource.current !== path || openingRef.current || returningHomeRef.current) return;
+      setOverlayImage(image); setSelectedOverlayId(null); setOverlayTool('image'); setActiveTool('edit');
+    } catch (cause) { setError('Could not insert video: ' + messageOf(cause)); }
+    finally { setVideoImporting(false); }
+  };
+
   const importOverlayImage = async (file: File | undefined) => {
     if (!file) return;
     try {
@@ -1823,6 +1847,7 @@ export default function App() {
     presentationStarting.current = true;
     try {
       await finishInlineEdits();
+      globalThis.document.querySelectorAll('video').forEach(video => video.pause());
       presentationScroll.current = viewerRef.current?.scrollTop ?? 0;
       setPresenting(true);
       await window.aster.setPresentation(true);
@@ -1972,8 +1997,9 @@ export default function App() {
               <button disabled={!canFormatText} aria-label="Auto-size text container" title="Auto-size text container · Drag its handles for a fixed size"
                 aria-pressed={activeTextAppearance.textSizing !== 'fixed'} onClick={() => changeTextAppearance({ textSizing: 'auto' })}><Maximize2 size={16} /></button>
             </div>
-            <button className={overlayTool === 'image' ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label="Add image overlay"
-              title={overlayTool === 'image' ? 'Click on a page to place the image. Esc to cancel.' : 'Add an image'}><ImagePlus size={17} /></button>
+            <button className={overlayTool === 'image' && !overlayImage?.videoId ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label="Add image overlay"
+              title={overlayTool === 'image' && !overlayImage?.videoId ? 'Click on a page to place the image. Esc to cancel.' : 'Add an image'}><ImagePlus size={17} /></button>
+            <button className={overlayImage?.videoId ? 'active' : ''} disabled={videoImporting} onClick={() => overlayVideoRef.current?.click()} aria-label="Add video" title={videoImporting ? 'Preparing video…' : overlayImage?.videoId ? 'Click on a page to place the video. Esc to cancel.' : 'Add MP4 video'}><Video size={17} /></button>
             <span className="overlay-divider" />
             <button onClick={undoEdit} disabled={!historyPast.length} aria-label="Undo edit"><Undo2 size={17} /></button>
             <button onClick={redoEdit} disabled={!historyFuture.length} aria-label="Redo edit"><Redo2 size={17} /></button>
@@ -1997,6 +2023,7 @@ export default function App() {
             : <button className={sidebarTab === 'draw' && !sidebarCollapsed ? 'active' : ''} title="Properties and layers" aria-label="Toggle drawing panel"
               aria-expanded={sidebarTab === 'draw' && !sidebarCollapsed} onClick={() => { setSidebarTab('draw'); setSidebarCollapsed(sidebarTab === 'draw' ? !sidebarCollapsed : false); }}><PanelRight size={17} /></button>}
           {selectedOverlay && <button disabled={selectedOverlay.locked} onClick={() => deleteOverlay(selectedOverlay.id)} title="Delete selected object" aria-label="Delete selected object"><Trash2 size={17} /></button>}
+          <input ref={overlayVideoRef} type="file" hidden accept=".mp4,video/mp4" onChange={event => { void importOverlayVideo(event.target.files?.[0]); event.target.value = ''; }} />
           <input ref={overlayImageRef} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={(event) => { void importOverlayImage(event.target.files?.[0]); event.target.value = ''; }} />
         </div>}
         </div>
