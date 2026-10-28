@@ -62,12 +62,39 @@ async function main(){
   assert.equal(await laser.isVisible(),true,'Holding L must not toggle repeatedly');
   await doc.mouse.click(330,270);
   assert.equal(await presentation.locator('.presentation-slide').getAttribute('data-page'),'2','Pointing must not advance the slide');
+  const ink=presentation.locator('.presentation-ink path');
+  assert.equal(await ink.count(),0,'A plain laser click does not leave a dot');
+  const draw=async(x,y)=>{await doc.mouse.move(x,y);await doc.mouse.down();await doc.mouse.move(x+80,y+35,{steps:12});await doc.mouse.move(x+140,y-10,{steps:12});await doc.mouse.up();};
+  await draw(330,270);await draw(360,360);
+  assert.equal(await ink.count(),2,'Each left drag adds a separate persistent stroke');
+  assert.ok((await ink.first().getAttribute('d')).includes(' L '),'Dragging creates a continuous path');
+  await doc.mouse.move(520,430);
+  assert.equal(await ink.count(),2,'Moving without holding does not draw');
+  await doc.keyboard.press('l');assert.equal(await ink.count(),2,'Turning the laser off retains the temporary drawings');
+  await doc.keyboard.press('l');
+  await doc.mouse.click(520,430,{button:'right'});
+  assert.equal(await ink.count(),0,'Right-click clears every stroke');
+  assert.equal(await presentation.locator('.presentation-slide').getAttribute('data-page'),'2','Clearing ink does not navigate');
+  await draw(330,270);
+  const pageTwoInk=await ink.first().getAttribute('d');
   assert.equal(await doc.evaluate(()=>window.presentationCanvas===document.querySelector('.presentation-slide canvas')&&window.presentationCanvas.toDataURL()===window.presentationPixels),true,'The laser must not change or rerender PDF pixels');
   await doc.keyboard.press('ArrowLeft');await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='1');
+  assert.equal(await ink.count(),0,'A different page starts with its own empty ink layer');
+  await draw(400,310);
+  const pageOneInk=await ink.first().getAttribute('d');
+  await doc.mouse.wheel(0,600);await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='2');
+  assert.equal(await ink.count(),1,'Scrolling back restores the page drawings');
+  assert.equal(await ink.first().getAttribute('d'),pageTwoInk,'Restored strokes retain their exact page coordinates');
+  await doc.mouse.click(520,430,{button:'right'});
+  assert.equal(await ink.count(),0,'Right-click clears only the visible page');
+  await doc.keyboard.press('ArrowLeft');await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='1');
+  assert.equal(await ink.count(),1,'Clearing another page leaves this page untouched');
+  assert.equal(await ink.first().getAttribute('d'),pageOneInk);
   assert.equal(await laser.isVisible(),true,'Laser stays enabled when navigating');
   await doc.keyboard.press('Shift+l');
   await laser.waitFor({state:'hidden'});
   await doc.keyboard.press('Space');await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='2');
+  assert.equal(await ink.count(),0,'Cleared strokes do not return on the next visit');
   await doc.keyboard.press('Home');await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='1');
   await doc.keyboard.press('End');await doc.waitForFunction(()=>document.querySelector('.presentation-slide').dataset.page==='2');
   await doc.keyboard.press('Escape');await presentation.waitFor({state:'hidden'});
@@ -79,7 +106,7 @@ async function main(){
   await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setFullScreen(false));
   await presentation.waitFor({state:'hidden'});
   assert.deepEqual(errors,[]);assert.deepEqual(await fs.readFile(file),original,'Presenting must not write the PDF');
-  console.log('Presentation passed: laser toggle/tracking, repeat protection, safe pointing, unchanged slide pixels, navigation, fullscreen exit, scroll restored, file unchanged.');
+  console.log('Presentation passed: per-page ink retained across scrolling, clearing only the current page, laser controls, unchanged slide pixels, navigation, fullscreen exit, scroll restored, file unchanged.');
  }finally{if(app){await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().forEach(w=>w.destroy())).catch(()=>{});await app.close().catch(()=>{});}await server.close();await fs.rm(file,{force:true});}
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

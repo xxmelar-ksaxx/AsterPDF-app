@@ -6,6 +6,7 @@ import type { PlacedSignature } from '../signatures/library';
 import type { InstalledFont } from './FontPicker';
 import OverlayLayer from './OverlayLayer';
 import VideoPlayer from './VideoPlayer';
+import PresentationInk from './PresentationInk';
 
 const noop = () => {};
 export default function PresentationView({ pdf, pages, initialPage, objects, signatures, fonts, onExit }: {
@@ -21,6 +22,7 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
   const [cursorVisible, setCursorVisible] = useState(false);
   const [laserEnabled, setLaserEnabled] = useState(false);
   const laser = useRef<HTMLSpanElement>(null);
+  const pageInk = useRef(new Map<string, string[]>());
   const cursorTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastWheel = useRef(0);
   const advance = (step: number) => setIndex(value => Math.max(0, Math.min(pages.length - 1, value + step)));
@@ -89,6 +91,11 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
     return () => { cancelled = true; render?.cancel(); };
   }, [pdf, pages, index, bounds.width, bounds.height]);
 
+  // Store strokes in page coordinates so revisiting or resizing a slide keeps
+  // them anchored to the document, including marks in the surrounding margins.
+  const inkScale = slide ? slide.viewport.width / 1000 : 1;
+  const inkViewBox = slide ? `${-(bounds.width - slide.viewport.width) / 2 / inkScale} ${-(bounds.height - slide.viewport.height) / 2 / inkScale} ${bounds.width / inkScale} ${bounds.height / inkScale}` : '';
+  if (slide && !pageInk.current.has(slide.page.id)) pageInk.current.set(slide.page.id, []);
   return <dialog ref={dialog} className={`presentation-view${cursorVisible ? ' cursor-visible' : ''}${laserEnabled ? ' laser-enabled' : ''}`} aria-label="PDF presentation" tabIndex={-1}
     onCancel={event => { event.preventDefault(); onExit(); }}
     onClick={() => { if (!laserEnabled) advance(1); }} onContextMenu={event => { event.preventDefault(); if (!laserEnabled) advance(-1); }}
@@ -119,8 +126,9 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
       {slide && objects.filter(object => object.kind === 'video' && !object.hidden && object.pageId === slide.page.id).map(object =>
         <VideoPlayer key={`${slide.page.id}-${object.id}`} object={object} width={slide.viewport.width} height={slide.viewport.height} />)}
     </div>
+    {slide && <PresentationInk key={slide.page.id} enabled={laserEnabled} paths={pageInk.current.get(slide.page.id)!} viewBox={inkViewBox} />}
     <span ref={laser} className="presentation-laser" hidden={!laserEnabled} aria-hidden="true" />
-    <span className="presentation-announcement" aria-live="polite">Page {slide ? slide.index + 1 : index + 1} of {pages.length}. Use arrow keys to navigate. Laser pointer {laserEnabled ? 'on' : 'off'}; press L to toggle. Escape exits presentation.</span>
+    <span className="presentation-announcement" aria-live="polite">Page {slide ? slide.index + 1 : index + 1} of {pages.length}. Use arrow keys to navigate. Laser pointer {laserEnabled ? 'on' : 'off'}; press L to toggle. Hold the left mouse button to draw; right-click to clear this page's drawings. Drawings remain on their pages until cleared or the presentation ends. Escape exits presentation.</span>
     {error && <p className="presentation-error" role="alert">{error}</p>}
   </dialog>;
 }
