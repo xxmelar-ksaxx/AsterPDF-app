@@ -8,7 +8,7 @@ import OriginalTextEditor, { resolveTextFont } from './OriginalTextEditor';
 import type { PageViewport } from 'pdfjs-dist';
 import type { FontCommand, FontSelection, InstalledFont } from './FontPicker';
 import { imagePlacement, resizeImage, type ResizeHandle } from '../pdf/image-geometry';
-import { constrainDraw, shapePath } from '../pdf/draw-geometry';
+import { constrainDraw, shapePath, cornerRadii, type CornerRadii } from '../pdf/draw-geometry';
 import { textOverlayLayout, textOverlaySize } from './text-overlay-size';
 import VideoPlayer from './VideoPlayer';
 
@@ -18,7 +18,7 @@ type Props = {
   pageId: string; width: number; height: number; scale: number;
   tool: OverlayTool | null; color: string; lineWidth: number;
   drawActive: boolean;
-  drawStyle: Pick<OverlayObject, 'fill' | 'fillHidden' | 'opacity' | 'radius'>;
+  drawStyle: Pick<OverlayObject, 'fill' | 'fillHidden' | 'opacity' | 'radius' | 'radiusCorners'>;
   fontSize: number; fontChoice: OverlayObject['fontChoice']; viewport: PageViewport; fonts: InstalledFont[];
   textAppearance: TextAppearance;
   fontCommand: FontCommand | null; onFontEditChange: (selection: FontSelection | null) => void;
@@ -31,6 +31,7 @@ type Props = {
   onSelect: (id: string | null) => void;
 };
 type Gesture = { kind: 'create'; start: { x: number; y: number }; points: { x: number; y: number }[] }
+  | { kind: 'radius'; start: { x: number; y: number }; original: OverlayObject; corner: number }
   | { kind: 'move' | 'resize'; start: { x: number; y: number }; original: OverlayObject; handle?: ResizeHandle };
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 
@@ -192,6 +193,15 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
       const { original, start } = active;
       const dx = current.x - start.x; const dy = current.y - start.y;
       if (Math.hypot(dx * width, dy * height) < 2 && !previewRef.current) return;
+      if (active.kind === 'radius') {
+        const radii = cornerRadii(original.width * width / scale, original.height * height / scale, original.radius, original.radiusCorners);
+        const right = active.corner === 1 || active.corner === 2, bottom = active.corner >= 2;
+        const delta = ((right ? -dx : dx) * width + (bottom ? -dy : dy) * height) / (2 * scale);
+        const value = Math.round(Math.max(0, Math.min(Math.min(original.width * width, original.height * height) / scale, radii[active.corner] + delta)) * 10) / 10;
+        radii[active.corner] = value;
+        setPreview({ ...original, ...(event.shiftKey ? { radius: value, radiusCorners: undefined } : { radiusCorners: radii }) });
+        return;
+      }
       setPreview(active.kind === 'move'
         ? { ...original, x: original.x + dx, y: original.y + dy }
         : { ...original, ...resizeImage(original, active.handle || 'se', dx, dy, event.shiftKey), ...(original.kind === 'text' ? { textSizing: 'fixed' as const } : {}) });
@@ -230,7 +240,7 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
     const w = object.width * width; const h = object.height * height;
     const sw = Math.max(0, object.lineWidth * scale);
     const common = { stroke: object.color, strokeWidth: sw, fill: 'none' };
-    if (object.kind === 'rectangle' || object.kind === 'ellipse') return <path d={shapePath(object.kind, w, h, (object.radius ?? 0) * scale)}
+    if (object.kind === 'rectangle' || object.kind === 'ellipse') return <path d={shapePath(object.kind, w, h, (object.radius ?? 0) * scale, object.radiusCorners?.map(value => value * scale) as CornerRadii | undefined)}
       transform={`translate(${x} ${y})`} {...common} fill={object.fillHidden ? 'none' : object.fill || 'none'} />;
     if (object.kind === 'line') return <line x1={x + (object.points?.[0]?.x || 0) * w} y1={y + (object.points?.[0]?.y || 0) * h}
       x2={x + (object.points?.[1]?.x ?? 1) * w} y2={y + (object.points?.[1]?.y ?? 1) * h} {...common} />;
@@ -291,6 +301,23 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
             y={(shown.y + (handle.includes('s') ? shown.height : handle.includes('n') ? 0 : shown.height / 2)) * height - 5}
             width="10" height="10" rx="2" onPointerDown={(event) => beginObject(event, object, 'resize', handle)} />)}
         </g>}
+        {drawActive && !object.locked && !readOnly && tool === 'select' && selectedId === object.id && object.kind === 'rectangle' &&
+          cornerRadii(shown.width * width, shown.height * height, (shown.radius ?? 0) * scale, shown.radiusCorners?.map(value => value * scale) as CornerRadii | undefined).map((radius, corner) => {
+            const inset = Math.min(12 + radius * (1 - Math.SQRT1_2), shown.width * width / 3, shown.height * height / 3);
+            const right = corner === 1 || corner === 2, bottom = corner >= 2;
+            return <g key={corner} className="draw-radius-handle" data-radius-corner={['tl', 'tr', 'br', 'bl'][corner]}
+              transform={`translate(${(shown.x + (right ? shown.width : 0)) * width + (right ? -inset : inset)} ${(shown.y + (bottom ? shown.height : 0)) * height + (bottom ? -inset : inset)})`}
+              onPointerDown={event => {
+                event.stopPropagation(); if (event.button !== 0) return;
+                event.preventDefault(); window.getSelection()?.removeAllRanges();
+                if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+                gesture.current = { kind: 'radius', start: point(event, true), original: object, corner };
+                layer.current?.setPointerCapture(event.pointerId);
+              }}>
+              <title>{`Drag to change ${['top-left', 'top-right', 'bottom-right', 'bottom-left'][corner]} radius. Hold Shift for all corners.`}</title>
+              <circle r="9" fill="transparent" /><circle className="draw-radius-dot" r="4" />
+            </g>;
+          })}
       </g>;
     })}
     {preview?.id === 'preview' && <g opacity={preview.opacity ?? 1}>{render(preview)}</g>}

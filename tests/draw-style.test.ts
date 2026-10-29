@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { PDFDocument, degrees } from 'pdf-lib';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { constrainDraw, shapePath } from '../src/pdf/draw-geometry';
+import { constrainDraw, shapePath, cornerRadii } from '../src/pdf/draw-geometry';
 import { attachOverlayPackage, embedOverlays, readOverlayPackage, type OverlayObject } from '../src/pdf/overlays';
 const { createCanvas } = createRequire(import.meta.url)('@napi-rs/canvas');
 
@@ -17,6 +17,12 @@ test('Shift constraints use physical page dimensions and line angles snap in all
     assert.ok(Math.abs(angle - Math.round(angle)) < 1e-8);
   }
   assert.equal(shapePath('rectangle', 80, 40, 999), shapePath('rectangle', 80, 40, 20));
+});
+
+test('independent radii fit adjacent edges without overlapping', () => {
+  assert.deepEqual(cornerRadii(100, 80, 10, [0, 20, 30, 40]), [0, 20, 30, 40]);
+  assert.deepEqual(cornerRadii(100, 80, 10, [80, 80, 0, 0]), [50, 50, 0, 0]);
+  assert.equal(shapePath('rectangle', 100, 80, 15), shapePath('rectangle', 100, 80, 0, [15, 15, 15, 15]));
 });
 
 test('rounded fills, opacity, hidden layers and stacking export correctly on normal and rotated pages', async () => {
@@ -52,5 +58,18 @@ test('rounded fills, opacity, hidden layers and stacking export correctly on nor
     assert.deepEqual(stacked(viewport.width * .4, viewport.height * .35), [0, 0, 255, 255]);
     const restored = await readOverlayPackage(await attachOverlayPackage(bytes, base, [shape, hidden]));
     assert.deepEqual(restored?.objects, [shape, hidden]);
+    for (let corner = 0; corner < 4; corner++) {
+      const radiusCorners: [number, number, number, number] = [0, 0, 0, 0]; radiusCorners[corner] = 25;
+      const independent = { ...shape, radiusCorners, opacity: 1 };
+      const exported = await embedOverlays(base, [independent], pages);
+      const pixels = await render(exported);
+      for (let i = 0; i < 4; i++) {
+        const x = viewport.width * (i === 1 || i === 2 ? .6 : .2) + (i === 1 || i === 2 ? -2 : 2);
+        const y = viewport.height * (i >= 2 ? .5 : .2) + (i >= 2 ? -2 : 2);
+        assert.deepEqual(pixels(x, y), i === corner ? [255, 255, 255, 255] : [255, 0, 0, 255], `Corner ${i}, rounded ${corner}, rotation ${rotation}`);
+      }
+      const reopened = await readOverlayPackage(await attachOverlayPackage(exported, base, [independent]));
+      assert.deepEqual(reopened?.objects, [independent]);
+    }
   }
 });

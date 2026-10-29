@@ -2,12 +2,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, Blend, Circle, Copy, Eye, EyeOff, Image, Layers, Lock, Minus, Pencil, Square, Trash2, Unlock, X, AlignHorizontalJustifyCenter, AlignVerticalJustifyCenter } from 'lucide-react';
 import type { OverlayObject } from '../pdf/overlays';
 import ColorPicker from './ColorPicker';
+import type { CornerRadii } from '../pdf/draw-geometry';
 
-export type DrawStyle = Pick<OverlayObject, 'color' | 'lineWidth' | 'fill' | 'fillHidden' | 'radius' | 'opacity'>;
+export type DrawStyle = Pick<OverlayObject, 'color' | 'lineWidth' | 'fill' | 'fillHidden' | 'radius' | 'radiusCorners' | 'opacity'>;
 export const layerName = (object: OverlayObject) => object.name || ({ rectangle: 'Rectangle', ellipse: 'Ellipse', line: 'Line', pen: 'Pen stroke', image: 'Image', video: 'Video', text: 'Text' }[object.kind]);
 
-export function NumberField({ label, value, min = -100000, max = 100000, icon, unit, onChange, onPreview }: {
-  label: string; value: number; min?: number; max?: number; icon?: ReactNode; unit?: string;
+export function NumberField({ label, value, mixed = false, min = -100000, max = 100000, icon, unit, onChange, onPreview }: {
+  label: string; value: number; mixed?: boolean; min?: number; max?: number; icon?: ReactNode; unit?: string;
   onChange: (value: number) => void; onPreview?: (value: number) => void;
 }) {
   const typing = useRef(false);
@@ -15,8 +16,8 @@ export function NumberField({ label, value, min = -100000, max = 100000, icon, u
   const [scrubbing, setScrubbing] = useState(false);
   const bound = (next: number) => Math.max(min, Math.min(max, next));
   const format = (next: number) => String(Math.round(next * 10) / 10);
-  const [draft, setDraft] = useState(String(Math.round(value * 10) / 10));
-  useEffect(() => { if (!typing.current && !drag.current) setDraft(format(value)); }, [value]);
+  const [draft, setDraft] = useState(mixed ? '' : format(value));
+  useEffect(() => { if (!typing.current && !drag.current) setDraft(mixed ? '' : format(value)); }, [value, mixed]);
   useEffect(() => {
     if (!scrubbing) return;
     document.body.classList.add('draw-value-scrubbing');
@@ -25,8 +26,8 @@ export function NumberField({ label, value, min = -100000, max = 100000, icon, u
   const commit = () => {
     typing.current = false;
     const next = Number(draft);
-    if (draft.trim() && Number.isFinite(next)) { const bounded = bound(next); if (bounded !== value) onChange(bounded); setDraft(String(bounded)); }
-    else setDraft(format(value));
+    if (draft.trim() && Number.isFinite(next)) { const bounded = bound(next); if (mixed || bounded !== value) onChange(bounded); setDraft(String(bounded)); }
+    else setDraft(mixed ? '' : format(value));
   };
   const finishDrag = (cancel = false) => {
     const current = drag.current;
@@ -63,17 +64,17 @@ export function NumberField({ label, value, min = -100000, max = 100000, icon, u
           event.preventDefault(); event.stopPropagation();
           onChange(bound(value + (event.key === 'ArrowRight' ? 1 : -1) * (event.shiftKey && unit !== '%' ? .1 : 1)));
         }
-      }}>{icon}</button> : <span>{label}</span>}<input type="number" aria-label={label} value={draft} min={min} max={max} step="1"
+      }}>{icon}</button> : <span>{label}</span>}<input type="number" aria-label={label} value={draft} placeholder={mixed ? 'Mixed' : undefined} min={min} max={max} step="1"
     onFocus={() => { typing.current = true; }} onChange={(event) => {
       const text = event.target.value;
       setDraft(text);
       if (text.trim() && Number.isFinite(Number(text))) {
         const next = bound(Number(text));
-        if (next !== value) onChange(next);
+        if (mixed || next !== value) onChange(next);
       }
     }} onBlur={commit} onKeyDown={(event) => {
       if (event.key === 'Enter') event.currentTarget.blur();
-      if (event.key === 'Escape') { setDraft(String(Math.round(value * 10) / 10)); event.stopPropagation(); }
+      if (event.key === 'Escape') { setDraft(mixed ? '' : format(value)); event.stopPropagation(); }
     }} />{unit && <span className="draw-number-unit" aria-hidden="true">{unit}</span>}</div>;
 }
 
@@ -89,6 +90,13 @@ type Props = {
 export default function DrawInspector({ objects, selected, page, pageWidth, pageHeight, style, recent, busy,
   onStyle, onUpdate, onSelect, onDelete, onDuplicate, onOrder, onClose }: Props) {
   const dragId = useRef<string | null>(null);
+  const [cornersExpanded, setCornersExpanded] = useState(false);
+  const radii: CornerRadii = style.radiusCorners ?? [style.radius ?? 0, style.radius ?? 0, style.radius ?? 0, style.radius ?? 0];
+  const radiusIcon = (rotation = 0) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ transform: `rotate(${rotation}deg)` }}><path d="M5 20V12a7 7 0 0 1 7-7h8" /></svg>;
+  const setCorner = (index: number, value: number, commit = true) => {
+    const next = [...radii] as CornerRadii; next[index] = value;
+    onStyle({ radiusCorners: next }, commit);
+  };
   const paintMemory = useRef(new Map<string, { lineWidth?: number }>());
   const fillColor = style.fill ?? '#e7f0d9';
   const fillVisible = Boolean(style.fill) && !style.fillHidden;
@@ -146,10 +154,19 @@ export default function DrawInspector({ objects, selected, page, pageWidth, page
         <div className="draw-appearance-grid">
           {colors && <NumberField label="Stroke width" icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 5h16" /><path d="M4 12h16" strokeWidth="2" /><path d="M4 19h16" strokeWidth="3" /></svg>}
             value={style.lineWidth} min={0} max={100} onChange={(value) => onStyle({ lineWidth: value })} onPreview={(value) => onStyle({ lineWidth: value }, false)} />}
-          {(!selected || selected.kind === 'rectangle') && <NumberField label="Corner radius" icon={<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M5 20V12a7 7 0 0 1 7-7h8" /></svg>}
-            value={style.radius ?? 0} min={0} max={1000} onChange={(value) => onStyle({ radius: value })} onPreview={(value) => onStyle({ radius: value }, false)} />}
+          {(!selected || selected.kind === 'rectangle') && <div className="draw-radius-control"><NumberField label="Corner radius" icon={radiusIcon()}
+            value={radii[0]} mixed={radii.some(value => value !== radii[0])} min={0} max={1000}
+            onChange={(value) => onStyle({ radius: value, radiusCorners: undefined })} onPreview={(value) => onStyle({ radius: value, radiusCorners: undefined }, false)} />
+            <button type="button" className="draw-radius-expand" aria-label="Individual corner radii" title="Individual corner radii" aria-expanded={cornersExpanded} onClick={() => setCornersExpanded(!cornersExpanded)}>
+              <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" style={{ transform: cornersExpanded ? 'rotate(180deg)' : undefined }}><path d="m3 4 3 3 3-3" /></svg>
+            </button></div>}
           <NumberField label="Opacity" icon={<Blend size={14} />} unit="%" value={Math.round((style.opacity ?? 1) * 100)} min={0} max={100} onChange={(value) => onStyle({ opacity: value / 100 })} onPreview={(value) => onStyle({ opacity: value / 100 }, false)} />
         </div>
+        {cornersExpanded && (!selected || selected.kind === 'rectangle') && <div className="draw-corner-grid" aria-label="Individual corner radii">
+          {[0, 1, 3, 2].map(index => <NumberField key={index} label={`${['Top-left', 'Top-right', 'Bottom-right', 'Bottom-left'][index]} radius`}
+            icon={radiusIcon(index * 90)} value={radii[index]} min={0} max={1000}
+            onChange={value => setCorner(index, value)} onPreview={value => setCorner(index, value, false)} />)}
+        </div>}
         {selected?.locked && <p className="draw-lock-hint">Unlock this layer to edit its properties.</p>}
       </fieldset>
       <section className="draw-layers" aria-label="Drawing layers">

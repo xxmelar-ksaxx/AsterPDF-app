@@ -85,7 +85,7 @@ type Props = {
   drawActive: boolean;
   overlayColor: string;
   overlayLineWidth: number;
-  drawStyle: Pick<OverlayObject, 'fill' | 'fillHidden' | 'opacity' | 'radius'>;
+  drawStyle: Pick<OverlayObject, 'fill' | 'fillHidden' | 'opacity' | 'radius' | 'radiusCorners'>;
   overlayFontSize: number;
   textAppearance: TextAppearance;
   overlayFontChoice: OverlayObject['fontChoice'];

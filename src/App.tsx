@@ -239,7 +239,7 @@ export default function App() {
   const drawSelection = selectedOverlay?.kind !== 'text' ? selectedOverlay : undefined;
   const currentDrawStyle = drawSelection ? { ...drawDefaults, ...drawSelection, fill: drawSelection.fill ?? null,
     fillHidden: drawSelection.fillHidden ?? false,
-    radius: drawSelection.radius ?? 0, opacity: drawSelection.opacity ?? 1, ...(drawPreview?.id === drawSelection.id ? drawPreview.patch : {}) } : drawDefaults;
+    radius: drawSelection.radius ?? 0, radiusCorners: drawSelection.radiusCorners, opacity: drawSelection.opacity ?? 1, ...(drawPreview?.id === drawSelection.id ? drawPreview.patch : {}) } : drawDefaults;
   const [overlayFontSize, setOverlayFontSize] = useState(16);
   const [overlayFontChoice, setOverlayFontChoice] = useState<OverlayObject['fontChoice']>('noto-sans');
   const [textAppearance, setTextAppearance] = useState<TextAppearance>({});
@@ -1344,7 +1344,7 @@ export default function App() {
         setTextAppearance({ bold: selected.bold, italic: selected.italic, underline: selected.underline, strikeThrough: selected.strikeThrough, textAlign: selected.textAlign, textSizing: selected.textSizing });
       }
       if (selected.kind !== 'text' && selected.kind !== 'image' && selected.kind !== 'video') setDrawDefaults({ color: selected.color, lineWidth: selected.lineWidth,
-        fill: selected.fill ?? null, fillHidden: selected.fillHidden ?? false, opacity: selected.opacity ?? 1, radius: selected.radius ?? 0 });
+        fill: selected.fill ?? null, fillHidden: selected.fillHidden ?? false, opacity: selected.opacity ?? 1, radius: selected.radius ?? 0, radiusCorners: selected.radiusCorners });
     }
   };
   const chooseDrawingTool = (tool: OverlayTool) => { setOverlayTool(tool); if (tool !== 'select') setSelectedOverlayId(null); };

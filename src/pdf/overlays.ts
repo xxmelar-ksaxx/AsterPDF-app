@@ -2,7 +2,7 @@ import { concatTransformationMatrix, decodePDFRawStream, degrees, LineCapStyle, 
   pushGraphicsState, popGraphicsState, setLineWidth, setStrokingColor, setTextRenderingMode, TextRenderingMode } from 'pdf-lib';
 import type { PageViewport } from 'pdfjs-dist';
 import fontkit from '@pdf-lib/fontkit';
-import { shapePath } from './draw-geometry';
+import { shapePath, type CornerRadii } from './draw-geometry';
 import { restoreEditableAnnotations } from './editable-annotations';
 import { pruneUnusedObjects } from './prune-unused';
 import { addVideoAnnotation, restoreVideoAssets, writeVideoAssets } from './video-assets';
@@ -21,6 +21,7 @@ export type OverlayObject = TextAppearance & {
   fillHidden?: boolean;
   opacity?: number;
   radius?: number;
+  radiusCorners?: CornerRadii;
   name?: string;
   hidden?: boolean;
   locked?: boolean;
@@ -65,6 +66,7 @@ export async function readOverlayPackage(bytes: Uint8Array, loaded?: PDFDocument
       !Number.isFinite(item.x) || !Number.isFinite(item.y) || !Number.isFinite(item.width) || !Number.isFinite(item.height) ||
       (item.opacity !== undefined && (!Number.isFinite(item.opacity) || item.opacity < 0 || item.opacity > 1)) ||
       (item.radius !== undefined && (!Number.isFinite(item.radius) || item.radius < 0)) ||
+      (item.radiusCorners !== undefined && (!Array.isArray(item.radiusCorners) || item.radiusCorners.length !== 4 || !item.radiusCorners.every((value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0))) ||
       (item.fill != null && (typeof item.fill !== 'string' || !/^#[0-9a-f]{6}$/i.test(item.fill))) ||
       (item.fillHidden !== undefined && typeof item.fillHidden !== 'boolean') ||
       (item.name !== undefined && typeof item.name !== 'string') ||
@@ -162,7 +164,7 @@ export async function embedOverlays(bytes: Uint8Array, objects: OverlayObject[],
       left + (object.points?.[1]?.x ?? 1) * object.width, top + (object.points?.[1]?.y ?? 1) * object.height);
     else if (object.kind === 'rectangle' || object.kind === 'ellipse') {
       const [x, y] = at(left, top), [rx, ry] = at(right, top), [bx, by] = at(left, bottom);
-      page.drawSvgPath(shapePath(object.kind, Math.hypot(rx - x, ry - y), Math.hypot(bx - x, by - y), object.radius ?? 0), {
+      page.drawSvgPath(shapePath(object.kind, Math.hypot(rx - x, ry - y), Math.hypot(bx - x, by - y), object.radius ?? 0, object.radiusCorners), {
         x, y, rotate: degrees(Math.atan2(ry - y, rx - x) * 180 / Math.PI),
         color: object.fill && !object.fillHidden ? colorOf(object.fill) : undefined, borderColor: strokeColor, borderWidth: width,
         opacity, borderOpacity: opacity,
