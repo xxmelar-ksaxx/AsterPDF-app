@@ -43,6 +43,8 @@ contextBridge.exposeInMainWorld('aster', {
   pathForFile: (file) => webUtils.getPathForFile(file),
   save: (bytes, saveAs, expectedPath) => ipcRenderer.invoke('pdf:save', bytes, saveAs, expectedPath),
   listOriginalText: (bytes, pageIndex) => ipcRenderer.invoke('pdf:list-original-text', bytes, pageIndex),
+  listOriginalObjects: (bytes, pageIndex) => ipcRenderer.invoke('pdf:list-original-objects', bytes, pageIndex),
+  editOriginalObject: (bytes, pageIndex, id, token, change) => ipcRenderer.invoke('pdf:edit-original-object', bytes, pageIndex, id, token, change),
   listInstalledFonts: () => ipcRenderer.invoke('fonts:list-installed'),
   readInstalledFont: (id, text) => ipcRenderer.invoke('fonts:read-installed', id, text),
 replaceOriginalText: (bytes, pageIndex, objectIndex, expectedText, replacement, fontChoice, color) =>

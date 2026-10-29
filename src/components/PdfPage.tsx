@@ -15,6 +15,8 @@ import type { TextMarkupSelection } from '../pdf/comments';
 import type { ColorCommand, FontCommand, FontSelection, InstalledFont } from './FontPicker';
 import type { OriginalPdfText } from '../types';
 import OriginalTextEditor, { type TextEdit } from './OriginalTextEditor';
+import OriginalObjectLayer from './OriginalObjectLayer';
+import type { OriginalObjectChange, OriginalObjectSelection } from '../types';
 
 export type Zoom = 'fit' | number;
 export type PageSize = { width: number; height: number };
@@ -31,6 +33,10 @@ type Props = {
   onRenderSettled?: (document: PDFDocumentProxy, page: number) => void;
   getSourceBytes: () => Uint8Array;
   inspectOriginalText: boolean;
+  objectEditingBusy: boolean;
+  originalObjectSelection: OriginalObjectSelection | null;
+  onSelectOriginalObject: (selection: OriginalObjectSelection | null) => void;
+  onEditOriginalObject: (selection: OriginalObjectSelection, change: OriginalObjectChange) => Promise<void>;
   onCommitOriginalText: (pageIndex: number, objectIndex: number, oldText: string, nextText: string, fontChoice: string, color?: number[]) => Promise<void>;
   onFontEditChange: (selection: FontSelection | null) => void;
   fontCommand: FontCommand | null;
@@ -94,7 +100,7 @@ type Props = {
 };
 
 export default function PdfPage({
-  document, getSourceBytes, inspectOriginalText, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
+  document, getSourceBytes, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
   popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, selectingLinks, editActive, onLinkMenu, onNavigateLink, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
@@ -121,7 +127,7 @@ export default function PdfPage({
     if (!inspectOriginalText || !near) { setOriginalText([]); return; }
     let cancelled = false;
     window.aster.listOriginalText(getSourceBytes(), sourcePageNumber - 1).then((objects) => {
-      if (!cancelled) setOriginalText(objects.filter((object) => !/[\r\n]/.test(object.text)));
+      if (!cancelled) setOriginalText(objects.filter((object) => !/[\r\n]/.test(object.text) && !/^[•●○◦▪▫■□◆◇‣⁃∙·➢➤✓✔]$/u.test(object.text.trim())));
     }).catch((cause) => { if (!cancelled) onError(`Could not inspect original text on page ${pageNumber}: ${cause instanceof Error ? cause.message : String(cause)}`); });
     return () => { cancelled = true; };
   }, [inspectOriginalText, near, getSourceBytes, sourcePageNumber, pageNumber, onError]);
@@ -306,7 +312,7 @@ export default function PdfPage({
     <span className="page-label">Page {pageNumber}</span>
     <div className={`page-stage ${placing || placingSignature ? 'is-placing' : ''}${editingOriginal ? ' is-editing-text' : ''}`} ref={stageRef} onClick={choosePoint}
       onContextMenuCapture={event => {
-        if (!editActive || (event.target as Element).closest('[data-overlay-kind="image"], .editable-signature')) return;
+        if (!editActive || (event.target as Element).closest('[data-original-object], .original-object-frame, [data-overlay-kind="image"], .editable-signature')) return;
         const selection = selectedPdfText();
         if (!selection.length && !selectingLinks) return;
         event.preventDefault(); event.stopPropagation(); onLinkMenu(event.clientX, event.clientY, selection);
@@ -316,6 +322,9 @@ export default function PdfPage({
         setSignatureCursor({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
       } }} onPointerLeave={() => setSignatureCursor(null)} style={{ width, height }}>
       <canvas ref={canvasRef} width={0} height={0} style={{ display: ready ? 'block' : 'none', width, height }} />
+      {activeViewport && <OriginalObjectLayer enabled={near && editActive && overlayTool === 'select' && !selectingLinks} busy={objectEditingBusy}
+        getSourceBytes={getSourceBytes} pageId={pageId} pageIndex={sourcePageNumber-1} viewport={activeViewport}
+        selection={originalObjectSelection} onSelect={onSelectOriginalObject} onChange={onEditOriginalObject} onError={onError} />}
       {inspectOriginalText && activeViewport && <div className="original-text-layer" aria-label="Original PDF text">
         {originalText.map((object) => {
           const a = activeViewport.convertToViewportPoint(object.box[0], object.box[1]);

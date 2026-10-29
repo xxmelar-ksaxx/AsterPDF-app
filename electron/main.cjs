@@ -4,6 +4,7 @@ const path = require('node:path');
 const { randomUUID } = require('node:crypto');
 const { createRecentStore } = require('./recent.cjs');
 const { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays } = require('./original-text.cjs');
+const { listOriginalObjects, editOriginalObject } = require('./original-objects.cjs');
 const { listInstalledFonts, getInstalledFont } = require('./installed-fonts.cjs');
 const { createUpdateService, updateArchitecture } = require('./updates.cjs');
 const { createUpdateInstaller } = require('./update-installer.cjs');
@@ -253,6 +254,12 @@ async function finishCompressedSave(rawBytes, token, expectedPath) {
   });
   documentIpc.handle('pdf:list-original-text', (event, bytes, pageIndex) => {
     requireApp(event); return listOriginalText(bytes, pageIndex);
+  });
+  documentIpc.handle('pdf:list-original-objects', (event, bytes, pageIndex) => {
+    requireApp(event); return listOriginalObjects(bytes, pageIndex);
+  });
+  documentIpc.handle('pdf:edit-original-object', (event, bytes, pageIndex, id, token, change) => {
+    requireApp(event); return editOriginalObject(bytes, pageIndex, id, token, change);
   });
   documentIpc.handle('fonts:list-installed', async (event) => {
     requireApp(event);

@@ -13,7 +13,7 @@ import { addTextNotes, changeComments, readAllPageComments, noteAsComment, comme
 import { selectedPdfText } from './components/PdfTextSelection';
 import { captureMarkups, restoreMarkupOverrides, type MarkupSnapshot } from './pdf/markup-history';
 import { prepareCommentSave } from './pdf/comment-save';
-import type { OpenedPdf, RecentPdf, WordExportResult } from './types';
+import type { OpenedPdf, RecentPdf, WordExportResult, OriginalObjectSelection, OriginalObjectChange } from './types';
 import type { OpenedFile } from './types';
 import PdfPage, { pageScale, type PageSize, type PendingPoint, type Zoom } from './components/PdfPage';
 import PresentationView from './components/PresentationView';
@@ -219,6 +219,11 @@ export default function App() {
   const [overlays, setOverlays] = useState<OverlayObject[]>([]);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [overlayTool, setOverlayTool] = useState<OverlayTool>('select');
+  const [selectedOriginal, setSelectedOriginal] = useState<OriginalObjectSelection | null>(null);
+  const [objectColorChannel, setObjectColorChannel] = useState<'fill' | 'stroke'>('fill');
+  const originalObjectLock = useRef(false);
+  const originalObjectSource = useRef(source); originalObjectSource.current = source;
+  useEffect(() => { setSelectedOriginal(null); }, [source?.path, activeTool, overlayTool]);
   const [overlayColor, setOverlayColor] = useState('#172333');
   const [recentColors, setRecentColors] = useState<string[]>(() => {
     try { const colors: unknown = JSON.parse(localStorage.getItem('asterpdf-recent-colors') || '[]');
@@ -265,6 +270,7 @@ export default function App() {
   const [fontCommand, setFontCommand] = useState<FontCommand | null>(null);
   const [colorCommand, setColorCommand] = useState<ColorCommand | null>(null);
   const changeFontEditing = useCallback((selection: FontSelection | null) => {
+    if (selection) setSelectedOriginal(null);
     setFontEditing(selection);
     if (selection?.fontSize) setOverlayFontSize(Math.max(4, Math.min(500, selection.fontSize)));
     if (selection?.overlayId) setOverlayFontChoice(selection.choice as OverlayObject['fontChoice']);
@@ -1144,6 +1150,7 @@ export default function App() {
   const undoEdit = useCallback(() => {
     if (!source || busy || pendingCommentCount || !historyPast.length) return;
     const previous = historyPast[historyPast.length - 1];
+    setSelectedOriginal(null);
     setHistoryPast((history) => history.slice(0, -1));
     setHistoryFuture((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
     const dirty = previous.bytes !== savedBytesRef.current || previous.plan !== null || previous.overlays.length > 0;
@@ -1164,6 +1171,7 @@ export default function App() {
   const redoEdit = useCallback(() => {
     if (!source || busy || pendingCommentCount || !historyFuture.length) return;
     const next = historyFuture[historyFuture.length - 1];
+    setSelectedOriginal(null);
     setHistoryFuture((history) => history.slice(0, -1));
     setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
     const dirty = next.bytes !== savedBytesRef.current || next.plan !== null || next.overlays.length > 0;
@@ -1218,6 +1226,7 @@ export default function App() {
   useEffect(() => {
     const deselect = (event: PointerEvent) => {
       const target = event.target;
+      if (target instanceof Element && !target.closest('[data-original-object], .original-object-frame, [data-original-object-menu], .overlay-toolbar, [data-added-text-controls]')) setSelectedOriginal(null);
       if (target instanceof Element && !target.closest('[data-overlay-id], .overlay-toolbar, .draw-inspector, .sidebar-toggle, .image-context-menu, .added-text-editor, [data-added-text-controls], [data-font-picker]'))
         setSelectedOverlayId(null);
     };
@@ -1232,6 +1241,24 @@ export default function App() {
     setOverlays(next);
     setEditingDirty(true);
     window.aster.setDirty(true);
+  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
+  const selectOriginalObject = useCallback((selection: OriginalObjectSelection | null) => {
+    setSelectedOriginal(selection); setSelectedOverlayId(null); setFontEditing(null);
+    setObjectColorChannel(selection?.object.fill ? 'fill' : 'stroke');
+  }, []);
+  const editOriginalObject = useCallback(async (selection: OriginalObjectSelection, change: OriginalObjectChange) => {
+    if (!source || source !== originalObjectSource.current || busy || pendingCommentCount || originalObjectLock.current) return;
+    originalObjectLock.current = true; setBusy(true); window.aster.setSaving(true);
+    try {
+      const bytes = await window.aster.editOriginalObject(source.bytes, selection.pageIndex, selection.object.id, selection.object.token, change);
+      const updated = change.type === 'delete' ? null : (await window.aster.listOriginalObjects(bytes, selection.pageIndex)).find(object => object.id === selection.object.id);
+      if (source !== originalObjectSource.current) return;
+      setHistoryPast(history => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
+      setHistoryFuture([]); restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
+      setSource({ ...source, bytes }); setEditingDirty(true); window.aster.setDirty(true);
+      setSelectedOriginal(updated ? { ...selection, object: updated } : null); setError('');
+    } catch (cause) { setError(`Could not edit PDF object: ${originalTextError(cause)}`); }
+    finally { originalObjectLock.current = false; setBusy(false); window.aster.setSaving(false); }
   }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
   const commitOriginalText = useCallback(async (pageIndex: number, objectIndex: number, oldText: string, nextText: string, fontChoice: string, color?: number[]) => {
     if (!source || busy || pendingCommentCount || (oldText === nextText && fontChoice === 'original' && !color)) return;
@@ -1305,6 +1332,7 @@ export default function App() {
     commitOverlays(overlays.filter((item) => item.id !== id)); setSelectedOverlayId(null);
   };
   const selectOverlay = (id: string | null) => {
+    if (id) setSelectedOriginal(null);
     const object = overlays.find((item) => item.id === id);
     if (object && isDrawingObject(object) && activeTool !== 'draw') return;
     setSelectedOverlayId(id);
@@ -1403,6 +1431,11 @@ export default function App() {
     if (rememberColor) setRecentColors((colors) => { const next = [value, ...colors.filter((color) => color !== value)].slice(0, 10);
       try { localStorage.setItem('asterpdf-recent-colors', JSON.stringify(next)); } catch { /* Color history is optional. */ }
       return next; });
+    if (selectedOriginal) {
+      if (rememberColor && selectedOriginal.object[objectColorChannel]) void editOriginalObject(selectedOriginal,
+        { type: 'color', channel: objectColorChannel, color: [1, 3, 5].map(offset => parseInt(value.slice(offset, offset + 2), 16)) });
+      return;
+    }
     const selected = overlays.find((item) => item.id === selectedOverlayId);
     if (fontEditing && !fontEditing.overlayId) setColorCommand((previous) => ({ pageId: fontEditing.pageId, index: fontEditing.index, color: value, sequence: (previous?.sequence || 0) + 1 }));
     else if (rememberColor && selected && !fontEditing?.overlayId && selected.color !== value) updateOverlay({ ...selected, color: value });
@@ -1969,7 +2002,7 @@ export default function App() {
               disabled={busy || pendingCommentCount > 0 || Boolean(pagePlan)} onMouseDown={event => event.preventDefault()}
               onClick={() => void startHyperlink()}><Link2 size={17} /></button>
             <button className={overlayTool === 'text' ? 'active' : ''} onClick={() => { setSelectingLinks(false); setOverlayTool('text'); }} aria-label="Add text overlay" title="Add editable text over the PDF"><Type size={17} /></button>
-            <FontPicker selection={textFontSelection} fonts={installedFonts} loading={fontsStatus === 'loading'} onSelect={(choice) => {
+            {!selectedOriginal && <><FontPicker selection={textFontSelection} fonts={installedFonts} loading={fontsStatus === 'loading'} onSelect={(choice) => {
               if (selectedText && fontEditing?.overlayId !== selectedText.id) {
                 const updated = { ...selectedText, fontChoice: choice as OverlayObject['fontChoice'] };
                 const size = displayPageSize(effectivePages.findIndex((item) => item.id === updated.pageId) + 1);
@@ -1997,6 +2030,7 @@ export default function App() {
               <button disabled={!canFormatText} aria-label="Auto-size text container" title="Auto-size text container · Drag its handles for a fixed size"
                 aria-pressed={activeTextAppearance.textSizing !== 'fixed'} onClick={() => changeTextAppearance({ textSizing: 'auto' })}><Maximize2 size={16} /></button>
             </div>
+            </>}
             <button className={overlayTool === 'image' && !overlayImage?.videoId ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label="Add image overlay"
               title={overlayTool === 'image' && !overlayImage?.videoId ? 'Click on a page to place the image. Esc to cancel.' : 'Add an image'}><ImagePlus size={17} /></button>
             <button className={overlayImage?.videoId ? 'active' : ''} disabled={videoImporting} onClick={() => overlayVideoRef.current?.click()} aria-label="Add video" title={videoImporting ? 'Preparing video…' : overlayImage?.videoId ? 'Click on a page to place the video. Esc to cancel.' : 'Add MP4 video'}><Video size={17} /></button>
@@ -2015,14 +2049,21 @@ export default function App() {
             <button onClick={redoEdit} disabled={!historyFuture.length} aria-label="Redo drawing" title="Redo (Ctrl/Cmd+Shift+Z)"><Redo2 size={17} /></button>
           </>}
           <span className="overlay-divider" />
-          <ColorPicker value={activeTool === 'draw' ? currentDrawStyle.color : (!fontEditing && selectedOverlay?.color) || overlayColor}
-            recent={recentColors} onChange={activeTool === 'draw' ? (color, commit) => changeDrawStyle({ color }, commit) : chooseOverlayColor} />
-          {activeTool === 'edit' ? <div className="overlay-font-size" data-added-text-controls>
+          {selectedOriginal?.object.fill && selectedOriginal.object.stroke && <div className="text-format-tools" role="group" aria-label="Object color target">
+            <button aria-label="Object fill color" title="Fill color" aria-pressed={objectColorChannel === 'fill'} onClick={() => setObjectColorChannel('fill')}><Square size={16} fill="currentColor" /></button>
+            <button aria-label="Object stroke color" title="Stroke color" aria-pressed={objectColorChannel === 'stroke'} onClick={() => setObjectColorChannel('stroke')}><Square size={16} /></button>
+          </div>}
+          {(!selectedOriginal || selectedOriginal.object.fill || selectedOriginal.object.stroke) && <ColorPicker
+            label={selectedOriginal ? `Original object ${objectColorChannel} color` : 'Text and drawing color'}
+            value={selectedOriginal?.object[objectColorChannel] ? '#' + selectedOriginal.object[objectColorChannel]!.slice(0,3).map(value => value.toString(16).padStart(2,'0')).join('') : activeTool === 'draw' ? currentDrawStyle.color : (!fontEditing && selectedOverlay?.color) || overlayColor}
+            recent={recentColors} onChange={activeTool === 'draw' ? (color, commit) => changeDrawStyle({ color }, commit) : chooseOverlayColor} />}
+          {activeTool === 'edit' ? !selectedOriginal && <div className="overlay-font-size" data-added-text-controls>
             <NumberField label="Font size" icon={<Type size={15} />} unit="pt" min={4} max={500} value={overlayFontSize}
               onChange={(value) => changeOverlayFontSize(value)} onPreview={(value) => changeOverlayFontSize(value, false)} /></div>
             : <button className={sidebarTab === 'draw' && !sidebarCollapsed ? 'active' : ''} title="Properties and layers" aria-label="Toggle drawing panel"
               aria-expanded={sidebarTab === 'draw' && !sidebarCollapsed} onClick={() => { setSidebarTab('draw'); setSidebarCollapsed(sidebarTab === 'draw' ? !sidebarCollapsed : false); }}><PanelRight size={17} /></button>}
           {selectedOverlay && <button disabled={selectedOverlay.locked} onClick={() => deleteOverlay(selectedOverlay.id)} title="Delete selected object" aria-label="Delete selected object"><Trash2 size={17} /></button>}
+          {selectedOriginal && <button disabled={busy} onClick={() => void editOriginalObject(selectedOriginal, { type: 'delete' })} title="Delete selected PDF object" aria-label="Delete selected PDF object"><Trash2 size={17} /></button>}
           <input ref={overlayVideoRef} type="file" hidden accept=".mp4,video/mp4" onChange={event => { void importOverlayVideo(event.target.files?.[0]); event.target.value = ''; }} />
           <input ref={overlayImageRef} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={(event) => { void importOverlayImage(event.target.files?.[0]); event.target.value = ''; }} />
         </div>}
@@ -2046,6 +2087,7 @@ export default function App() {
               return <PdfPage key={planned.id} document={document} pageNumber={page} sourcePageNumber={planned.sourceIndex + 1} rotation={planned.turns * 90}
                 onRenderSettled={pageRendered}
                 getSourceBytes={getSourceBytes} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
+                objectEditingBusy={busy} originalObjectSelection={selectedOriginal} onSelectOriginalObject={selectOriginalObject} onEditOriginalObject={editOriginalObject}
                 onFontEditChange={changeFontEditing} fontCommand={fontCommand} colorCommand={colorCommand} installedFonts={installedFonts}
                 size={displayPageSize(page)}
                 zoom={zoom} viewerWidth={viewerWidth} viewerRef={viewerRef}

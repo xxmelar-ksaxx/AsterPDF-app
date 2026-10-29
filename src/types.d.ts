@@ -24,6 +24,8 @@ declare global {
       pathForFile(file: File): string;
       save(bytes: Uint8Array, saveAs: boolean, expectedPath: string): Promise<{ path: string; name: string } | null>;
       listOriginalText(bytes: Uint8Array, pageIndex: number): Promise<OriginalPdfText[]>;
+      listOriginalObjects(bytes: Uint8Array, pageIndex: number): Promise<OriginalPdfObject[]>;
+      editOriginalObject(bytes: Uint8Array, pageIndex: number, id: string, token: string, change: OriginalObjectChange): Promise<Uint8Array>;
       listInstalledFonts(): Promise<{ id: string; family: string; style: string; postscriptName: string }[]>;
       readInstalledFont(id: string, text: string): Promise<Uint8Array>;
       replaceOriginalText(bytes: Uint8Array, pageIndex: number, objectIndex: number, expectedText: string, replacement: string, fontChoice?: string, color?: number[]): Promise<Uint8Array>;
@@ -95,6 +97,20 @@ export interface OriginalPdfText {
   fontSize: number;
   color: number[];
 }
+
+export interface OriginalPdfObject {
+  id: string;
+  token: string;
+  kind: 'image' | 'shape' | 'bullet' | 'group';
+  box: number[];
+  fill: number[] | null;
+  stroke: number[] | null;
+  strokeWidth: number;
+  shape?: string;
+}
+export type OriginalObjectChange = { type: 'transform'; matrix: number[] } | { type: 'delete' } |
+  { type: 'color'; channel: 'fill' | 'stroke'; color: number[] } | { type: 'replace-image'; png: Uint8Array };
+export type OriginalObjectSelection = { pageId: string; pageIndex: number; object: OriginalPdfObject };
 
 export interface OpenedFile extends OpenedPdf {
   kind: 'pdf' | 'docx' | 'png' | 'jpg' | 'jpeg' | 'webp';

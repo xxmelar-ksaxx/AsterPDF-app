@@ -32,6 +32,14 @@ PDF parsing, DOCX and image conversion, editing, compression, file access, and s
 
 After download verification, choose **Restart and install** in Settings. AsterPDF saves pending document changes (including placed signatures and a composed comment) first. Converted files prompt for a PDF location. Canceling that dialog or a save error keeps the application open and leaves the update ready to install. Updates never install automatically on normal exit. Download failures offer a retry. An interrupted download can be retried on the next launch; completed cached downloads are revalidated before reuse. In-app installation is available in packaged builds; development builds display an explanation. Update requests contain no PDF content, file paths, comments, or author settings. Failed checks and downloads leave document work available offline.
 
+## Editing original page objects
+
+In **Edit → Select**, click an existing image, vector shape, dot, or standalone bullet to select it. Drag to move, drag a resize handle to change its size, and hold **Shift** to preserve proportions. The top color control changes a selected shape or bullet's color; shapes with both fill and stroke have separate target buttons. Delete with the toolbar, **Delete/Backspace**, or the right-click menu. Images also offer **Replace image…** in that menu, retaining their placement and crop without replacing other copies of the image. Edits support undo/redo and are written into native page content when you save.
+
+Exported groups stay grouped to preserve clipping and transparency: move, resize, or delete them as one object. Objects already flattened into a photograph or scanned page remain part of that image. These controls are active only in Edit; presentation drawings and objects added with Draw retain their separate workflows.
+
+Pages with standalone PDF gradient objects currently reject object edits with a clear error, because the editing engine cannot yet preserve those gradients when rebuilding page content. Gradients inside preserved groups are unaffected. No file changes are made when an edit is rejected.
+
 ## Embedded videos (0.5.4)
 
 In **Edit**, choose the video icon and select an MP4 (up to 250 MB; H.264 video with AAC audio recommended). A thumbnail follows the pointer; click to place it. Drag the thumbnail to move it, use its edges or corners to resize, and hold **Shift** to preserve proportions. Right-click to delete; undo and redo work as with images. Press **Esc** to cancel placement.
@@ -120,6 +128,8 @@ npm run desktop
 `npm run smoke:workspaces` starts a temporary Vite development server and checks tab opening, duplicate-file focus, moving live tabs between windows, retained edits and undo/redo, isolated saving, Save As conflicts, and closing during a drag. It uses temporary PDFs and does not build the app.
 
 Video checks: `node --import tsx --test tests/videos.test.ts` checks embedding, reopening, asset reuse and comment autosaves. `node scripts/smoke-video.cjs` checks placement, movement, resizing, delete/undo, playback, reopening without the source MP4, and presentation playback using a temporary development server. The smoke check requires FFmpeg on PATH (or set `FFMPEG_PATH`); FFmpeg is a test-fixture dependency only, not an app dependency. Neither command builds the app.
+
+Original-object checks: `node --import tsx --test tests/original-objects.test.ts tests/original-object-geometry.test.ts` covers native edits, shared images and groups, clipping, rotated/cropped pages, and safe rejection of unsupported gradients. `node scripts/smoke-original-objects.cjs` runs the focused editor workflow against a temporary PDF in the development app, including text selection, color changes, image replacement, undo/redo and saving. It does not build the app.
 
 ## Implementation
 

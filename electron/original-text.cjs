@@ -463,4 +463,4 @@ function conversionTextRuns(pdfium, textPage) {
   } finally { memory.wasmExports.free(ptr); }
 }
 
-module.exports = { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays, conversionTextRuns };
+module.exports = { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays, conversionTextRuns, engine, withDocument, objectText };
