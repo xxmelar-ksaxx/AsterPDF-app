@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Pipette } from 'lucide-react';
+import { onFinishInlineEdit } from '../finish-inline-edit';
 
 function toHsv(hex: string) {
   const [r, g, b] = [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
@@ -29,6 +30,10 @@ export default function ColorPicker({ value, recent, onChange, label = 'Text and
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
   const latest = useRef(value);
+  const pending = useRef(false);
+  const change = useRef(onChange); change.current = onChange;
+  const finishChoice = () => { if (pending.current) { pending.current = false; change.current(latest.current, true); } };
+  useEffect(() => onFinishInlineEdit(finishChoice), []);
   const EyeDropper = (window as Window & { EyeDropper?: EyeDropperConstructor }).EyeDropper;
   useEffect(() => {
     if (value !== latest.current) setHsv(toHsv(value));
@@ -42,7 +47,7 @@ export default function ColorPicker({ value, recent, onChange, label = 'Text and
         top: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 340)) });
     };
     const outside = (event: globalThis.PointerEvent) => {
-      if (!sampling && !menu.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) setOpen(false);
+      if (!sampling && !menu.current?.contains(event.target as Node) && !trigger.current?.contains(event.target as Node)) { finishChoice(); setOpen(false); }
     };
     place();
     window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
@@ -53,10 +58,12 @@ export default function ColorPicker({ value, recent, onChange, label = 'Text and
     };
   }, [open, sampling]);
   const choose = (color: string, remember = true) => {
+    pending.current = !remember;
     const normalized = color.toLowerCase();
     latest.current = normalized; setHex(normalized); setHsv(toHsv(normalized)); setError(''); onChange(normalized, remember);
   };
   const adjust = (next: typeof hsv) => {
+    pending.current = true;
     const color = toHex(next);
     latest.current = color; setHsv(next); setHex(color); setError(''); onChange(color, false);
   };
@@ -80,13 +87,13 @@ export default function ColorPicker({ value, recent, onChange, label = 'Text and
   };
   return <div className="color-picker" data-added-text-controls data-comment-color={commentId}>
     <button ref={trigger} className="color-picker-trigger" aria-label={label} title={`Color ${value}`}
-      aria-haspopup="dialog" aria-expanded={open} onClick={() => { setOpen(!open); setError(''); }}>
+      aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (open) finishChoice(); setOpen(!open); setError(''); }}>
       <span style={{ background: value }} />
     </button>
     {open && createPortal(<div ref={menu} className="color-picker-menu" style={position} role="dialog" aria-label="Choose color"
       data-added-text-controls data-comment-color={commentId} onKeyDown={(event) => {
         event.stopPropagation();
-        if (event.key === 'Escape') { event.preventDefault(); setOpen(false); trigger.current?.focus(); }
+        if (event.key === 'Escape') { event.preventDefault(); finishChoice(); setOpen(false); trigger.current?.focus(); }
       }}>
       <h3>Recent colors</h3>
       <div className="recent-color-grid">
@@ -100,18 +107,18 @@ export default function ColorPicker({ value, recent, onChange, label = 'Text and
         aria-valuetext={`${Math.round(hsv.s * 100)}% saturation, ${Math.round(hsv.v * 100)}% brightness`}
         onPointerDown={(event) => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); point(event); }}
         onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) point(event); }}
-        onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) { event.currentTarget.releasePointerCapture(event.pointerId); onChange(latest.current, true); } }}
+        onPointerUp={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) { event.currentTarget.releasePointerCapture(event.pointerId); finishChoice(); } }}
         onKeyDown={(event) => {
           if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) return;
           event.preventDefault();
           adjust({ ...hsv, s: Math.max(0, Math.min(1, hsv.s + (event.key === 'ArrowRight' ? .01 : event.key === 'ArrowLeft' ? -.01 : 0))),
             v: Math.max(0, Math.min(1, hsv.v + (event.key === 'ArrowUp' ? .01 : event.key === 'ArrowDown' ? -.01 : 0))) });
-        }} onKeyUp={(event) => { if (event.key.startsWith('Arrow')) onChange(latest.current, true); }}>
+        }} onKeyUp={(event) => { if (event.key.startsWith('Arrow')) finishChoice(); }}>
         <span style={{ left: `${hsv.s * 100}%`, top: `${(1 - hsv.v) * 100}%` }} />
       </div>
       <input className="color-hue" type="range" min="0" max="359" aria-label="Hue" value={hsv.h}
         onChange={(event) => adjust({ ...hsv, h: Number(event.target.value) })}
-        onPointerUp={() => onChange(latest.current, true)} onKeyUp={() => onChange(latest.current, true)} />
+        onPointerUp={finishChoice} onKeyUp={finishChoice} />
       <div className="color-hex-row"><label>Hex<input aria-label="Hex color" value={hex} maxLength={7} spellCheck={false}
         onChange={(event) => { const next = event.target.value; setHex(next); setError('');
           if (/^#?[0-9a-f]{6}$/i.test(next)) choose('#' + next.replace(/^#/, ''), false);

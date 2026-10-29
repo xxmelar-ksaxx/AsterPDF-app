@@ -43,6 +43,8 @@ import ResizableSidebar from './components/ResizableSidebar';
 import { HyperlinkDialog, HyperlinkMenu } from './components/HyperlinkTools';
 import { addPdfLinks } from './pdf/links';
 import { useUpdates } from './updates';
+import { stageTransform, stageObjectPatch } from './pdf/original-transforms';
+import type { OriginalTransform } from './types';
 import { finishInlineEdits } from './finish-inline-edit';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
@@ -57,7 +59,7 @@ const COMPRESSION_PRESETS: { level: CompressionLevel; label: string; description
   { level: 'balanced', label: 'Balanced', description: 'Render pages at 140 DPI with good image quality.' },
   { level: 'small', label: 'Smallest', description: 'Render pages at 90 DPI with stronger compression.' }
 ];
-type EditorSnapshot = { bytes: Uint8Array; plan: PlannedPage[] | null; pageCount: number; overlays: OverlayObject[] };
+type EditorSnapshot = { bytes: Uint8Array; plan: PlannedPage[] | null; pageCount: number; overlays: OverlayObject[]; transforms: OriginalTransform[] };
 type CompressionEstimate =
   | { status: 'idle' }
   | { status: 'calculating'; progress: string }
@@ -115,8 +117,12 @@ export default function App() {
     return () => window.removeEventListener('keydown', blockKeys, true);
   }, [preparingInstall, installing]);
   const [source, setSourceState] = useState<OpenedPdf | null>(null);
+  const [transforms, setTransforms] = useState<OriginalTransform[]>([]);
+  const [originalColorPreview, setOriginalColorPreview] = useState<{pageIndex:number;index:number;channel:'fill'|'stroke';color:number[]}|null>(null);
+  const visibleTransforms = useMemo(() => originalColorPreview ? stageObjectPatch(transforms,originalColorPreview.pageIndex,originalColorPreview.index,{[originalColorPreview.channel]:originalColorPreview.color}) : transforms,[transforms,originalColorPreview]);
   const [previewSource, setPreviewSource] = useState<OpenedPdf | null>(null);
   const [presenting, setPresenting] = useState(false);
+  const presentationAfterRefresh = useRef<PDFDocumentProxy | null>(null);
   const presentationStarting = useRef(false);
   const presentationScroll = useRef<number | null>(null);
   useEffect(() => window.aster.onPresentationChanged(setPresenting), []);
@@ -132,7 +138,8 @@ export default function App() {
   }, [source?.bytes]);
   const markupHistoryRef = useRef<{ past: MarkupSnapshot[]; future: MarkupSnapshot[]; colorGroup: string | null }>({ past: [], future: [], colorGroup: null });
   const setSource = useCallback((next: OpenedPdf | null) => {
-    setSourceState(next); setPreviewSource(next);
+    setSourceState(next); setPreviewSource(next); setTransforms([]); setOriginalColorPreview(null);
+    if (!next) presentationAfterRefresh.current = null;
     setCommentOverrides({});
     markupHistoryRef.current = { past: [], future: [], colorGroup: null };
   }, []);
@@ -456,6 +463,7 @@ export default function App() {
         if (!cancelled) setComments(nextComments);
       } catch (cause) {
         if (!cancelled) {
+          presentationAfterRefresh.current = null;
           if (openingRef.current?.bytes === source.bytes) finishOpening();
           setError(`Could not open PDF: ${messageOf(cause)}`);
         }
@@ -780,7 +788,8 @@ export default function App() {
 
   const buildPendingPdf = useCallback(async (additionalNotes: NewNote[] = []): Promise<{ bytes: Uint8Array; base: Uint8Array; objects: OverlayObject[] }> => {
     if (!source) throw new Error('Open a PDF first.');
-    const arranged = pagePlan ? await composePagePlan(source.bytes, pagePlan) : source.bytes;
+    const nativeBytes = transforms.length ? await window.aster.applyOriginalTransforms(source.bytes, transforms) : source.bytes;
+    const arranged = pagePlan ? await composePagePlan(nativeBytes, pagePlan) : nativeBytes;
     const draws: SignatureDraw[] = [];
     for (const placement of placedSignatures) {
       const pageIndex = effectivePages.findIndex((page) => page.id === placement.pageId);
@@ -828,7 +837,7 @@ export default function App() {
     });
     if (shaped.length) annotated = await window.aster.embedShapedText(annotated, shaped);
     return { bytes: await attachOverlayPackage(annotated, base, objects), base, objects };
-  }, [source, pagePlan, placedSignatures, effectivePages, document, drafts, commentChanges, overlays, installedFonts]);
+  }, [source, pagePlan, placedSignatures, effectivePages, document, drafts, commentChanges, overlays, installedFonts, transforms]);
 
   const latestWordBuild = useRef(buildPendingPdf);
   useLayoutEffect(() => { latestWordBuild.current = buildPendingPdf; }, [buildPendingPdf]);
@@ -970,7 +979,7 @@ export default function App() {
       const current = pagePlan ?? initialPagePlan(document.numPages);
       const next = changePagePlan(current, edit);
       if (next.length === current.length && next.every((page, index) => page.id === current[index].id && page.turns === current[index].turns)) return;
-      setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: current.length, overlays }));
+      setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: current.length, overlays, transforms }));
       setHistoryFuture([]);
       window.aster.setDirty(true);
       setEditingDirty(true);
@@ -986,7 +995,7 @@ export default function App() {
       setActiveTool('pages');
       setError('');
     } catch (cause) { setError(`Could not edit pages: ${messageOf(cause)}`); }
-  }, [source, document, pagePlan, selectedPages, busy, pendingCommentCount, pendingPoint, overlays]);
+  }, [source, document, pagePlan, selectedPages, busy, pendingCommentCount, pendingPoint, overlays, transforms]);
 
   const addFiles = useCallback(async (afterPage?: number) => {
     if (!source || busy || pendingCommentCount) return;
@@ -997,9 +1006,10 @@ export default function App() {
       const additions: Uint8Array[] = [];
       for (const file of files) additions.push(await convertToPdf(file));
       const addedCount = afterPage === undefined ? 0 : (await Promise.all(additions.map(async (bytes) => (await PDFDocument.load(bytes)).getPageCount()))).reduce((sum, count) => sum + count, 0);
-      const arranged = pagePlan ? await composePagePlan(source.bytes, pagePlan) : source.bytes;
+      const nativeBytes = transforms.length ? await window.aster.applyOriginalTransforms(source.bytes, transforms) : source.bytes;
+    const arranged = pagePlan ? await composePagePlan(nativeBytes, pagePlan) : nativeBytes;
       const bytes = await appendPdfs(arranged, additions, afterPage);
-      setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
+      setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
       setHistoryFuture([]);
       window.aster.setDirty(true);
       setEditingDirty(true);
@@ -1020,7 +1030,7 @@ export default function App() {
       setError('');
     } catch (cause) { setError(`Could not add files: ${messageOf(cause)}`); }
     finally { setBusy(false); }
-  }, [source, pagePlan, effectivePages, busy, pendingCommentCount, overlays]);
+  }, [source, pagePlan, effectivePages, busy, pendingCommentCount, overlays, transforms]);
 
   const saveCompressedCopy = useCallback(async () => {
     if (!source || !compressionChoice || busy || savingRef.current || pendingCommentCount) return;
@@ -1152,8 +1162,8 @@ export default function App() {
     const previous = historyPast[historyPast.length - 1];
     setSelectedOriginal(null);
     setHistoryPast((history) => history.slice(0, -1));
-    setHistoryFuture((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
-    const dirty = previous.bytes !== savedBytesRef.current || previous.plan !== null || previous.overlays.length > 0;
+    setHistoryFuture((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
+    const dirty = previous.bytes !== savedBytesRef.current || previous.plan !== null || previous.overlays.length > 0 || previous.transforms.length > 0;
     setEditingDirty(dirty);
     window.aster.setDirty(dirty || Boolean(source.needsSave));
     const currentPages = pagePlan ?? initialPagePlan(effectivePages.length);
@@ -1166,15 +1176,16 @@ export default function App() {
       restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes: previous.bytes });
     }
-  }, [source, pagePlan, effectivePages.length, selectedPages, busy, pendingCommentCount, historyPast, overlays]);
+    setOriginalColorPreview(null);setTransforms(previous.transforms);
+  }, [source, pagePlan, effectivePages.length, selectedPages, busy, pendingCommentCount, historyPast, overlays, transforms]);
 
   const redoEdit = useCallback(() => {
     if (!source || busy || pendingCommentCount || !historyFuture.length) return;
     const next = historyFuture[historyFuture.length - 1];
     setSelectedOriginal(null);
     setHistoryFuture((history) => history.slice(0, -1));
-    setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
-    const dirty = next.bytes !== savedBytesRef.current || next.plan !== null || next.overlays.length > 0;
+    setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
+    const dirty = next.bytes !== savedBytesRef.current || next.plan !== null || next.overlays.length > 0 || next.transforms.length > 0;
     setEditingDirty(dirty);
     window.aster.setDirty(dirty || Boolean(source.needsSave));
     const currentPages = pagePlan ?? initialPagePlan(effectivePages.length);
@@ -1187,7 +1198,8 @@ export default function App() {
       restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes: next.bytes });
     }
-  }, [source, pagePlan, effectivePages.length, selectedPages, busy, pendingCommentCount, historyFuture, overlays]);
+    setOriginalColorPreview(null);setTransforms(next.transforms);
+  }, [source, pagePlan, effectivePages.length, selectedPages, busy, pendingCommentCount, historyFuture, overlays, transforms]);
 
   useEffect(() => {
     const isEditingText = (element: Element | null) => element instanceof HTMLElement && (
@@ -1236,37 +1248,60 @@ export default function App() {
 
   const commitOverlays = useCallback((next: OverlayObject[]) => {
     if (!source || busy || pendingCommentCount) return;
-    setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
+    setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
     setHistoryFuture([]);
     setOverlays(next);
     setEditingDirty(true);
     window.aster.setDirty(true);
-  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
+  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays, transforms]);
   const selectOriginalObject = useCallback((selection: OriginalObjectSelection | null) => {
-    setSelectedOriginal(selection); setSelectedOverlayId(null); setFontEditing(null);
+    setOriginalColorPreview(null); setSelectedOriginal(selection); setSelectedOverlayId(null); setFontEditing(null);
     setObjectColorChannel(selection?.object.fill ? 'fill' : 'stroke');
   }, []);
   const editOriginalObject = useCallback(async (selection: OriginalObjectSelection, change: OriginalObjectChange) => {
     if (!source || source !== originalObjectSource.current || busy || pendingCommentCount || originalObjectLock.current) return;
+    if (change.type !== 'replace-image') {
+      setOriginalColorPreview(null);
+      if (change.type === 'color' && selection.object[change.channel]?.slice(0,3).every((value,index)=>value===change.color[index])) return;
+      setHistoryPast(history => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
+      setHistoryFuture([]);
+      setTransforms(items => change.type === 'transform'
+        ? stageTransform(items, { pageIndex: selection.pageIndex, index: Number(selection.object.id), matrix: change.matrix })
+        : stageObjectPatch(items, selection.pageIndex, Number(selection.object.id), change.type==='delete'?{deleted:true}:{[change.channel]:change.color}));
+      if(change.type==='delete')setSelectedOriginal(null);
+      else if(change.type==='color')setSelectedOriginal({...selection,object:{...selection.object,[change.channel]:[...change.color,selection.object[change.channel]?.[3]??255]}});
+      setEditingDirty(true); window.aster.setDirty(true); setError('');
+      return;
+    }
     originalObjectLock.current = true; setBusy(true); window.aster.setSaving(true);
     try {
-      const bytes = await window.aster.editOriginalObject(source.bytes, selection.pageIndex, selection.object.id, selection.object.token, change);
-      const updated = change.type === 'delete' ? null : (await window.aster.listOriginalObjects(bytes, selection.pageIndex)).find(object => object.id === selection.object.id);
+      const materialized = transforms.length ? await window.aster.applyOriginalTransforms(source.bytes, transforms, {pageIndex:selection.pageIndex,index:Number(selection.object.id)}) : {bytes:source.bytes,index:Number(selection.object.id)};
+      const nativeBytes = materialized.bytes;
+      const target = transforms.length ? (await window.aster.listOriginalObjects(nativeBytes, selection.pageIndex)).find(object => Number(object.id) === materialized.index) : selection.object;
+      if (!target) throw new Error('The selected object changed. Select it again.');
+      const bytes = await window.aster.editOriginalObject(nativeBytes, selection.pageIndex, target.id, target.token, change);
+      const updated = (await window.aster.listOriginalObjects(bytes, selection.pageIndex)).find(object => object.id === target.id);
       if (source !== originalObjectSource.current) return;
-      setHistoryPast(history => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
+      setHistoryPast(history => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
       setHistoryFuture([]); restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes }); setEditingDirty(true); window.aster.setDirty(true);
       setSelectedOriginal(updated ? { ...selection, object: updated } : null); setError('');
     } catch (cause) { setError(`Could not edit PDF object: ${originalTextError(cause)}`); }
     finally { originalObjectLock.current = false; setBusy(false); window.aster.setSaving(false); }
-  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
+  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays, transforms]);
   const commitOriginalText = useCallback(async (pageIndex: number, objectIndex: number, oldText: string, nextText: string, fontChoice: string, color?: number[]) => {
     if (!source || busy || pendingCommentCount || (oldText === nextText && fontChoice === 'original' && !color)) return;
+    if(oldText===nextText && fontChoice==='original' && color){
+      setHistoryPast(history=>remember(history,{bytes:source.bytes,plan:pagePlan,pageCount:effectivePages.length,overlays,transforms}));setHistoryFuture([]);
+      setTransforms(items=>stageObjectPatch(items,pageIndex,objectIndex,{text:oldText,fill:color}));
+      setEditingDirty(true);window.aster.setDirty(true);setError('');return;
+    }
     setBusy(true);
     window.aster.setSaving(true);
     try {
-      const bytes = await window.aster.replaceOriginalText(source.bytes, pageIndex, objectIndex, oldText, nextText, fontChoice, color);
-      setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
+      const materialized = transforms.length ? await window.aster.applyOriginalTransforms(source.bytes, transforms, {pageIndex,index:objectIndex}) : {bytes:source.bytes,index:objectIndex};
+      const bytes = await window.aster.replaceOriginalText(materialized.bytes, pageIndex, materialized.index, oldText, nextText, fontChoice, color);
+      setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
       setHistoryFuture([]);
       restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes });
@@ -1275,23 +1310,14 @@ export default function App() {
       setError('');
     } catch (cause) { setError(`Could not edit original PDF text: ${originalTextError(cause)}`); }
     finally { setBusy(false); window.aster.setSaving(false); }
-  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
+  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays, transforms]);
   const moveOriginalText = useCallback(async (pageIndex: number, objectIndex: number, text: string, dx: number, dy: number) => {
     if (!source || busy || pendingCommentCount) return;
-    setBusy(true);
-    window.aster.setSaving(true);
-    try {
-      const bytes = await window.aster.moveOriginalText(source.bytes, pageIndex, objectIndex, text, dx, dy);
-      setHistoryPast((history) => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
-      setHistoryFuture([]);
-      restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
-      setSource({ ...source, bytes });
-      setEditingDirty(true);
-      window.aster.setDirty(true);
-      setError('');
-    } catch (cause) { setError(`Could not move original PDF text: ${originalTextError(cause)}`); }
-    finally { setBusy(false); window.aster.setSaving(false); }
-  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays]);
+    setHistoryPast(history => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
+    setHistoryFuture([]);
+    setTransforms(items => stageTransform(items, { pageIndex, index: objectIndex, text, matrix: [1, 0, 0, 1, dx, dy] }));
+    setEditingDirty(true); window.aster.setDirty(true); setError('');
+  }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays, transforms]);
   const startHyperlink = async (selection = selectedPdfText()) => {
     if (busy || pendingCommentCount || pagePlan) return;
     setLinkMenu(null);
@@ -1306,8 +1332,9 @@ export default function App() {
     if (!source || !linkSelection || busy || pendingCommentCount || pagePlan) throw new Error('Save pending comment or page changes before adding a link.');
     setBusy(true); window.aster.setSaving(true);
     try {
-      const bytes = await addPdfLinks(source.bytes, linkSelection, url);
-      setHistoryPast(history => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays }));
+      const nativeBytes = transforms.length ? await window.aster.applyOriginalTransforms(source.bytes, transforms) : source.bytes;
+      const bytes = await addPdfLinks(nativeBytes, linkSelection, url);
+      setHistoryPast(history => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
       setHistoryFuture([]);
       restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes }); setEditingDirty(true); window.aster.setDirty(true);
@@ -1432,8 +1459,11 @@ export default function App() {
       try { localStorage.setItem('asterpdf-recent-colors', JSON.stringify(next)); } catch { /* Color history is optional. */ }
       return next; });
     if (selectedOriginal) {
-      if (rememberColor && selectedOriginal.object[objectColorChannel]) void editOriginalObject(selectedOriginal,
-        { type: 'color', channel: objectColorChannel, color: [1, 3, 5].map(offset => parseInt(value.slice(offset, offset + 2), 16)) });
+      if (selectedOriginal.object[objectColorChannel]) {
+        const color=[1,3,5].map(offset=>parseInt(value.slice(offset,offset+2),16));
+        if(rememberColor)void editOriginalObject(selectedOriginal,{type:'color',channel:objectColorChannel,color});
+        else setOriginalColorPreview({pageIndex:selectedOriginal.pageIndex,index:Number(selectedOriginal.object.id),channel:objectColorChannel,color});
+      }
       return;
     }
     const selected = overlays.find((item) => item.id === selectedOverlayId);
@@ -1612,7 +1642,20 @@ export default function App() {
 
   const startSignature = () => { setActiveTool('sign'); setSignatureMenuOpen((open) => !open); setPlacing(false); };
 
-  const openPageGrid = () => {
+  const materializeTransforms = async () => {
+    if (!source || !transforms.length) return;
+    setBusy(true);
+    try {
+      const bytes = await window.aster.applyOriginalTransforms(source.bytes, transforms);
+      restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
+      setSource({ ...source, bytes });
+    } finally { setBusy(false); }
+  };
+
+  const openPageGrid = async () => {
+    if (busy) return;
+    try { await materializeTransforms(); }
+    catch (cause) { setError(`Could not prepare page previews: ${messageOf(cause)}`); return; }
     gridReturnScrollRef.current = viewerRef.current?.scrollTop ?? 0;
     gridJumpPageRef.current = null;
     setPageGridOpen(true);
@@ -1626,7 +1669,14 @@ export default function App() {
     setSidebarCollapsed(false);
   };
 
-  const selectTool = (tool: ActiveTool) => {
+  const selectTool = async (tool: ActiveTool) => {
+    if (busy) return;
+    // Text-selection and page-thumbnail tools need the updated native layout.
+    // This is an in-memory preparation at a tool boundary, never a disk save.
+    if (tool === 'comments' || tool === 'pages') {
+      try { await materializeTransforms(); }
+      catch (cause) { setError(`Could not prepare this tool: ${messageOf(cause)}`); return; }
+    }
     if (pageGridOpen) setPageGridOpen(false);
     setSelectedOverlayId(null); setDrawPreview(null);
     setActiveTool(tool);
@@ -1877,6 +1927,12 @@ export default function App() {
 
   const startPresentation = async () => {
     if (!document || busy || presentationStarting.current) return;
+    if (transforms.length) {
+      presentationAfterRefresh.current = document;
+      try { await materializeTransforms(); }
+      catch (cause) { presentationAfterRefresh.current = null; setError(`Could not prepare presentation: ${messageOf(cause)}`); }
+      return;
+    }
     presentationStarting.current = true;
     try {
       await finishInlineEdits();
@@ -1887,6 +1943,12 @@ export default function App() {
     } catch (cause) { setPresenting(false); setError(`Could not start presentation: ${messageOf(cause)}`); }
     finally { presentationStarting.current = false; }
   };
+
+  useEffect(() => {
+    if (presentationAfterRefresh.current && document && presentationAfterRefresh.current !== document) {
+      presentationAfterRefresh.current = null; void startPresentation();
+    }
+  }, [document]);
 
   useEffect(() => {
     if (presenting || presentationScroll.current === null) return;
@@ -2086,7 +2148,7 @@ export default function App() {
               const page = index + 1;
               return <PdfPage key={planned.id} document={document} pageNumber={page} sourcePageNumber={planned.sourceIndex + 1} rotation={planned.turns * 90}
                 onRenderSettled={pageRendered}
-                getSourceBytes={getSourceBytes} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
+                getSourceBytes={getSourceBytes} originalTransforms={visibleTransforms} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
                 objectEditingBusy={busy} originalObjectSelection={selectedOriginal} onSelectOriginalObject={selectOriginalObject} onEditOriginalObject={editOriginalObject}
                 onFontEditChange={changeFontEditing} fontCommand={fontCommand} colorCommand={colorCommand} installedFonts={installedFonts}
                 size={displayPageSize(page)}

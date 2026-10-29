@@ -5,6 +5,8 @@ const { randomUUID } = require('node:crypto');
 const { createRecentStore } = require('./recent.cjs');
 const { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays } = require('./original-text.cjs');
 const { listOriginalObjects, editOriginalObject } = require('./original-objects.cjs');
+const { previewOriginalObject } = require('./original-preview.cjs');
+const { applyOriginalTransforms } = require('./original-transforms.cjs');
 const { listInstalledFonts, getInstalledFont } = require('./installed-fonts.cjs');
 const { createUpdateService, updateArchitecture } = require('./updates.cjs');
 const { createUpdateInstaller } = require('./update-installer.cjs');
@@ -257,6 +259,12 @@ async function finishCompressedSave(rawBytes, token, expectedPath) {
   });
   documentIpc.handle('pdf:list-original-objects', (event, bytes, pageIndex) => {
     requireApp(event); return listOriginalObjects(bytes, pageIndex);
+  });
+  documentIpc.handle('pdf:preview-original-object', (event, ...args) => {
+    requireApp(event); return previewOriginalObject(...args);
+  });
+  documentIpc.handle('pdf:apply-original-transforms', (event, bytes, transforms, target) => {
+    requireApp(event); return applyOriginalTransforms(bytes, transforms, target);
   });
   documentIpc.handle('pdf:edit-original-object', (event, bytes, pageIndex, id, token, change) => {
     requireApp(event); return editOriginalObject(bytes, pageIndex, id, token, change);

@@ -69,7 +69,7 @@ async function withPage(bytes,pageIndex,action) {
 const listOriginalObjects = (bytes,pageIndex) => withPage(bytes,pageIndex,(pdfium,document,page)=>inspect(pdfium,page).map(record=>record.info));
 
 function save(pdfium,document,page) {
-  if(!pdfium.FPDFPage_GenerateContent(page))throw new Error('Could not rebuild the edited page.');
+  if(page && !pdfium.FPDFPage_GenerateContent(page))throw new Error('Could not rebuild the edited page.');
   const writer=pdfium.PDFiumExt_OpenFileWriter(), memory=pdfium.pdfium;
   if(!writer)throw new Error('Could not create PDF output.');
   try {
@@ -142,4 +142,4 @@ async function editOriginalObject(bytes,pageIndex,id,token,change) {
   page.node.set(PDFName.of('Contents'),pdf.context.obj(refs));
   return new Uint8Array(await pdf.save());
 }
-module.exports={listOriginalObjects,editOriginalObject};
+module.exports={listOriginalObjects,editOriginalObject,saveOriginalDocument:save};

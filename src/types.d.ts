@@ -25,6 +25,9 @@ declare global {
       save(bytes: Uint8Array, saveAs: boolean, expectedPath: string): Promise<{ path: string; name: string } | null>;
       listOriginalText(bytes: Uint8Array, pageIndex: number): Promise<OriginalPdfText[]>;
       listOriginalObjects(bytes: Uint8Array, pageIndex: number): Promise<OriginalPdfObject[]>;
+      previewOriginalObject(bytes: Uint8Array, pageIndex: number, index: number, width: number, height: number, rotation: number, transforms?: OriginalTransform[]): Promise<Uint8Array[]>;
+      applyOriginalTransforms(bytes: Uint8Array, transforms: OriginalTransform[]): Promise<Uint8Array>;
+      applyOriginalTransforms(bytes: Uint8Array, transforms: OriginalTransform[], target: {pageIndex:number;index:number}): Promise<{bytes:Uint8Array;index:number}>;
       editOriginalObject(bytes: Uint8Array, pageIndex: number, id: string, token: string, change: OriginalObjectChange): Promise<Uint8Array>;
       listInstalledFonts(): Promise<{ id: string; family: string; style: string; postscriptName: string }[]>;
       readInstalledFont(id: string, text: string): Promise<Uint8Array>;
@@ -122,3 +125,5 @@ export interface RecentPdf {
   openedAt: number;
   preview: string | null;
 }
+
+export type OriginalTransform = { pageIndex: number; index: number; matrix: number[]; text?: string; deleted?: boolean; fill?: number[]; stroke?: number[] };

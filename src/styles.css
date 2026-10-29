@@ -534,3 +534,6 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .draw-radius-handle{cursor:move;pointer-events:all}
 .draw-radius-dot{fill:white;stroke:#5c922c;stroke-width:1.5;pointer-events:none}
 .draw-radius-handle:hover .draw-radius-dot{fill:#e7f0d9;stroke-width:2}
+.original-drag-preview{position:absolute;inset:0;z-index:1;display:none;pointer-events:none;overflow:hidden}
+.original-drag-preview canvas{position:absolute;left:0;top:0;pointer-events:none}
+.original-drag-preview canvas:nth-child(2){will-change:transform}

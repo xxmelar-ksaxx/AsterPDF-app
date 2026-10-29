@@ -16,6 +16,9 @@ import type { ColorCommand, FontCommand, FontSelection, InstalledFont } from './
 import type { OriginalPdfText } from '../types';
 import OriginalTextEditor, { type TextEdit } from './OriginalTextEditor';
 import OriginalObjectLayer from './OriginalObjectLayer';
+import useOriginalDragPreview, { type PreviewBox } from './useOriginalDragPreview';
+import { transformedText, isOriginalDeleted } from '../pdf/original-transforms';
+import type { OriginalTransform } from '../types';
 import type { OriginalObjectChange, OriginalObjectSelection } from '../types';
 
 export type Zoom = 'fit' | number;
@@ -43,6 +46,7 @@ type Props = {
   colorCommand: ColorCommand | null;
   installedFonts: InstalledFont[];
   onMoveOriginalText: (pageIndex: number, objectIndex: number, text: string, dx: number, dy: number) => Promise<void>;
+  originalTransforms: OriginalTransform[];
   pageNumber: number;
   sourcePageNumber: number;
   rotation: number;
@@ -100,7 +104,7 @@ type Props = {
 };
 
 export default function PdfPage({
-  document, getSourceBytes, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
+  document, getSourceBytes, originalTransforms, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
   popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, selectingLinks, editActive, onLinkMenu, onNavigateLink, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
@@ -116,8 +120,13 @@ export default function PdfPage({
   const [originalText, setOriginalText] = useState<OriginalPdfText[]>([]);
   const [editingOriginal, setEditingOriginal] = useState<TextEdit | null>(null);
   const editingOriginalRef = useRef<typeof editingOriginal>(null);
-  const originalDragRef = useRef<{ index: number; text: string; startX: number; startY: number } | null>(null);
+  const originalDragRef = useRef<{ index: number; text: string; startX: number; startY: number; box: PreviewBox } | null>(null);
   const [originalDrag, setOriginalDrag] = useState<{ index: number; dx: number; dy: number } | null>(null);
+  const livePreview = useOriginalDragPreview(viewport, getSourceBytes, sourcePageNumber - 1, near && editActive && overlayTool === 'select', canvasRef, originalTransforms);
+  useEffect(() => {
+    const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape' && originalDragRef.current) { originalDragRef.current = null; setOriginalDrag(null); livePreview.cancel(); } };
+    window.addEventListener('keydown', cancel); return () => window.removeEventListener('keydown', cancel);
+  }, []);
   const [signatureCursor, setSignatureCursor] = useState<{ x: number; y: number } | null>(null);
   const [signatureMenu, setSignatureMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const dragRef = useRef<{ id: string; mode: 'move' | 'resize'; startX: number; startY: number; placement: PlacedSignature } | null>(null);
@@ -135,7 +144,8 @@ export default function PdfPage({
     const current = editingOriginalRef.current;
     if (!current) return;
     editingOriginalRef.current = null; setEditingOriginal(null); onFontEditChange(null);
-    const original = originalText.find((object) => object.index === current.index);
+    const originalEntry = originalText.find((object) => object.index === current.index);
+    const original = originalEntry && transformedText(originalEntry, originalTransforms, sourcePageNumber - 1);
     const colorChanged = original && current.color.some((value, index) => value !== original.color[index]);
     if (commit && (current.value !== current.text || current.fontChoice !== 'original' || colorChanged))
       return onCommitOriginalText(sourcePageNumber - 1, current.index, current.text, current.value, current.fontChoice,
@@ -240,6 +250,7 @@ export default function PdfPage({
         visible.width = canvas.width;
         visible.height = canvas.height;
         visibleContext.drawImage(canvas, 0, 0);
+        livePreview.painted(getSourceBytes());
         setViewport(currentViewport);
         setReady(true);
       } catch (cause) {
@@ -322,36 +333,44 @@ export default function PdfPage({
         setSignatureCursor({ x: event.clientX - bounds.left, y: event.clientY - bounds.top });
       } }} onPointerLeave={() => setSignatureCursor(null)} style={{ width, height }}>
       <canvas ref={canvasRef} width={0} height={0} style={{ display: ready ? 'block' : 'none', width, height }} />
+      <div ref={livePreview.element} className="original-drag-preview" aria-hidden="true" />
       {activeViewport && <OriginalObjectLayer enabled={near && editActive && overlayTool === 'select' && !selectingLinks} busy={objectEditingBusy}
         getSourceBytes={getSourceBytes} pageId={pageId} pageIndex={sourcePageNumber-1} viewport={activeViewport}
-        selection={originalObjectSelection} onSelect={onSelectOriginalObject} onChange={onEditOriginalObject} onError={onError} />}
+        selection={originalObjectSelection} onSelect={onSelectOriginalObject} onChange={onEditOriginalObject} onError={onError} livePreview={livePreview} transforms={originalTransforms} />}
       {inspectOriginalText && activeViewport && <div className="original-text-layer" aria-label="Original PDF text">
-        {originalText.map((object) => {
+        {originalText.filter(original=>!isOriginalDeleted(originalTransforms,sourcePageNumber-1,original.index)).map((original) => {
+          const object = transformedText(original, originalTransforms, sourcePageNumber - 1);
           const a = activeViewport.convertToViewportPoint(object.box[0], object.box[1]);
           const b = activeViewport.convertToViewportPoint(object.box[2], object.box[3]);
           const offset = originalDrag?.index === object.index ? originalDrag : null;
           const left = Math.min(a[0], b[0]) + (offset?.dx || 0); const top = Math.min(a[1], b[1]) + (offset?.dy || 0);
           const boxWidth = Math.max(12, Math.abs(a[0] - b[0])); const boxHeight = Math.max(12, Math.abs(a[1] - b[1]));
           return <svg key={object.index} className={`original-text-frames${editingOriginal?.index === object.index ? ' is-editing' : ''}`} width={width} height={height}
-            aria-label={`Original text frame: ${object.text}`}>
+            aria-label={`Original text frame: ${object.text}`} onPointerEnter={()=>{if(!objectEditingBusy)livePreview.warm(object.index);}}>
             <TextFrame x={left} y={top} width={boxWidth} height={boxHeight} selected={editingOriginal?.index === object.index || offset !== null}
               onInteriorClick={(event) => { event.stopPropagation(); const next = { ...object, value: object.text, fontChoice: 'original' as const };
                 editingOriginalRef.current = next; setEditingOriginal(next);
                 onFontEditChange({ pageId, index: object.index, fontName: object.fontName, choice: 'original',
                   fontSize: object.fontSize * Math.hypot(object.matrix[0], object.matrix[1]),
                   color: '#' + object.color.slice(0, 3).map((value) => value.toString(16).padStart(2, '0')).join('') }); }}
-              onBorderPointerDown={(event) => { event.stopPropagation(); if (event.button !== 0) return;
-                originalDragRef.current = { index: object.index, text: object.text, startX: event.clientX, startY: event.clientY };
+              onBorderPointerDown={(event) => { event.stopPropagation(); if (event.button !== 0 || objectEditingBusy) return;
+                const box = { x: Math.min(a[0],b[0]), y: Math.min(a[1],b[1]), width: Math.max(1,Math.abs(a[0]-b[0])), height: Math.max(1,Math.abs(a[1]-b[1])) };
+                originalDragRef.current = { index: object.index, text: object.text, startX: event.clientX, startY: event.clientY, box };
+                livePreview.begin(object.index,box);
                 event.currentTarget.setPointerCapture(event.pointerId); }}
               onBorderPointerMove={(event) => { const drag = originalDragRef.current;
-                if (drag?.index === object.index) setOriginalDrag({ index: object.index, dx: event.clientX - drag.startX, dy: event.clientY - drag.startY }); }}
+                if (drag?.index === object.index) {
+                  const dx=event.clientX-drag.startX,dy=event.clientY-drag.startY;
+                  setOriginalDrag({ index: object.index, dx, dy });
+                  livePreview.update({...drag.box,x:drag.box.x+dx,y:drag.box.y+dy});
+                } }}
               onBorderPointerUp={(event) => { const drag = originalDragRef.current; originalDragRef.current = null; setOriginalDrag(null);
                 if (!drag || drag.index !== object.index || !activeViewport) return;
                 const dx = event.clientX - drag.startX, dy = event.clientY - drag.startY;
-                if (Math.hypot(dx, dy) < 2) return;
+                if (Math.hypot(dx, dy) < 2) { livePreview.cancel(); return; }
                 const p0 = activeViewport.convertToPdfPoint(0, 0), p1 = activeViewport.convertToPdfPoint(dx, dy);
-                void onMoveOriginalText(sourcePageNumber - 1, object.index, object.text, p1[0] - p0[0], p1[1] - p0[1]); }}
-              onBorderPointerCancel={() => { originalDragRef.current = null; setOriginalDrag(null); }} />
+                void livePreview.finish(()=>onMoveOriginalText(sourcePageNumber - 1, object.index, object.text, p1[0] - p0[0], p1[1] - p0[1])); }}
+              onBorderPointerCancel={() => { originalDragRef.current = null; setOriginalDrag(null); livePreview.cancel(); }} />
           </svg>;
         })}
         {editingOriginal && <OriginalTextEditor edit={editingOriginal} viewport={activeViewport} canvas={canvasRef.current} fonts={installedFonts}
