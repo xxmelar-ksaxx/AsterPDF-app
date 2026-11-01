@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileText, Home, Plus, X, AppWindow, ExternalLink } from 'lucide-react';
+import { FileText, Home, Plus, X, AppWindow, ExternalLink, Download } from 'lucide-react';
 
 export default function Workspace() {
   const [state, setState] = useState<WorkspaceState>({ tabs: [], activeId: null, dragging: false });
@@ -38,6 +38,7 @@ export default function Workspace() {
     return () => window.removeEventListener('keydown', key);
   }, []);
   return <nav className={`document-tabs-bar${state.dragging ? ' is-dragging' : ''}`} aria-label="Documents">
+    <button className="workspace-brand" aria-label="Home - Recently opened PDFs" title="Home - Recently opened PDFs" onClick={() => window.aster.workspaceAction('home')}><img src="./icon.png" alt="" /><span>Aster<span className="brand-pdf">PDF</span></span></button>
     <div className="document-tabs" role="tablist" ref={strip} onWheel={event => { if (strip.current) strip.current.scrollLeft += event.deltaY; }}>
       {state.tabs.map((tab, index) => <div key={tab.id} data-tab-id={tab.id}
         className={`document-tab${tab.id === state.activeId ? ' active' : ''}${dropIndex === index ? ' drop-before' : ''}${dropIndex === state.tabs.length && index === state.tabs.length - 1 ? ' drop-after' : ''}`}
@@ -75,6 +76,7 @@ export default function Workspace() {
     </div>
     <button className="workspace-button" aria-label="New tab" title="New tab (Ctrl/Cmd+T)" onClick={() => window.aster.workspaceAction('new-tab')}><Plus size={17} /></button>
     <button className="workspace-button" aria-label="New window" title="New window (Ctrl/Cmd+Shift+N)" onClick={() => window.aster.workspaceAction('new-window')}><AppWindow size={16} /></button>
+    {(state.update?.available || state.update?.transfer.phase === 'ready') && <button className={`workspace-button workspace-update${state.update.transfer.phase === 'downloading' ? ' downloading' : ''}`} aria-label="Update AsterPDF" title={state.update.transfer.phase === 'downloading' ? `Downloading ${Math.floor(state.update.transfer.percent || 0)}%` : state.update.transfer.phase === 'ready' ? 'Restart and install update' : 'Update available'} onClick={() => window.aster.workspaceAction('update')}><Download size={18} /></button>}
     {error && <span role="alert">{error}</span>}
   </nav>;
 }

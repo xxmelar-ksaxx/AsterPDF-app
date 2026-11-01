@@ -1,3 +1,6 @@
+import ReaderControls from './components/ReaderControls';
+import { flushSync } from 'react-dom';
+import { videoBlob } from './pdf/video-assets';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
@@ -44,7 +47,7 @@ import { HyperlinkDialog, HyperlinkMenu } from './components/HyperlinkTools';
 import { addPdfLinks } from './pdf/links';
 import { useUpdates } from './updates';
 import { stageTransform, stageObjectPatch } from './pdf/original-transforms';
-import type { OriginalTransform } from './types';
+import type { EditSelection, OriginalTransform } from './types';
 import { finishInlineEdits } from './finish-inline-edit';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
@@ -138,7 +141,7 @@ export default function App() {
   }, [source?.bytes]);
   const markupHistoryRef = useRef<{ past: MarkupSnapshot[]; future: MarkupSnapshot[]; colorGroup: string | null }>({ past: [], future: [], colorGroup: null });
   const setSource = useCallback((next: OpenedPdf | null) => {
-    setSourceState(next); setPreviewSource(next); setTransforms([]); setOriginalColorPreview(null);
+    setEditSelection([]); setSourceState(next); setPreviewSource(next); setTransforms([]); setOriginalColorPreview(null);
     if (!next) presentationAfterRefresh.current = null;
     setCommentOverrides({});
     markupHistoryRef.current = { past: [], future: [], colorGroup: null };
@@ -150,7 +153,7 @@ export default function App() {
   const [zoom, setZoom] = useState<Zoom>('fit');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('comments');
   const [activeTool, setActiveTool] = useState<ActiveTool>('comments');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [pageGridOpen, setPageGridOpen] = useState(false);
   const [gridDragOver, setGridDragOver] = useState<number | null>(null);
   const [comments, setComments] = useState<PdfComment[]>([]);
@@ -224,13 +227,16 @@ export default function App() {
   const [historyPast, setHistoryPast] = useState<EditorSnapshot[]>([]);
   const [historyFuture, setHistoryFuture] = useState<EditorSnapshot[]>([]);
   const [overlays, setOverlays] = useState<OverlayObject[]>([]);
+  const clipboardLock = useRef(false);
+  const pasteOffset = useRef(0);
+  const [editSelection, setEditSelection] = useState<EditSelection[]>([]);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
   const [overlayTool, setOverlayTool] = useState<OverlayTool>('select');
   const [selectedOriginal, setSelectedOriginal] = useState<OriginalObjectSelection | null>(null);
   const [objectColorChannel, setObjectColorChannel] = useState<'fill' | 'stroke'>('fill');
   const originalObjectLock = useRef(false);
   const originalObjectSource = useRef(source); originalObjectSource.current = source;
-  useEffect(() => { setSelectedOriginal(null); }, [source?.path, activeTool, overlayTool]);
+  useEffect(() => { setSelectedOriginal(null); setEditSelection([]); }, [source?.path, activeTool, overlayTool]);
   const [overlayColor, setOverlayColor] = useState('#172333');
   const [recentColors, setRecentColors] = useState<string[]>(() => {
     try { const colors: unknown = JSON.parse(localStorage.getItem('asterpdf-recent-colors') || '[]');
@@ -678,6 +684,7 @@ export default function App() {
       setCompressionError('');
       setCompressionEstimate({ status: 'calculating', progress: 'Starting size estimates…' });
       setCompressionChoice(null);
+      setSidebarCollapsed(true);
       setSource({ path: opened.path, name: opened.kind === 'pdf' ? opened.name : opened.name.replace(/\.[^.]+$/, '.pdf'), bytes, needsSave: opened.kind !== 'pdf' });
       setSelectedId(null);
       setPendingPoint(null);
@@ -754,7 +761,7 @@ export default function App() {
       setPageGridOpen(false); setGridDragOver(null); setPageNumber(1);
       setCompressionOpen(false); setCompressionChoice(null); setCompressionError('');
       setCompressionEstimate({ status: 'idle' });
-      setActiveTool('comments'); setSidebarTab('comments'); setSidebarCollapsed(false);
+      setActiveTool('comments'); setSidebarTab('comments'); setSidebarCollapsed(true);
       setFontEditing(null); setSettingsOpen(false); setError('');
       savedBytesRef.current = null; savedFileBytesRef.current = null;
       restoreScrollRef.current = null; gridReturnScrollRef.current = null; gridJumpPageRef.current = null;
@@ -1176,7 +1183,7 @@ export default function App() {
       restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes: previous.bytes });
     }
-    setOriginalColorPreview(null);setTransforms(previous.transforms);
+    setEditSelection([]);setOriginalColorPreview(null);setTransforms(previous.transforms);
   }, [source, pagePlan, effectivePages.length, selectedPages, busy, pendingCommentCount, historyPast, overlays, transforms]);
 
   const redoEdit = useCallback(() => {
@@ -1198,7 +1205,7 @@ export default function App() {
       restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
       setSource({ ...source, bytes: next.bytes });
     }
-    setOriginalColorPreview(null);setTransforms(next.transforms);
+    setEditSelection([]);setOriginalColorPreview(null);setTransforms(next.transforms);
   }, [source, pagePlan, effectivePages.length, selectedPages, busy, pendingCommentCount, historyFuture, overlays, transforms]);
 
   useEffect(() => {
@@ -1238,13 +1245,14 @@ export default function App() {
   useEffect(() => {
     const deselect = (event: PointerEvent) => {
       const target = event.target;
+      if (target instanceof Element && !(activeTool==='edit'&&overlayTool==='select'&&target.closest('.page-stage')) && !target.closest('[data-original-object], .original-object-frame, .original-text-frames, .edit-selection-frame, .edit-selection-menu, [data-overlay-id], .overlay-toolbar, .image-context-menu, [data-original-object-menu], .added-text-editor, [data-added-text-controls], [data-font-picker]')) setEditSelection([]);
       if (target instanceof Element && !target.closest('[data-original-object], .original-object-frame, [data-original-object-menu], .overlay-toolbar, [data-added-text-controls]')) setSelectedOriginal(null);
       if (target instanceof Element && !target.closest('[data-overlay-id], .overlay-toolbar, .draw-inspector, .sidebar-toggle, .image-context-menu, .added-text-editor, [data-added-text-controls], [data-font-picker]'))
         setSelectedOverlayId(null);
     };
     window.document.addEventListener('pointerdown', deselect, true);
     return () => window.document.removeEventListener('pointerdown', deselect, true);
-  }, []);
+  }, [activeTool,overlayTool]);
 
   const commitOverlays = useCallback((next: OverlayObject[]) => {
     if (!source || busy || pendingCommentCount) return;
@@ -1254,8 +1262,21 @@ export default function App() {
     setEditingDirty(true);
     window.aster.setDirty(true);
   }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays, transforms]);
-  const selectOriginalObject = useCallback((selection: OriginalObjectSelection | null) => {
-    setOriginalColorPreview(null); setSelectedOriginal(selection); setSelectedOverlayId(null); setFontEditing(null);
+  const chooseEditSelection = useCallback((item: EditSelection | null, toggle = false) => {
+    const focused=window.document.activeElement;
+    if(focused instanceof HTMLElement)focused.blur();
+    window.getSelection()?.removeAllRanges();
+    const key = (entry: EditSelection) => entry.kind === 'overlay' ? entry.id : `${entry.pageId}:${entry.index}`;
+    setEditSelection(previous => !item ? [] : toggle
+      ? previous.some(entry => key(entry) === key(item)) ? previous.filter(entry => key(entry) !== key(item)) : [...previous, item]
+      : previous.length>1 && previous.some(entry=>key(entry)===key(item)) ? previous : [item]);
+  }, []);
+  const selectNativeText = useCallback((item: EditSelection, toggle = false) => {
+    chooseEditSelection(item, toggle); setSelectedOriginal(null); setSelectedOverlayId(null);
+  }, [chooseEditSelection]);
+  const selectOriginalObject = useCallback((selection: OriginalObjectSelection | null, toggle = false) => {
+    chooseEditSelection(selection ? { kind: 'native', pageId: selection.pageId, pageIndex: selection.pageIndex, index: Number(selection.object.id), box: selection.object.box } : null, toggle);
+    setOriginalColorPreview(null); setSelectedOriginal(toggle ? null : selection); setSelectedOverlayId(null); setFontEditing(null);
     setObjectColorChannel(selection?.object.fill ? 'fill' : 'stroke');
   }, []);
   const editOriginalObject = useCallback(async (selection: OriginalObjectSelection, change: OriginalObjectChange) => {
@@ -1268,7 +1289,7 @@ export default function App() {
       setTransforms(items => change.type === 'transform'
         ? stageTransform(items, { pageIndex: selection.pageIndex, index: Number(selection.object.id), matrix: change.matrix })
         : stageObjectPatch(items, selection.pageIndex, Number(selection.object.id), change.type==='delete'?{deleted:true}:{[change.channel]:change.color}));
-      if(change.type==='delete')setSelectedOriginal(null);
+      if(change.type==='delete'){setSelectedOriginal(null);setEditSelection(items=>items.filter(item=>item.kind!=='native'||item.pageIndex!==selection.pageIndex||item.index!==Number(selection.object.id)));}
       else if(change.type==='color')setSelectedOriginal({...selection,object:{...selection.object,[change.channel]:[...change.color,selection.object[change.channel]?.[3]??255]}});
       setEditingDirty(true); window.aster.setDirty(true); setError('');
       return;
@@ -1345,6 +1366,7 @@ export default function App() {
     // Retain binary video data only once it is placed. Cancelled imports can
     // be collected without adding large files to undo snapshots.
     if (object.videoId && overlayImage?.videoFile) storeVideo(object.videoId, overlayImage.videoFile);
+    if (activeTool === 'edit') setEditSelection([{kind:'overlay', id:object.id, pageId:object.pageId}]);
     commitOverlays([...overlays, { ...object, editingTool: object.editingTool ?? (activeTool === 'draw' ? 'draw' : 'edit') }]); setSelectedOverlayId(object.id);
     if (object.kind === 'image' || object.kind === 'video' || ['rectangle', 'ellipse', 'line'].includes(object.kind)) { setOverlayTool('select'); setOverlayImage(null); } };
   const updateOverlay = (object: OverlayObject) => {
@@ -1356,13 +1378,14 @@ export default function App() {
   const deleteOverlay = (id: string) => {
     const object = overlays.find((item) => item.id === id);
     if (object && isDrawingObject(object) && activeTool !== 'draw') return;
-    commitOverlays(overlays.filter((item) => item.id !== id)); setSelectedOverlayId(null);
+    commitOverlays(overlays.filter((item) => item.id !== id)); setSelectedOverlayId(null); setEditSelection(items=>items.filter(item=>item.kind!=='overlay'||item.id!==id));
   };
-  const selectOverlay = (id: string | null) => {
+  const selectOverlay = (id: string | null, toggle = false) => {
+    if (activeTool === 'edit') { const object = overlays.find(o => o.id === id); chooseEditSelection(object ? { kind: 'overlay', id: object.id, pageId: object.pageId } : null, toggle); }
     if (id) setSelectedOriginal(null);
     const object = overlays.find((item) => item.id === id);
     if (object && isDrawingObject(object) && activeTool !== 'draw') return;
-    setSelectedOverlayId(id);
+    setSelectedOverlayId(toggle ? null : id);
     const selected = overlays.find((item) => item.id === id);
     if (selected) {
       setOverlayColor(selected.color); setOverlayLineWidth(selected.lineWidth);
@@ -1373,6 +1396,11 @@ export default function App() {
       if (selected.kind !== 'text' && selected.kind !== 'image' && selected.kind !== 'video') setDrawDefaults({ color: selected.color, lineWidth: selected.lineWidth,
         fill: selected.fill ?? null, fillHidden: selected.fillHidden ?? false, opacity: selected.opacity ?? 1, radius: selected.radius ?? 0, radiusCorners: selected.radiusCorners });
     }
+  };
+  const selectEditObjects=(items:EditSelection[])=>{
+    setSelectedOriginal(null);setSelectedOverlayId(null);setOriginalColorPreview(null);setFontEditing(null);
+    if(items.length===1&&items[0].kind==='overlay')selectOverlay(items[0].id);
+    setEditSelection(items);
   };
   const chooseDrawingTool = (tool: OverlayTool) => { setOverlayTool(tool); if (tool !== 'select') setSelectedOverlayId(null); };
   const rememberDrawColor = (color: string) => setRecentColors((colors) => {
@@ -1561,6 +1589,8 @@ export default function App() {
 
   useEffect(() => {
     const subscriptions = [
+      window.aster.onMenu('menu:home', () => { if (!installLockRef.current) void goHome(); }),
+      window.aster.onMenu('menu:update', () => { setSettingsOpen(true); if (!updates.downloading && updates.state?.transfer.phase !== 'ready') void updates.download(); }),
       window.aster.onMenu('menu:open', () => { if (!installLockRef.current) void openSelected(); }),
       window.aster.onMenu('menu:save', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current()).catch((cause) => setError(messageOf(cause))); }),
       window.aster.onMenu('menu:save-as', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current(true)).catch((cause) => setError(messageOf(cause))); }),
@@ -1570,7 +1600,7 @@ export default function App() {
       window.aster.onMenu('menu:pdf-to-data', () => { void exportDocument('data'); })
     ];
     return () => subscriptions.forEach((unsubscribe) => unsubscribe());
-  }, [openSelected, save, exportDocument]);
+  });
 
   const saveSettings = async () => {
     try {
@@ -1908,6 +1938,131 @@ export default function App() {
     changeZoom(Math.max(0.4, Math.min(2.5, Math.round((current + direction * 0.2) * 10) / 10)));
   };
 
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !source) return;
+    const wheel = (event: WheelEvent) => {
+      if (!event.altKey || !event.deltaY) return;
+      event.preventDefault(); adjustZoom(event.deltaY < 0 ? 1 : -1);
+    };
+    const key = (event: KeyboardEvent) => {
+      if (!event.altKey || event.ctrlKey || event.metaKey || event.defaultPrevented) return;
+      if ((event.target as Element).closest('input,textarea,[contenteditable="true"],dialog')) return;
+      if (['Equal', 'NumpadAdd', 'Minus', 'NumpadSubtract', 'Digit0'].includes(event.code)) {
+        event.preventDefault();
+        if (event.code === 'Digit0') changeZoom('fit');
+        else adjustZoom(['Equal', 'NumpadAdd'].includes(event.code) ? 1 : -1);
+      }
+    };
+    viewer.addEventListener('wheel', wheel, { passive: false });
+    window.addEventListener('keydown', key);
+    return () => { viewer.removeEventListener('wheel', wheel); window.removeEventListener('keydown', key); };
+  });
+
+  const moveEditSelection = async (dx:number,dy:number) => {
+    if(!source||busy||pendingCommentCount||!document||!editSelection.length)return;
+    const deltas=new Map<string,{x:number;y:number;width:number;height:number}>();
+    for(const id of new Set(editSelection.map(s=>s.pageId))){
+      const planned=effectivePages.find(p=>p.id===id);if(!planned)continue;
+      const page=await document.getPage(planned.sourceIndex+1),viewport=page.getViewport({scale:1,rotation:page.rotate+planned.turns*90});
+      const a=viewport.convertToPdfPoint(0,0),b=viewport.convertToPdfPoint(dx,dy);
+      deltas.set(id,{x:b[0]-a[0],y:b[1]-a[1],width:viewport.width,height:viewport.height});
+    }
+    if(originalObjectSource.current!==source)return;
+    flushSync(()=>{
+      setHistoryPast(history=>remember(history,{bytes:source.bytes,plan:pagePlan,pageCount:effectivePages.length,overlays,transforms}));setHistoryFuture([]);
+      setOverlays(items=>items.map(o=>{const d=deltas.get(o.pageId);return d&&!o.locked&&!isDrawingObject(o)&&editSelection.some(s=>s.kind==='overlay'&&s.id===o.id)?{...o,x:o.x+dx/d.width,y:o.y+dy/d.height}:o;}));
+      setTransforms(items=>editSelection.reduce((next,s)=>{const d=deltas.get(s.pageId);return s.kind==='native'&&d?stageTransform(next,{pageIndex:s.pageIndex,index:s.index,matrix:[1,0,0,1,d.x,d.y],...(s.text!==undefined?{text:s.text}:{})}):next;},items));
+      setEditSelection(items=>items.map(s=>{const d=deltas.get(s.pageId);return s.kind==='native'&&d?{...s,box:s.box.map((v,i)=>v+(i%2?d.y:d.x))}:s;}));
+      setSelectedOriginal(null);setSelectedOverlayId(null);setEditingDirty(true);window.aster.setDirty(true);
+    });
+  };
+  const deleteEditSelection = () => {
+    if (!source || busy || !editSelection.length || pendingCommentCount) return;
+    setHistoryPast(history => remember(history, { bytes: source.bytes, plan: pagePlan, pageCount: effectivePages.length, overlays, transforms }));
+    setHistoryFuture([]);
+    setOverlays(items => items.filter(item => !editSelection.some(s => s.kind === 'overlay' && s.id === item.id && !item.locked && !isDrawingObject(item))));
+    setTransforms(items => editSelection.reduce((next, item) => item.kind === 'native'
+      ? stageObjectPatch(next, item.pageIndex, item.index, { deleted: true, ...(item.text !== undefined ? { text: item.text } : {}) }) : next, items));
+    setEditSelection([]); setSelectedOverlayId(null); setSelectedOriginal(null);
+    setEditingDirty(true); window.aster.setDirty(true);
+  };
+  const copyEditSelection = (cut=false) => {
+    if(!source||busy||pendingCommentCount||!editSelection.length)return;
+    if(cut)setBusy(true);
+    const selected = overlays.filter(o => editSelection.some(s => s.kind === 'overlay' && s.id === o.id) && !isDrawingObject(o));
+    pasteOffset.current = 0;
+    void (async () => {
+      const videos = await Promise.all([...new Set(selected.map(o => o.videoId).filter((id): id is string => Boolean(id)))].map(async id => {
+        const blob = videoBlob(id); if (!blob) throw new Error('The selected video is unavailable.');
+        return { id, bytes: new Uint8Array(await blob.arrayBuffer()) };
+      }));
+      await window.aster.copyEditObjects({ overlays: selected, videos, selections: editSelection, transforms,
+        ...(editSelection.some(s => s.kind === 'native') ? { bytes: source.bytes } : {}) });
+      if (cut && originalObjectSource.current === source) deleteEditSelection();
+    })().catch(error => setError(`Could not copy objects: ${messageOf(error)}`)).finally(() => { if (cut) setBusy(false); });
+  };
+  useEffect(() => {
+    if (activeTool !== 'edit' || !source || busy || pendingCommentCount || settingsOpen || discardRequestId) return;
+    const typing = (target: EventTarget | null) => target instanceof Element && Boolean(target.closest('input,textarea,[contenteditable="true"],dialog,[role="dialog"]'));
+    const copy = (event: ClipboardEvent) => {
+      if(typing(event.target)||!editSelection.length)return;
+      event.preventDefault();copyEditSelection(event.type==='cut');
+    };
+    const paste = (event: ClipboardEvent) => {
+      if (typing(event.target)) return;
+      event.preventDefault();
+      if (clipboardLock.current) return;
+      clipboardLock.current = true;
+      void (async () => {
+        setBusy(true);
+        const data = await window.aster.readEditClipboard();
+        if (originalObjectSource.current !== source) return;
+        const planned = effectivePages[pageNumber - 1]; if (!planned) return;
+        const size = displayPageSize(pageNumber), offset = 12 * (++pasteOffset.current);
+        let bytes = source.bytes;
+        let added: OverlayObject[] = [], selection: EditSelection[] = [];
+        if (data.objects) {
+          if (data.objects.fragment) {
+            const materialized = transforms.length ? await window.aster.applyOriginalTransforms(bytes, transforms) : bytes;
+            const result = await window.aster.pasteNativeObjects(materialized, data.objects.fragment, planned.sourceIndex, offset, -offset);
+            bytes = result.bytes;
+            const [objects, texts] = await Promise.all([window.aster.listOriginalObjects(bytes, planned.sourceIndex), window.aster.listOriginalText(bytes, planned.sourceIndex)]);
+            selection = [...objects.filter(o => result.indices.includes(Number(o.id))).map(o => ({kind:'native' as const,pageId:planned.id,pageIndex:planned.sourceIndex,index:Number(o.id),box:o.box})),
+              ...texts.filter(t => result.indices.includes(t.index)).map(t => ({kind:'native' as const,pageId:planned.id,pageIndex:planned.sourceIndex,index:t.index,box:t.box,text:t.text}))];
+          }
+          for (const video of data.objects.videos) storeVideo(video.id, new Blob([video.bytes as Uint8Array<ArrayBuffer>], {type:'video/mp4'}));
+          added = data.objects.overlays.map(o => ({...o,id:crypto.randomUUID(),pageId:planned.id,editingTool:'edit',locked:false,x:o.x+offset/size.width,y:o.y+offset/size.height}));
+        } else if (data.image) {
+          const image = new Image(); image.src = data.image; await image.decode();
+          const width = Math.min(size.width * .4, image.naturalWidth), height = width * image.naturalHeight / image.naturalWidth;
+          added = [{id:crypto.randomUUID(),pageId:planned.id,kind:'image',editingTool:'edit',x:.1,y:.1,width:width/size.width,height:height/size.height,image:data.image,color:overlayColor,lineWidth:0}];
+        } else if (data.text) {
+          const object: OverlayObject = {id:crypto.randomUUID(),pageId:planned.id,kind:'text',editingTool:'edit',text:data.text,x:.1,y:.1,width:.5,height:.1,
+            color:overlayColor,lineWidth:0,fontSize:overlayFontSize,fontChoice:overlayFontChoice,...textAppearance,textSizing:'auto'};
+          added = [{...object,...textOverlaySize(object,size.width,size.height,installedFonts)}];
+        }
+        if (originalObjectSource.current !== source || !added.length && bytes === source.bytes) return;
+        setHistoryPast(history => remember(history, {bytes:source.bytes,plan:pagePlan,pageCount:effectivePages.length,overlays,transforms})); setHistoryFuture([]);
+        if (bytes !== source.bytes) { restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0; setSource({...source,bytes}); }
+        setOverlays([...overlays,...added]);
+        setEditSelection([...selection,...added.map(o=>({kind:'overlay' as const,id:o.id,pageId:o.pageId}))]);
+        setSelectedOriginal(null); setSelectedOverlayId(added.length === 1 && !selection.length ? added[0].id : null);
+        setOverlayTool('select'); setEditingDirty(true); window.aster.setDirty(true);
+      })().catch(error=>setError(`Could not paste: ${messageOf(error)}`)).finally(()=>{clipboardLock.current=false;setBusy(false);});
+    };
+    const key = (event: KeyboardEvent) => {
+      if (typing(event.target) || event.defaultPrevented) return;
+      if (event.key === 'Escape') { setEditSelection([]); setSelectedOverlayId(null); setSelectedOriginal(null); }
+      if (editSelection.length && ['Delete','Backspace'].includes(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey) {
+        event.preventDefault(); event.stopImmediatePropagation(); deleteEditSelection();
+      }
+    };
+    window.document.addEventListener('copy', copy); window.document.addEventListener('cut', copy); window.document.addEventListener('paste', paste);
+    window.document.addEventListener('keydown', key, true);
+    return () => { window.document.removeEventListener('copy', copy); window.document.removeEventListener('cut', copy); window.document.removeEventListener('paste', paste); window.document.removeEventListener('keydown',key,true); };
+  });
+
   const visibleCompressionEstimate: CompressionEstimate = source &&
     (estimateForRef.current?.bytes !== source.bytes || estimateForRef.current.plan !== pagePlan)
     ? { status: 'calculating', progress: 'Starting size estimates…' } : compressionEstimate;
@@ -1976,19 +2131,7 @@ export default function App() {
     if (file) void openPath(window.aster.pathForFile(file));
     else setError('Drop a PDF, DOCX, or image file to open it.');
   }}>
-    <header className="topbar">
-      <button className="brand brand-home" type="button" onClick={() => void goHome()} disabled={busy || commentSaving || returningHome || preparingInstall || installing} aria-label="Home — Recently opened PDFs" title="Home · Recently opened PDFs"><img src="./icon.png" alt="" /><span>Aster<span className="brand-pdf">PDF</span></span></button>
-      <div className="topbar-divider" />
-      <div className="document-title" title={source?.path}>{source ? <><FileText size={17} /><strong>{source.name}</strong>{busy || commentSaving ? <span className="saving-spinner" role="status" aria-label={commentSaving ? 'Saving comments in the background' : compressionProgress || 'Working'} title={commentSaving ? 'Saving comments in the background' : compressionProgress || 'Working'} /> : (pendingCommentCount > 0 || editingDirty || source.needsSave) && <span className="unsaved-dot" title="Unsaved changes" />}</> : <span>No document open</span>}</div>
-      <div className="topbar-actions">
-        <button className="button subtle" onClick={() => setSettingsOpen(true)} title="Application settings"><Settings2 size={18} /><span>Settings</span></button>
-        {(updates.state?.available || updates.state?.transfer.phase === 'ready') && <button className="button update-button" aria-label="Update AsterPDF" title="View update progress and installation"
-          onClick={() => { setSettingsOpen(true); if (!updates.downloading && updates.state?.transfer.phase !== 'ready') void updates.download(); }}>
-          {updates.downloading ? <span className="inline-spinner" /> : <ArrowDownToLine size={17} />}<span>{updates.downloading ? `Downloading ${Math.floor(updates.state?.transfer.percent || 0)}%` : updates.state?.transfer.phase === 'ready' ? 'Restart and install…' : 'Update'}</span></button>}
-        <button className="button subtle" onClick={() => void openSelected()} disabled={busy}><FolderOpen size={18} /><span>Open file</span></button>
-        <button className="button primary" onClick={() => void save()} disabled={!source || (!pendingCommentCount && !editingDirty && !source.needsSave) || busy || commentSaving}><Save size={17} /><span>{busy ? 'Working…' : 'Save PDF'}</span></button>
-      </div>
-    </header>
+
 
     {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error"><X size={16} aria-hidden="true" /></button></div>}
 
@@ -2010,10 +2153,7 @@ export default function App() {
     </main> : <main className="workspace">
       <section className="viewer-column">
         <div className={`viewer-toolbar${activeTool === 'edit' || activeTool === 'draw' ? ' has-edit-tools' : ''}`}>
-          {pageGridOpen ? <div className="grid-toolbar-heading"><button className="button outline" onClick={() => closePageGrid()} aria-label="Return to PDF view"><ChevronLeft size={16} />PDF view</button><span>{effectivePages.length} {effectivePages.length === 1 ? 'page' : 'pages'}</span></div> : <>
-            <div className="toolbar-group page-control"><button className="icon-button" onClick={() => scrollToPage(Math.max(1, pageNumber - 1))} disabled={pageNumber <= 1} aria-label="Previous page"><ChevronLeft size={18} /></button><span><strong>{pageNumber}</strong><i>/</i>{document ? effectivePages.length : '…'}</span><button className="icon-button" onClick={() => scrollToPage(Math.min(effectivePages.length, pageNumber + 1))} disabled={pageNumber >= effectivePages.length} aria-label="Next page"><ChevronRight size={18} /></button></div>
-            <div className="toolbar-group zoom-control"><button className="icon-button" onClick={() => adjustZoom(-1)} aria-label="Zoom out"><Minus size={17} /></button><button className="zoom-label" onClick={() => changeZoom('fit')}>{zoomValue}</button><button className="icon-button" onClick={() => adjustZoom(1)} aria-label="Zoom in"><Plus size={17} /></button></div>
-          </>}
+          {pageGridOpen && <div className="grid-toolbar-heading"><button className="button outline" onClick={() => closePageGrid()} aria-label="Return to PDF view"><ChevronLeft size={16} />PDF view</button><span>{effectivePages.length} {effectivePages.length === 1 ? 'page' : 'pages'}</span></div>}
           {activeTool !== 'edit' && activeTool !== 'draw' && <div className="toolbar-spacer" />}
           {placedSignatures.length > 0 ? <div className="signature-review" role="group" aria-label="Pending signatures">
             <span className="signature-review-label" role="status">{placedSignatures.length} {placedSignatures.length === 1 ? 'signature' : 'signatures'} pending · confirm to comment</span>
@@ -2124,6 +2264,7 @@ export default function App() {
               onChange={(value) => changeOverlayFontSize(value)} onPreview={(value) => changeOverlayFontSize(value, false)} /></div>
             : <button className={sidebarTab === 'draw' && !sidebarCollapsed ? 'active' : ''} title="Properties and layers" aria-label="Toggle drawing panel"
               aria-expanded={sidebarTab === 'draw' && !sidebarCollapsed} onClick={() => { setSidebarTab('draw'); setSidebarCollapsed(sidebarTab === 'draw' ? !sidebarCollapsed : false); }}><PanelRight size={17} /></button>}
+          {activeTool === 'edit' && editSelection.length > 1 && <><span className="selection-count" role="status">{editSelection.length} selected</span><button onMouseDown={e=>e.preventDefault()} onClick={()=>copyEditSelection()} disabled={busy} title="Copy selected objects (Ctrl/Cmd+C)" aria-label="Copy selected objects"><Copy size={17}/></button><button onClick={deleteEditSelection} disabled={busy} title="Delete selected objects" aria-label="Delete selected objects"><Trash2 size={17}/></button></>}
           {selectedOverlay && <button disabled={selectedOverlay.locked} onClick={() => deleteOverlay(selectedOverlay.id)} title="Delete selected object" aria-label="Delete selected object"><Trash2 size={17} /></button>}
           {selectedOriginal && <button disabled={busy} onClick={() => void editOriginalObject(selectedOriginal, { type: 'delete' })} title="Delete selected PDF object" aria-label="Delete selected PDF object"><Trash2 size={17} /></button>}
           <input ref={overlayVideoRef} type="file" hidden accept=".mp4,video/mp4" onChange={event => { void importOverlayVideo(event.target.files?.[0]); event.target.value = ''; }} />
@@ -2149,7 +2290,7 @@ export default function App() {
               return <PdfPage key={planned.id} document={document} pageNumber={page} sourcePageNumber={planned.sourceIndex + 1} rotation={planned.turns * 90}
                 onRenderSettled={pageRendered}
                 getSourceBytes={getSourceBytes} originalTransforms={visibleTransforms} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
-                objectEditingBusy={busy} originalObjectSelection={selectedOriginal} onSelectOriginalObject={selectOriginalObject} onEditOriginalObject={editOriginalObject}
+                editSelection={activeTool === 'edit' ? editSelection : []} onSelectNativeText={selectNativeText} onSelectEditObjects={selectEditObjects} onMoveEditSelection={moveEditSelection} onCopyEditSelection={copyEditSelection} onDeleteEditSelection={deleteEditSelection} objectEditingBusy={busy} originalObjectSelection={selectedOriginal} onSelectOriginalObject={selectOriginalObject} onEditOriginalObject={editOriginalObject}
                 onFontEditChange={changeFontEditing} fontCommand={fontCommand} colorCommand={colorCommand} installedFonts={installedFonts}
                 size={displayPageSize(page)}
                 zoom={zoom} viewerWidth={viewerWidth} viewerRef={viewerRef}
@@ -2245,6 +2386,8 @@ export default function App() {
           <button className={activeTool === 'sign' ? 'active' : ''} onClick={() => selectTool('sign')} aria-label="Sign tool" title="Sign" aria-pressed={activeTool === 'sign'}><PenLine size={18} /></button>
           <button className={activeTool === 'compress' ? 'active' : ''} onClick={() => selectTool('compress')} disabled={placedSignatures.length > 0} aria-label="Compress tool" title={placedSignatures.length ? 'Confirm signatures first' : 'Compress'} aria-pressed={activeTool === 'compress'}><Shrink size={18} /></button>
           <button className={activeTool === 'files' ? 'active' : ''} onClick={() => selectTool('files')} disabled={placedSignatures.length > 0} aria-label="Add files tool" title={placedSignatures.length ? 'Confirm signatures first' : 'Add files'} aria-pressed={activeTool === 'files'}><Files size={18} /></button>
+          {!pageGridOpen && <ReaderControls key={source.path} page={pageNumber} total={effectivePages.length} zoomLabel={zoomValue} disabled={!document}
+            onPage={scrollToPage} onZoom={adjustZoom} onFit={()=>changeZoom('fit')}/>}
         </div>
       </ResizableSidebar>
     </main>}

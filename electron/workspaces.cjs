@@ -6,13 +6,13 @@ const TAB_BAR_HEIGHT = 42;
 
 // Documents own their renderer and controller. Windows only own the tab order.
 // Reparenting the live view preserves edits, history, selections and scroll.
-function createWorkspaces({ createController, trusted, sameFile, onEmpty, installing }) {
+function createWorkspaces({ createController, trusted, sameFile, onEmpty, installing, getUpdateStatus = () => null }) {
   const windows = new Map(), documents = new Map(), requests = new Map(), writes = new Map();
   let lastWindow = null, drag = null, quitting = false, closingAll = false, savingAll = false, focusOrder = 0;
   const url = (shell = false) => `${process.env.ASTERPDF_DEV_URL || 'aster://app/index.html'}${shell ? '?workspace=1' : ''}`;
   const preferences = () => ({ preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true });
   const send = (contents, channel, data) => { if (!contents.isDestroyed()) contents.send(channel, data); };
-  const state = (owner) => ({ activeId: owner.activeId, dragging: Boolean(drag), tabs: owner.tabs.map(tab => ({
+  const state = (owner) => ({ update: getUpdateStatus(), activeId: owner.activeId, dragging: Boolean(drag), tabs: owner.tabs.map(tab => ({
     id: tab.id, name: tab.controller.currentPath ? path.basename(tab.controller.currentPath) : tab.pendingPath ? path.basename(tab.pendingPath) : 'Home',
     path: tab.controller.currentPath || tab.pendingPath || '', dirty: tab.controller.dirty,
     busy: tab.controller.saving || tab.controller.writing || Boolean(tab.pendingPath), crashed: Boolean(tab.crashed)
@@ -308,6 +308,7 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
       } finally { closingAll = false; }
     },
     get quitting() { return quitting; },
+    refresh() { for (const owner of windows.values()) publish(owner); },
     register(ipcMain) {
       ipcMain.handle('workspace:state', event => { if (!trusted(event)) throw new Error('Untrusted window'); const owner = windows.get(event.sender.id); if (!owner) throw new Error('Not a workspace'); return state(owner); });
       ipcMain.on('workspace:prepared', (event, id, ok) => {
@@ -321,7 +322,8 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
         const owner = windows.get(event.sender.id);
         if (!owner || owner.closing) return;
         const tab = owner.tabs.find(t => t.id === id);
-        if (action === 'new-tab') newTab(owner);
+        if (action === 'home' || action === 'update') { const active = owner.tabs.find(t => t.id === owner.activeId); if (active) { activate(active); send(active.contents, `menu:${action}`); } }
+        else if (action === 'new-tab') newTab(owner);
         else if (action === 'new-window') createWindow();
         else if (action === 'select' && tab) activate(tab);
         else if (action === 'close' && tab) void closeTab(tab);

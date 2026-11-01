@@ -85,7 +85,7 @@ async function main() {
     assert.equal(await app.evaluate(()=>global.dragTestSaves+global.dragTestEdits+global.dragTestBatches),0,'Colors and deletes must not serialize or save the PDF');
     assert.equal(await doc.evaluate(()=>window.dragTestPaints),0,'Colors and deletes must not repaint the PDF page');
     assert.deepEqual(new Uint8Array(await fs.readFile(file)),original);
-    await doc.getByRole('button',{name:'Save PDF',exact:true}).click();await doc.locator('dialog.save-feedback').waitFor({state:'hidden'});await doc.waitForFunction(()=>!document.querySelector('.unsaved-dot'));
+    await app.evaluate(({Menu})=>Menu.getApplicationMenu().items.find(i=>i.label==='File').submenu.items.find(i=>i.label==='Save').click());await doc.locator('dialog.save-feedback').waitFor({state:'hidden'});for(let attempt=0;attempt<200;attempt++){const state=await app.context().pages().find(p=>p.url().includes('workspace=1')).evaluate(()=>window.aster.getWorkspace());if(state.tabs.every(t=>!t.dirty&&!t.busy))break;if(attempt===199)throw new Error('Manual save did not finish');await new Promise(r=>setTimeout(r,100));}
     assert.equal(await app.evaluate(()=>global.dragTestSaves),1);assert.equal(await app.evaluate(()=>global.dragTestBatches),1,'All moves are applied in one save batch');
     const saved=new Uint8Array(await fs.readFile(file)),objects=await listOriginalObjects(saved,0),text=await listOriginalText(saved,0);
     assert.ok(objects.find(o=>o.kind==='shape').box[0]>40);assert.deepEqual(objects.find(o=>o.kind==='shape').fill.slice(0,3),[204,85,0]);assert.ok(objects.find(o=>o.kind==='image').box[0]>300);assert.ok(text[0].box[0]>40);

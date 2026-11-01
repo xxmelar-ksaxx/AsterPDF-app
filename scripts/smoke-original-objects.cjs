@@ -47,7 +47,7 @@ async function main(){
   const editor=doc.getByRole('textbox',{name:'Edit original PDF text',exact:true});await editor.waitFor();
   await editor.press('Escape');await editor.waitFor({state:'hidden'});
   await doc.getByRole('button',{name:'Comments',exact:true}).click();assert.equal(await doc.locator('[data-original-object]').count(),0,'Original objects cannot be moved in other features');
-  await doc.getByRole('button',{name:'Save PDF',exact:true}).click();await doc.locator('dialog.save-feedback').waitFor({state:'hidden'});await doc.waitForFunction(()=>!document.querySelector('.unsaved-dot'));
+  await app.evaluate(({Menu})=>Menu.getApplicationMenu().items.find(i=>i.label==='File').submenu.items.find(i=>i.label==='Save').click());await doc.locator('dialog.save-feedback').waitFor({state:'hidden'});for(let attempt=0;attempt<200;attempt++){const state=await app.context().pages().find(p=>p.url().includes('workspace=1')).evaluate(()=>window.aster.getWorkspace());if(state.tabs.every(t=>!t.dirty&&!t.busy))break;if(attempt===199)throw new Error('Manual save did not finish');await new Promise(r=>setTimeout(r,100));}
   const saved=await listOriginalObjects(new Uint8Array(await fs.readFile(file)),0);
   assert.deepEqual(saved.find(o=>o.kind==='shape').fill.slice(0,3),[36,118,169]);
   assert.equal(saved.filter(o=>o.kind==='image').length,1);assert.equal(saved.filter(o=>o.kind==='bullet').length,1);

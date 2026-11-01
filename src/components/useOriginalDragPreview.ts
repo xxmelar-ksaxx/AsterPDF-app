@@ -11,6 +11,9 @@ export default function useOriginalDragPreview(viewport: PageViewport | null, ge
   pageCanvas: RefObject<HTMLCanvasElement | null>, transforms: OriginalTransform[]) {
   const element = useRef<HTMLDivElement>(null);
   const active = useRef<{ index: number; before: PreviewBox; next: PreviewBox; matrix: number[]; finished: boolean } | null>(null);
+  const group = useRef<{dx:number;dy:number;finished:boolean} | null>(null);
+  const groupCache = useRef<{key:string;source:Uint8Array;promise:Promise<{image:ImageBitmap;moving:boolean}[]>} | null>(null);
+  const clearGroupCache = () => { const cached=groupCache.current;groupCache.current=null;void cached?.promise.then(layers=>layers.forEach(l=>l.image.close()),()=>{}); };
   const cache = useRef<Entry | null>(null), scene = useRef<Scene | null>(null);
   const warmTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const latest = useRef({ viewport, getSourceBytes, pageIndex, transforms }); latest.current = { viewport, getSourceBytes, pageIndex, transforms };
@@ -98,7 +101,7 @@ export default function useOriginalDragPreview(viewport: PageViewport | null, ge
     }).catch(()=>{ /* Keep the last usable visual; the document edit remains staged. */ });
   };
   const sync = () => {
-    if(active.current&&!active.current.finished)return;
+    if(group.current || active.current&&!active.current.finished)return;
     const items=pageTransforms(),source=latest.current.getSourceBytes();
     if(!items.length){
       // A native content edit/save can replace the source before PDF.js paints.
@@ -133,6 +136,46 @@ export default function useOriginalDragPreview(viewport: PageViewport | null, ge
     }
     display(index);
   };
+  const groupKey = (indices:number[]) => JSON.stringify([indices,latest.current.viewport?.transform,latest.current.transforms]);
+  const prepareGroup = (indices:number[]) => {
+    const v=latest.current.viewport;if(!v)throw new Error('Page is not ready.');
+    const key=groupKey(indices);
+    if(groupCache.current?.key===key&&groupCache.current.source===latest.current.getSourceBytes())return groupCache.current.promise;
+    const previous=groupCache.current?.promise;clearGroupCache();
+    const ratio=Math.min(devicePixelRatio||1,2,Math.sqrt(3_900_000/(v.width*v.height)));
+    const promise=(previous?previous.catch(()=>{}):Promise.resolve()).then(()=>{if(groupCache.current?.key!==key)throw new Error('Selection changed.');return window.aster.previewOriginalGroup(latest.current.getSourceBytes(),latest.current.pageIndex,indices,Math.ceil(v.width*ratio),Math.ceil(v.height*ratio),(v.rotation%360+360)%360,latest.current.transforms);})
+      .then(async layers=>{const result:{image:ImageBitmap;moving:boolean}[]=[];try{for(const layer of layers)result.push({image:await createImageBitmap(new Blob([new Uint8Array(layer.png)],{type:'image/png'})),moving:layer.moving});return result;}catch(error){result.forEach(l=>l.image.close());throw error;}});
+    groupCache.current={key,promise,source:latest.current.getSourceBytes()};return promise;
+  };
+  const updateGroup = (dx:number,dy:number) => {
+    if(!group.current)return;group.current.dx=dx;group.current.dy=dy;
+    element.current?.querySelectorAll<HTMLCanvasElement>('[data-moving="true"]').forEach(canvas=>{canvas.style.transform=`translate(${dx}px,${dy}px)`;});
+  };
+  const beginGroup = (indices:number[],boxes:PreviewBox[]) => {
+    if(!indices.length)return;
+    ++generation.current;active.current=null;group.current={dx:0,dy:0,finished:false};
+    const request=generation.current,v=latest.current.viewport,node=element.current,base=pageCanvas.current;
+    if(!v||!node)return;
+    const make=(image:CanvasImageSource,w:number,h:number)=>{const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;canvas.style.width=`${v.width}px`;canvas.style.height=`${v.height}px`;canvas.getContext('2d')!.drawImage(image,0,0,w,h);return canvas;};
+    // A cold selection still follows the pointer while the worker isolates its paint layers.
+    if(base?.width){
+      const composed=make(base,base.width,base.height),context=composed.getContext('2d')!,ratio=base.width/v.width;
+      for(const child of Array.from(node.children) as HTMLCanvasElement[]){if(!child.width||child.style.visibility==='hidden')continue;context.save();context.scale(ratio,ratio);const m=new DOMMatrix(child.style.transform||undefined);context.transform(m.a,m.b,m.c,m.d,m.e,m.f);context.drawImage(child,0,0,v.width,v.height);context.restore();}
+      const ghost=document.createElement('canvas');ghost.width=base.width;ghost.height=base.height;ghost.style.width=`${v.width}px`;ghost.style.height=`${v.height}px`;ghost.dataset.moving='true';ghost.style.opacity='.65';
+      for(const b of boxes)ghost.getContext('2d')!.drawImage(composed,b.x*ratio,b.y*ratio,b.width*ratio,b.height*ratio,b.x*ratio,b.y*ratio,b.width*ratio,b.height*ratio);
+      node.replaceChildren(composed,ghost);node.style.display='block';node.dataset.phase='group-snapshot';scene.current=null;
+    }
+    void prepareGroup(indices).then(layers=>{
+      if(request!==generation.current||!group.current)return;
+      node.replaceChildren(...layers.map(({image,moving})=>{const canvas=make(image,image.width,image.height);canvas.dataset.moving=String(moving);return canvas;}));node.dataset.phase='group';node.style.display='block';scene.current=null;
+      updateGroup(group.current.dx,group.current.dy);
+    }).catch(()=>{});
+  };
+  const cancelGroup = () => {group.current=null;++generation.current;scene.current=null;hide();sync();};
+  const finishGroup = async (commit:()=>void|Promise<void>) => {
+    if(group.current)group.current.finished=true;
+    try{await commit();}finally{group.current=null;++generation.current;scene.current=null;requestAnimationFrame(sync);}
+  };
   const cancel = () => {
     active.current=null;++generation.current;
     if(element.current?.dataset.phase==='snapshot'&&element.current.children[1]) (element.current.children[1] as HTMLCanvasElement).style.opacity='0';
@@ -145,8 +188,9 @@ export default function useOriginalDragPreview(viewport: PageViewport | null, ge
   };
   useLayoutEffect(()=>{if(!viewport){++generation.current;hide();discardCache();return;}sync();},[transforms,getSourceBytes,viewport?.width,viewport?.height,viewport?.rotation,pageIndex]);
   useEffect(()=>{if(!enabled)clearTimeout(warmTimer.current);},[enabled]);
-  useEffect(()=>()=>{clearTimeout(warmTimer.current);++generation.current;active.current=null;hide();discardCache();},[]);
-  return {element,begin,update,finish,cancel,
+  useEffect(()=>()=>{clearTimeout(warmTimer.current);++generation.current;active.current=null;hide();discardCache();clearGroupCache();},[]);
+  return {element,begin,update,finish,cancel,beginGroup,updateGroup,finishGroup,cancelGroup,
+    warmGroup:(indices:number[])=>{if(indices.length&&latest.current.getSourceBytes().byteLength<64*1024*1024)void prepareGroup(indices).catch(()=>{});},
     warm:(index:number)=>{clearTimeout(warmTimer.current);if(!enabled)return;warmTimer.current=setTimeout(()=>{if(!active.current&&latest.current.getSourceBytes().byteLength<64*1024*1024)void prepare(index).catch(()=>{});},120);},
     painted:(source:Uint8Array)=>{paintedSource.current=source;sync();}
   };

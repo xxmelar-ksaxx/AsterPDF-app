@@ -2,13 +2,17 @@ export {};
 
 declare global {
   type WorkspaceState = {
+    update?: UpdateStatus | null;
     activeId: string | null; dragging: boolean;
     tabs: { id: string; name: string; path: string; dirty: boolean; busy: boolean; crashed: boolean }[];
   };
   interface Window {
     aster: {
       getWorkspace(): Promise<WorkspaceState>;
-      workspaceAction(action: 'new-tab' | 'new-window' | 'select' | 'close' | 'detach' | 'drag-start' | 'drag-move' | 'drag-end' | 'drop-index', id?: string, value?: number | boolean): void;
+      copyEditObjects(payload: ObjectClipboard & { bytes?: Uint8Array; selections: EditSelection[]; transforms: OriginalTransform[] }): Promise<void>;
+      readEditClipboard(): Promise<{ objects?: ObjectClipboard; text?: string; image?: string }>;
+      pasteNativeObjects(bytes: Uint8Array, fragment: Uint8Array, pageIndex: number, dx: number, dy: number): Promise<{ bytes: Uint8Array; indices: number[] }>;
+      workspaceAction(action: 'home' | 'update' | 'new-tab' | 'new-window' | 'select' | 'close' | 'detach' | 'drag-start' | 'drag-move' | 'drag-end' | 'drop-index', id?: string, value?: number | boolean): void;
       onWorkspaceChanged(handler: (state: WorkspaceState) => void): () => void;
       onWorkspaceDropHint(handler: (point: { x: number; y: number } | null) => void): () => void;
       onPrepareDocument(handler: (mode: 'close' | 'save') => Promise<boolean>): () => void;
@@ -25,6 +29,7 @@ declare global {
       save(bytes: Uint8Array, saveAs: boolean, expectedPath: string): Promise<{ path: string; name: string } | null>;
       listOriginalText(bytes: Uint8Array, pageIndex: number): Promise<OriginalPdfText[]>;
       listOriginalObjects(bytes: Uint8Array, pageIndex: number): Promise<OriginalPdfObject[]>;
+      previewOriginalGroup(bytes: Uint8Array, pageIndex: number, indices: number[], width: number, height: number, rotation: number, transforms: OriginalTransform[]): Promise<{png:Uint8Array;moving:boolean}[]>;
       previewOriginalObject(bytes: Uint8Array, pageIndex: number, index: number, width: number, height: number, rotation: number, transforms?: OriginalTransform[]): Promise<Uint8Array[]>;
       applyOriginalTransforms(bytes: Uint8Array, transforms: OriginalTransform[]): Promise<Uint8Array>;
       applyOriginalTransforms(bytes: Uint8Array, transforms: OriginalTransform[], target: {pageIndex:number;index:number}): Promise<{bytes:Uint8Array;index:number}>;
@@ -59,7 +64,7 @@ declare global {
       setSaving(value: boolean): void;
       onDiscardRequest(handler: (id: string) => void): () => void;
       answerDiscardRequest(id: string, discard: boolean): void;
-      onMenu(channel: 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:about' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word' | 'menu:pdf-to-data', handler: () => void): () => void;
+      onMenu(channel: 'menu:home' | 'menu:update' | 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:about' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word' | 'menu:pdf-to-data', handler: () => void): () => void;
     };
   }
 }
@@ -127,3 +132,6 @@ export interface RecentPdf {
 }
 
 export type OriginalTransform = { pageIndex: number; index: number; matrix: number[]; text?: string; deleted?: boolean; fill?: number[]; stroke?: number[] };
+
+export type EditSelection = { kind: 'overlay'; id: string; pageId: string } | { kind: 'native'; pageId: string; pageIndex: number; index: number; box: number[]; text?: string };
+export type ObjectClipboard = { overlays: import('./pdf/overlays').OverlayObject[]; fragment?: Uint8Array; videos: { id: string; bytes: Uint8Array }[] };

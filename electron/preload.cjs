@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld('aster', {
     return () => ipcRenderer.removeListener('presentation:changed', listener);
   },
   getWorkspace: () => ipcRenderer.invoke('workspace:state'),
+  copyEditObjects: payload => ipcRenderer.invoke('edit:copy', payload),
+  readEditClipboard: () => ipcRenderer.invoke('edit:clipboard'),
+  pasteNativeObjects: (bytes, fragment, pageIndex, dx, dy) => ipcRenderer.invoke('edit:paste-native', bytes, fragment, pageIndex, dx, dy),
   workspaceAction: (action, id, value) => ipcRenderer.send('workspace:action', action, id, value),
   onWorkspaceChanged: (handler) => {
     const listener = (_event, state) => handler(state);
@@ -44,6 +47,7 @@ contextBridge.exposeInMainWorld('aster', {
   save: (bytes, saveAs, expectedPath) => ipcRenderer.invoke('pdf:save', bytes, saveAs, expectedPath),
   listOriginalText: (bytes, pageIndex) => ipcRenderer.invoke('pdf:list-original-text', bytes, pageIndex),
   listOriginalObjects: (bytes, pageIndex) => ipcRenderer.invoke('pdf:list-original-objects', bytes, pageIndex),
+  previewOriginalGroup: (...args) => ipcRenderer.invoke('pdf:preview-original-object', ...args),
   previewOriginalObject: (bytes, pageIndex, index, width, height, rotation, transforms) => ipcRenderer.invoke('pdf:preview-original-object', bytes, pageIndex, index, width, height, rotation, transforms),
   applyOriginalTransforms: (bytes, transforms, target) => ipcRenderer.invoke('pdf:apply-original-transforms', bytes, transforms, target),
   editOriginalObject: (bytes, pageIndex, id, token, change) => ipcRenderer.invoke('pdf:edit-original-object', bytes, pageIndex, id, token, change),
@@ -96,7 +100,7 @@ embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-tex
   },
   answerDiscardRequest: (id, discard) => ipcRenderer.send('pdf:confirm-discard-result', id, discard),
   onMenu: (channel, handler) => {
-    if (!['menu:open', 'menu:save', 'menu:save-as', 'menu:settings', 'menu:about', 'menu:undo', 'menu:redo', 'menu:pdf-to-word', 'menu:pdf-to-data'].includes(channel)) return () => {};
+    if (!['menu:home', 'menu:update', 'menu:open', 'menu:save', 'menu:save-as', 'menu:settings', 'menu:about', 'menu:undo', 'menu:redo', 'menu:pdf-to-word', 'menu:pdf-to-data'].includes(channel)) return () => {};
     const listener = () => handler();
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);

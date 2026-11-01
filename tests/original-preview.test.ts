@@ -98,3 +98,24 @@ test('fill and stroke previews stay independent, and staged deletion/color prese
   assert.equal(result.index,savedText[0].index);assert.deepEqual(savedText[0].color.slice(0,3),[30,40,50]);
   assert.deepEqual(bytes,original);
 });
+
+test('group preview preserves intervening artwork and applies staged edits without serializing', async () => {
+  const pdf=await PDFDocument.create(),page=pdf.addPage([300,240]);
+  page.drawRectangle({x:20,y:30,width:90,height:90,color:rgb(1,0,0)});
+  page.drawRectangle({x:60,y:60,width:90,height:90,color:rgb(0,0,1)});
+  page.drawRectangle({x:100,y:100,width:90,height:90,color:rgb(0,1,0)});
+  const bytes=await pdf.save(),original=bytes.slice();
+  const layers=await previewOriginalObject(bytes,0,[0,2],300,240,0,[{pageIndex:0,index:0,matrix:[1,0,0,1,5,0],fill:[255,128,0]}]);
+  assert.deepEqual(layers.map((l:any)=>l.moving),[false,true,false,true]);
+  const images=layers.map((l:any)=>PNG.sync.read(Buffer.from(l.png)));
+  const composite=(x:number,y:number,dx=0)=>{
+    let result=[255,255,255,255];
+    images.forEach((image:any,i:number)=>{const px=pixel(image,x-(layers[i].moving?dx:0),240-y);if(px[3]===255)result=px;});
+    return result;
+  };
+  assert.deepEqual(composite(30,40),[255,128,0,255]);
+  assert.deepEqual(composite(70,70),[0,0,255,255]);
+  assert.deepEqual(composite(120,120),[0,255,0,255]);
+  assert.deepEqual(composite(130,120,40),[0,0,255,255], 'Unselected artwork remains between moving objects');
+  assert.deepEqual(bytes,original);
+});

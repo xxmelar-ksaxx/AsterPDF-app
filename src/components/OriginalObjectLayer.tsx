@@ -5,7 +5,7 @@ import type { PageViewport } from 'pdfjs-dist';
 import type { OriginalPdfObject, OriginalObjectChange, OriginalObjectSelection } from '../types';
 import { resizeImage, type ResizeHandle } from '../pdf/image-geometry';
 import type { OriginalDragPreview } from './useOriginalDragPreview';
-import type { OriginalTransform } from '../types';
+import type { EditSelection, OriginalTransform } from '../types';
 import { transformedObject, transformFor, isOriginalDeleted } from '../pdf/original-transforms';
 
 type Box = { x: number; y: number; width: number; height: number };
@@ -21,12 +21,13 @@ export function objectTransform(before: Box, after: Box, viewport: PageViewport)
   return [x[0]-zero[0],x[1]-zero[1],y[0]-zero[0],y[1]-zero[1],...zero];
 }
 
-export default function OriginalObjectLayer({enabled,busy,getSourceBytes,pageId,pageIndex,viewport,selection,onSelect,onChange,onError,livePreview,transforms}: {
+export default function OriginalObjectLayer({enabled,busy,getSourceBytes,pageId,pageIndex,viewport,selection,selections,onSelect,onChange,onError,livePreview,transforms,onObjectsChange}: {
   enabled:boolean;busy:boolean;getSourceBytes:()=>Uint8Array;pageId:string;pageIndex:number;viewport:PageViewport;
-  selection:OriginalObjectSelection|null;onSelect:(selection:OriginalObjectSelection|null)=>void;
+  selection:OriginalObjectSelection|null;onSelect:(selection:OriginalObjectSelection|null,toggle?:boolean)=>void;selections:EditSelection[];
   onChange:(selection:OriginalObjectSelection,change:OriginalObjectChange)=>Promise<void>;onError:(message:string)=>void;
   livePreview: OriginalDragPreview;
   transforms: OriginalTransform[];
+  onObjectsChange:(objects:OriginalPdfObject[])=>void;
 }) {
   const [objects,setObjects]=useState<OriginalPdfObject[]>([]);
   const [preview,setPreview]=useState<Box|null>(null);
@@ -37,6 +38,7 @@ export default function OriginalObjectLayer({enabled,busy,getSourceBytes,pageId,
   const visibleObjects=objects.filter(object=>!isOriginalDeleted(transforms,pageIndex,Number(object.id))).map(object=>transformedObject(object,transforms,pageIndex));
   const selected=selection?.pageId===pageId?visibleObjects.find(object=>object.id===selection.object.id):undefined;
   const target=(object:OriginalPdfObject)=>({pageId,pageIndex,object});
+  useEffect(()=>{onObjectsChange(objects);},[objects,onObjectsChange]);
   useEffect(()=>{
     let cancelled=false;setObjects([]);setPreview(null);drag.current=null;setMenu(null);
     if(enabled)void window.aster.listOriginalObjects(getSourceBytes(),pageIndex).then(items=>{if(!cancelled)setObjects(items);})
@@ -60,7 +62,7 @@ export default function OriginalObjectLayer({enabled,busy,getSourceBytes,pageId,
   if(!enabled)return null;
   const begin=(event:PointerEvent<SVGElement>,object:OriginalPdfObject,handle?:ResizeHandle)=>{
     if(event.button!==0||busy)return;event.preventDefault();event.stopPropagation();window.getSelection()?.removeAllRanges();setMenu(null);
-    onSelect(target(object));const box=objectBox(object,viewport);
+    onSelect(target(object),event.ctrlKey||event.metaKey);if(event.ctrlKey||event.metaKey)return;const box=objectBox(object,viewport);
     livePreview.begin(Number(object.id),box);
     drag.current={object,box,next:box,x:event.clientX,y:event.clientY,handle};event.currentTarget.setPointerCapture(event.pointerId);
   };
@@ -97,8 +99,9 @@ export default function OriginalObjectLayer({enabled,busy,getSourceBytes,pageId,
             <rect className="original-object-hit" {...b} fill="transparent" />}
         </g>;
       })}
+      {visibleObjects.filter(o=>selections.some(s=>s.kind==='native'&&s.pageId===pageId&&s.index===Number(o.id))).map(o=><rect key={`selected-${o.id}`} data-selected-original={o.id} {...objectBox(o,viewport)} className="multi-object-outline" />)}
     </svg>
-    {selected&&box&&frame&&<svg className="original-object-frame" width={viewport.width} height={viewport.height} aria-label="Selected original object"
+    {selected&&box&&frame&&selections.length<2&&<svg className="original-object-frame" width={viewport.width} height={viewport.height} aria-label="Selected original object"
       onPointerMove={move} onPointerUp={end} onPointerCancel={()=>{drag.current=null;setPreview(null);livePreview.cancel();}}>
       <rect {...frame} className="original-object-outline" onPointerDown={event=>begin(event,selected)} onContextMenu={event=>context(event,selected)} />
       {(['nw','n','ne','e','se','s','sw','w'] as ResizeHandle[]).map(handle=>{

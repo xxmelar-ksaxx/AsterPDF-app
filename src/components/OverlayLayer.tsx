@@ -23,12 +23,12 @@ type Props = {
   textAppearance: TextAppearance;
   fontCommand: FontCommand | null; onFontEditChange: (selection: FontSelection | null) => void;
   image: PendingImage | null;
-  objects: OverlayObject[]; selectedId: string | null;
+  objects: OverlayObject[]; selectedIds?: string[]; selectedId: string | null;
   showVideoPlayers?: boolean;
   onAdd: (object: OverlayObject) => void;
   onUpdate: (object: OverlayObject) => void;
   onDelete: (id: string) => void;
-  onSelect: (id: string | null) => void;
+  onSelect: (id: string | null, toggle?: boolean) => void;
 };
 type Gesture = { kind: 'create'; start: { x: number; y: number }; points: { x: number; y: number }[] }
   | { kind: 'radius'; start: { x: number; y: number }; original: OverlayObject; corner: number }
@@ -38,7 +38,7 @@ const clamp = (value: number) => Math.max(0, Math.min(1, value));
 type TextEdit = { object: OverlayObject; isNew: boolean; value: string };
 
 export default function OverlayLayer({ pageId, width, height, scale, tool, drawActive, color, lineWidth, drawStyle, fontSize, fontChoice, textAppearance, viewport, fonts, fontCommand, onFontEditChange, image,
-  objects, selectedId, onAdd, onUpdate, onDelete, onSelect, showVideoPlayers = true }: Props) {
+  objects, selectedId, selectedIds = [], onAdd, onUpdate, onDelete, onSelect, showVideoPlayers = true }: Props) {
   const layer = useRef<SVGSVGElement>(null);
   const gesture = useRef<Gesture | null>(null);
   const [preview, setPreviewState] = useState<OverlayObject | null>(null);
@@ -227,7 +227,8 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
     if (object.locked || !tool || (!drawActive && isDrawingObject(object))) return;
     if (tool === 'eraser' && event.button === 0) { onDelete(object.id); return; }
     if (editingRef.current) finishText(true);
-    onSelect(object.id);
+    onSelect(object.id, !drawActive && (event.ctrlKey || event.metaKey));
+    if (!drawActive && (event.ctrlKey || event.metaKey)) { event.preventDefault(); return; }
     if (event.button !== 0 || tool !== 'select' && !(object.kind === 'text' && tool === 'text')) return;
     event.preventDefault(); window.getSelection()?.removeAllRanges();
     if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
@@ -282,12 +283,12 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
         onPointerDown={object.kind === 'text' ? undefined : (event) => beginObject(event, object, 'move')}>
         {editing?.object.id !== object.id && <g opacity={shown.opacity ?? 1} pointerEvents={object.kind === 'text' ? 'none' : undefined}>{render(shown)}</g>}
         {!readOnly && (object.kind === 'text' ? editing?.object.id !== object.id && <TextFrame x={shown.x * width} y={shown.y * height}
-          width={Math.max(16, shown.width * width)} height={Math.max(16, shown.height * height)} selected={selectedId === object.id}
-          onInteriorClick={(event) => { event.stopPropagation(); if (tool === 'eraser') onDelete(object.id); else startText(object, false); }}
+          width={Math.max(16, shown.width * width)} height={Math.max(16, shown.height * height)} selected={selectedIds.includes(object.id) || selectedId === object.id}
+          onInteriorClick={(event) => { event.stopPropagation(); if (tool === 'eraser') onDelete(object.id); else if(!drawActive && (event.ctrlKey || event.metaKey)) onSelect(object.id,true); else startText(object, false); }}
           onBorderPointerDown={(event) => beginObject(event, object, 'move')} />
           : <rect x={shown.x * width} y={shown.y * height} width={Math.max(16, shown.width * width)} height={Math.max(16, shown.height * height)}
-            fill="transparent" stroke={selectedId === object.id ? '#5c922c' : 'transparent'} strokeDasharray="5 3" strokeWidth="2" />)}
-        {!object.locked && !readOnly && editing?.object.id !== object.id && selectedId === object.id && (tool === 'select' || (object.kind === 'text' && tool === 'text')) && <g className="image-resize-frame">
+            fill="transparent" stroke={selectedIds.includes(object.id) || selectedId === object.id ? '#5c922c' : 'transparent'} strokeDasharray="5 3" strokeWidth="2" />)}
+        {!object.locked && !readOnly && selectedIds.length < 2 && editing?.object.id !== object.id && selectedId === object.id && (tool === 'select' || (object.kind === 'text' && tool === 'text')) && <g className="image-resize-frame">
           <title>{object.kind === 'text' ? 'Drag an edge or corner to resize the text container without changing font size.' : 'Drag to move. Drag an edge or corner to resize. Hold Shift to keep proportions.'}</title>
           {(['n', 'e', 's', 'w'] as const).map((handle) => <rect key={`edge-${handle}`} className={`image-resize-edge resize-${handle}`}
             x={(shown.x + (handle === 'e' ? shown.width : 0)) * width - 4}

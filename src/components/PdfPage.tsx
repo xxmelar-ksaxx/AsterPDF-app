@@ -1,3 +1,8 @@
+import useMarqueeSelection, { type SelectionCandidate } from './useMarqueeSelection';
+import { isDrawingObject } from '../pdf/overlays';
+import { textOverlaySize } from './text-overlay-size';
+import useEditSelectionDrag from './useEditSelectionDrag';
+import type { EditSelection } from '../types';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { onFinishInlineEdit } from '../finish-inline-edit';
@@ -13,11 +18,11 @@ import PdfTextSelection, { registerSelectionPage, selectedPdfText } from './PdfT
 import PdfLinks from './PdfLinks';
 import type { TextMarkupSelection } from '../pdf/comments';
 import type { ColorCommand, FontCommand, FontSelection, InstalledFont } from './FontPicker';
-import type { OriginalPdfText } from '../types';
+import type { OriginalPdfObject, OriginalPdfText } from '../types';
 import OriginalTextEditor, { type TextEdit } from './OriginalTextEditor';
 import OriginalObjectLayer from './OriginalObjectLayer';
 import useOriginalDragPreview, { type PreviewBox } from './useOriginalDragPreview';
-import { transformedText, isOriginalDeleted } from '../pdf/original-transforms';
+import { transformedObject, transformedText, isOriginalDeleted } from '../pdf/original-transforms';
 import type { OriginalTransform } from '../types';
 import type { OriginalObjectChange, OriginalObjectSelection } from '../types';
 
@@ -38,7 +43,13 @@ type Props = {
   inspectOriginalText: boolean;
   objectEditingBusy: boolean;
   originalObjectSelection: OriginalObjectSelection | null;
-  onSelectOriginalObject: (selection: OriginalObjectSelection | null) => void;
+  onSelectOriginalObject: (selection: OriginalObjectSelection | null, toggle?: boolean) => void;
+  editSelection: EditSelection[];
+  onSelectEditObjects:(items:EditSelection[])=>void;
+  onMoveEditSelection:(dx:number,dy:number)=>Promise<void>;
+  onCopyEditSelection:(cut?:boolean)=>void;
+  onDeleteEditSelection:()=>void;
+  onSelectNativeText: (item: EditSelection, toggle?: boolean) => void;
   onEditOriginalObject: (selection: OriginalObjectSelection, change: OriginalObjectChange) => Promise<void>;
   onCommitOriginalText: (pageIndex: number, objectIndex: number, oldText: string, nextText: string, fontChoice: string, color?: number[]) => Promise<void>;
   onFontEditChange: (selection: FontSelection | null) => void;
@@ -99,12 +110,12 @@ type Props = {
   onAddOverlay: (object: OverlayObject) => void;
   onUpdateOverlay: (object: OverlayObject) => void;
   onDeleteOverlay: (id: string) => void;
-  onSelectOverlay: (id: string | null) => void;
+  onSelectOverlay: (id: string | null, toggle?: boolean) => void;
   onError: (message: string) => void;
 };
 
 export default function PdfPage({
-  document, getSourceBytes, originalTransforms, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
+  editSelection, onSelectEditObjects, onSelectNativeText, onMoveEditSelection, onCopyEditSelection, onDeleteEditSelection, document, getSourceBytes, originalTransforms, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
   popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, selectingLinks, editActive, onLinkMenu, onNavigateLink, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
@@ -117,12 +128,15 @@ export default function PdfPage({
   const [near, setNear] = useState(false);
   const [viewport, setViewport] = useState<PageViewport | null>(null);
   const [ready, setReady] = useState(false);
+  const [originalObjects,setOriginalObjects]=useState<OriginalPdfObject[]>([]);
   const [originalText, setOriginalText] = useState<OriginalPdfText[]>([]);
   const [editingOriginal, setEditingOriginal] = useState<TextEdit | null>(null);
   const editingOriginalRef = useRef<typeof editingOriginal>(null);
   const originalDragRef = useRef<{ index: number; text: string; startX: number; startY: number; box: PreviewBox } | null>(null);
   const [originalDrag, setOriginalDrag] = useState<{ index: number; dx: number; dy: number } | null>(null);
   const livePreview = useOriginalDragPreview(viewport, getSourceBytes, sourcePageNumber - 1, near && editActive && overlayTool === 'select', canvasRef, originalTransforms);
+  const groupDrag=useEditSelectionDrag({selection:editSelection,pageId,viewport,stage:stageRef,overlays,preview:livePreview,
+    disabled:objectEditingBusy||!editActive||(overlayTool!=='select'&&overlayTool!=='text'),onMove:onMoveEditSelection,onCopy:onCopyEditSelection,onDelete:onDeleteEditSelection,onError});
   useEffect(() => {
     const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape' && originalDragRef.current) { originalDragRef.current = null; setOriginalDrag(null); livePreview.cancel(); } };
     window.addEventListener('keydown', cancel); return () => window.removeEventListener('keydown', cancel);
@@ -270,6 +284,24 @@ export default function PdfPage({
     && Math.abs(viewport.height - size.height * scale) < 1 ? viewport : null;
   const width = activeViewport?.width ?? size.width * scale;
   const height = activeViewport?.height ?? size.height * scale;
+  const selectionCandidates:SelectionCandidate[]=[];
+  if(activeViewport){
+    const addNative=(index:number,box:number[],text?:string)=>{const a=activeViewport.convertToViewportPoint(box[0],box[1]),b=activeViewport.convertToViewportPoint(box[2],box[3]);selectionCandidates.push({selection:{kind:'native',pageId,pageIndex:sourcePageNumber-1,index,box,...(text!==undefined?{text}:{})},x:Math.min(a[0],b[0]),y:Math.min(a[1],b[1]),width:Math.abs(b[0]-a[0]),height:Math.abs(b[1]-a[1])});};
+    for(const original of originalObjects)if(!isOriginalDeleted(originalTransforms,sourcePageNumber-1,Number(original.id))){const o=transformedObject(original,originalTransforms,sourcePageNumber-1);addNative(Number(o.id),o.box);}
+    for(const original of originalText)if(!isOriginalDeleted(originalTransforms,sourcePageNumber-1,original.index)){const o=transformedText(original,originalTransforms,sourcePageNumber-1);addNative(o.index,o.box,o.text);}
+    for(const object of overlays)if(!object.hidden&&!object.locked&&!isDrawingObject(object)){
+      const o=object.kind==='text'?{...object,...textOverlaySize(object,width/scale,height/scale,installedFonts)}:object;
+      selectionCandidates.push({selection:{kind:'overlay',id:o.id,pageId},x:o.x*width,y:o.y*height,width:o.width*width,height:o.height*height});
+    }
+  }
+  const marquee=useMarqueeSelection({enabled:near&&Boolean(activeViewport)&&editActive&&overlayTool==='select'&&!selectingLinks&&!objectEditingBusy,
+    stage:stageRef,width,height,candidates:selectionCandidates,selection:editSelection,onSelect:items=>{
+      onSelectEditObjects(items);
+      if(items.length===1&&items[0].kind==='native'){
+        const item=items[0],object=originalObjects.find(o=>item.pageId===pageId&&Number(o.id)===item.index);
+        if(object)onSelectOriginalObject({pageId,pageIndex:sourcePageNumber-1,object:transformedObject(object,originalTransforms,sourcePageNumber-1)});
+      }
+    }});
   useEffect(() => {
     if (stageRef.current && activeViewport) return registerSelectionPage(stageRef.current, pageNumber, activeViewport);
   }, [activeViewport, pageNumber]);
@@ -321,8 +353,9 @@ export default function PdfPage({
 
   return <div className="page-sheet" data-page-number={pageNumber} ref={setSheet}>
     <span className="page-label">Page {pageNumber}</span>
-    <div className={`page-stage ${placing || placingSignature ? 'is-placing' : ''}${editingOriginal ? ' is-editing-text' : ''}`} ref={stageRef} onClick={choosePoint}
+    <div className={`page-stage ${placing || placingSignature ? 'is-placing' : ''}${editingOriginal ? ' is-editing-text' : ''}`} ref={stageRef} onClick={choosePoint} onClickCapture={event=>{if(!marquee.click(event))groupDrag.click(event);}} onPointerDownCapture={event=>{if(!marquee.down(event))groupDrag.down(event);}} onPointerMoveCapture={event=>{if(!marquee.move(event))groupDrag.move(event);}} onPointerUpCapture={event=>{if(!marquee.up(event))groupDrag.up(event);}} onPointerCancelCapture={()=>{if(!marquee.cancel())groupDrag.cancel();}} onLostPointerCapture={()=>marquee.cancel()}
       onContextMenuCapture={event => {
+        if(groupDrag.context(event))return;
         if (!editActive || (event.target as Element).closest('[data-original-object], .original-object-frame, [data-overlay-kind="image"], .editable-signature')) return;
         const selection = selectedPdfText();
         if (!selection.length && !selectingLinks) return;
@@ -336,7 +369,7 @@ export default function PdfPage({
       <div ref={livePreview.element} className="original-drag-preview" aria-hidden="true" />
       {activeViewport && <OriginalObjectLayer enabled={near && editActive && overlayTool === 'select' && !selectingLinks} busy={objectEditingBusy}
         getSourceBytes={getSourceBytes} pageId={pageId} pageIndex={sourcePageNumber-1} viewport={activeViewport}
-        selection={originalObjectSelection} onSelect={onSelectOriginalObject} onChange={onEditOriginalObject} onError={onError} livePreview={livePreview} transforms={originalTransforms} />}
+        selections={editSelection} onObjectsChange={setOriginalObjects} selection={originalObjectSelection} onSelect={onSelectOriginalObject} onChange={onEditOriginalObject} onError={onError} livePreview={livePreview} transforms={originalTransforms} />}
       {inspectOriginalText && activeViewport && <div className="original-text-layer" aria-label="Original PDF text">
         {originalText.filter(original=>!isOriginalDeleted(originalTransforms,sourcePageNumber-1,original.index)).map((original) => {
           const object = transformedText(original, originalTransforms, sourcePageNumber - 1);
@@ -345,15 +378,17 @@ export default function PdfPage({
           const offset = originalDrag?.index === object.index ? originalDrag : null;
           const left = Math.min(a[0], b[0]) + (offset?.dx || 0); const top = Math.min(a[1], b[1]) + (offset?.dy || 0);
           const boxWidth = Math.max(12, Math.abs(a[0] - b[0])); const boxHeight = Math.max(12, Math.abs(a[1] - b[1]));
-          return <svg key={object.index} className={`original-text-frames${editingOriginal?.index === object.index ? ' is-editing' : ''}`} width={width} height={height}
+          return <svg key={object.index} data-original-text-index={object.index} className={`original-text-frames${editingOriginal?.index === object.index ? ' is-editing' : ''}`} width={width} height={height}
             aria-label={`Original text frame: ${object.text}`} onPointerEnter={()=>{if(!objectEditingBusy)livePreview.warm(object.index);}}>
-            <TextFrame x={left} y={top} width={boxWidth} height={boxHeight} selected={editingOriginal?.index === object.index || offset !== null}
-              onInteriorClick={(event) => { event.stopPropagation(); const next = { ...object, value: object.text, fontChoice: 'original' as const };
+            <TextFrame x={left} y={top} width={boxWidth} height={boxHeight} selected={editingOriginal?.index === object.index || offset !== null || editSelection.some(s => s.kind === 'native' && s.pageId === pageId && s.index === object.index)}
+              onInteriorClick={(event) => { event.stopPropagation(); if (event.ctrlKey || event.metaKey) { onSelectNativeText({kind:'native',pageId,pageIndex:sourcePageNumber-1,index:object.index,box:object.box,text:object.text},true); return; } const next = { ...object, value: object.text, fontChoice: 'original' as const };
                 editingOriginalRef.current = next; setEditingOriginal(next);
                 onFontEditChange({ pageId, index: object.index, fontName: object.fontName, choice: 'original',
                   fontSize: object.fontSize * Math.hypot(object.matrix[0], object.matrix[1]),
                   color: '#' + object.color.slice(0, 3).map((value) => value.toString(16).padStart(2, '0')).join('') }); }}
               onBorderPointerDown={(event) => { event.stopPropagation(); if (event.button !== 0 || objectEditingBusy) return;
+                onSelectNativeText({kind:'native',pageId,pageIndex:sourcePageNumber-1,index:object.index,box:object.box,text:object.text},event.ctrlKey || event.metaKey);
+                if(event.ctrlKey || event.metaKey)return;
                 const box = { x: Math.min(a[0],b[0]), y: Math.min(a[1],b[1]), width: Math.max(1,Math.abs(a[0]-b[0])), height: Math.max(1,Math.abs(a[1]-b[1])) };
                 originalDragRef.current = { index: object.index, text: object.text, startX: event.clientX, startY: event.clientY, box };
                 livePreview.begin(object.index,box);
@@ -382,7 +417,8 @@ export default function PdfPage({
         textAppearance={textAppearance}
         fontCommand={fontCommand} onFontEditChange={onFontEditChange}
         color={overlayColor} lineWidth={overlayLineWidth} drawStyle={drawStyle} image={overlayImage} objects={overlays}
-        selectedId={selectedOverlayId} onAdd={onAddOverlay} onUpdate={onUpdateOverlay} onDelete={onDeleteOverlay} onSelect={onSelectOverlay} />}
+        selectedIds={editSelection.filter(s=>s.kind==='overlay').map(s=>s.id)} selectedId={selectedOverlayId} onAdd={onAddOverlay} onUpdate={onUpdateOverlay} onDelete={onDeleteOverlay} onSelect={onSelectOverlay} />}
+      {groupDrag.frame}{groupDrag.popup}{marquee.visual}
       {near && !ready && <span className="page-rendering">Rendering page {pageNumber}…</span>}
       {activeViewport && comments.filter(comment => markupKind(comment.kind) && comment.quadPoints?.length).map(comment =>
         <CommentMarkup key={`markup-${comment.id}`} comment={comment} viewport={activeViewport} selected={selectedId === comment.id}

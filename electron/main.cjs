@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, powerMonitor } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, protocol, session, shell, powerMonitor, clipboard, ClipboardItem } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
@@ -6,6 +6,7 @@ const { createRecentStore } = require('./recent.cjs');
 const { listOriginalText, replaceOriginalText, moveOriginalText, embedShapedOverlays } = require('./original-text.cjs');
 const { listOriginalObjects, editOriginalObject } = require('./original-objects.cjs');
 const { previewOriginalObject } = require('./original-preview.cjs');
+const { copyObjectsWorker: copyObjects, pasteObjectsWorker: pasteObjects } = require('./object-clipboard.cjs');
 const { applyOriginalTransforms } = require('./original-transforms.cjs');
 const { listInstalledFonts, getInstalledFont } = require('./installed-fonts.cjs');
 const { createUpdateService, updateArchitecture } = require('./updates.cjs');
@@ -18,9 +19,11 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'aster', privileges: { standard: true, secure: true, supportFetchAPI: true } }
 ]);
 
+let editClipboard = null, editClipboardToken = '';
+const EDIT_CLIPBOARD_FORMAT = 'electron application/osclipboard;format="AsterPDF.Objects"';
 let recentStore, updateService, updateInstaller, workspace;
 const updateState = () => ({ ...updateService.getState(), transfer: updateInstaller.getState() });
-const publishUpdate = () => { for (const tab of workspace?.documents || []) if (!tab.contents.isDestroyed()) tab.contents.send('updates:changed', updateState()); };
+const publishUpdate = () => { workspace?.refresh(); for (const tab of workspace?.documents || []) if (!tab.contents.isDestroyed()) tab.contents.send('updates:changed', updateState()); };
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
 const SUPPORTED = new Set(['.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp']);
 const pendingLaunchFiles = [];
@@ -312,6 +315,31 @@ documentIpc.handle('pdf:embed-shaped-text', (event, bytes, placements) => {
   });
   documentIpc.handle('settings:get', (event) => { requireApp(event); return loadSettings(); });
   documentIpc.handle('settings:set', (event, name) => { requireApp(event); return storeSettings(name); });
+  documentIpc.handle('edit:copy', async (_event, payload) => {
+    if (!payload || !Array.isArray(payload.overlays) || !Array.isArray(payload.selections) || payload.selections.length > 2000) throw new Error('Invalid clipboard selection.');
+    const token = randomUUID(); editClipboardToken = token;
+    const text = payload.overlays.filter(o => o.kind === 'text').map(o => o.text || '').concat(payload.selections.filter(s => s.kind === 'native' && s.text).map(s => s.text)).join('\n');
+    const pending = (async () => {
+      await clipboard.write([new ClipboardItem({ 'text/plain': text, [EDIT_CLIPBOARD_FORMAT]: token })]);
+      return { overlays: payload.overlays, videos: payload.videos || [],
+        fragment: payload.selections.some(s => s.kind === 'native') ? await copyObjects(validatePdfBytes(payload.bytes), payload.selections.filter(s => s.kind === 'native'), payload.transforms) : undefined };
+    })();
+    editClipboard = pending;
+    try { await pending; } catch (error) { if (editClipboard === pending) editClipboard = null; throw error; }
+  });
+  documentIpc.handle('edit:clipboard', async () => {
+    const token = editClipboardToken;
+    const objects = await editClipboard;
+    const items = await clipboard.read();
+    for (const item of items) if (objects && item.types.includes(EDIT_CLIPBOARD_FORMAT) && await (await item.getType(EDIT_CLIPBOARD_FORMAT)).text() === token) return { objects };
+    for (const item of items) {
+      const type = item.types.find(type => ['image/png','image/jpeg','image/webp'].includes(type));
+      if (type) return {image:`data:${type};base64,${Buffer.from(await (await item.getType(type)).arrayBuffer()).toString('base64')}`};
+    }
+    return { text: await clipboard.readText() };
+  });
+  documentIpc.handle('edit:paste-native', (_event, bytes, fragment, pageIndex, dx, dy) => pasteObjects(validatePdfBytes(bytes), validatePdfBytes(fragment), pageIndex, dx, dy));
+
   documentIpc.handle('updates:status', (event) => { requireApp(event); return updateState(); });
   documentIpc.handle('updates:check', async (event) => { requireApp(event); await updateService.check(true); return updateState(); });
   documentIpc.handle('updates:download', async (event) => {
@@ -412,7 +440,7 @@ app.whenReady().then(() => {
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   workspace = createWorkspaces({ createController: createDocumentController, trusted: appOrigin, sameFile,
-    installing: () => updateInstaller?.getState().phase === 'installing' });
+    getUpdateStatus: updateState, installing: () => updateInstaller?.getState().phase === 'installing' });
   workspace.register(ipcMain);
   const send = channel => workspace.sendMenu(channel);
   Menu.setApplicationMenu(Menu.buildFromTemplate([
