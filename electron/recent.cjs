@@ -1,7 +1,8 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 
-const MAX_RECENT = 8;
+const MAX_RECENT = 32;
+const retain = (items) => [...items.filter(item => item.pinned), ...items.filter(item => !item.pinned).sort((a, b) => b.openedAt - a.openedAt).slice(0, MAX_RECENT)];
 const MAX_PREVIEW_LENGTH = 200_000;
 
 function samePath(left, right) {
@@ -32,9 +33,9 @@ function createRecentStore(userDataPath) {
         path.isAbsolute(item.path) && item.path.toLowerCase().endsWith('.pdf') &&
         Number.isFinite(item.openedAt) && item.openedAt > 0 && item.openedAt < 8.64e15 &&
         Number.isFinite(item.modifiedAt))
-        .slice(0, MAX_RECENT)
         .map((item) => ({
           path: item.path,
+          pinned: item.pinned === true,
           openedAt: item.openedAt,
           modifiedAt: item.modifiedAt,
           preview: validPreview(item.preview) ? item.preview : null
@@ -65,6 +66,7 @@ function createRecentStore(userDataPath) {
           return {
             path: item.path,
             name: path.basename(item.path),
+            pinned: item.pinned,
             openedAt: item.openedAt,
             preview: Math.abs(stats.mtimeMs - item.modifiedAt) < 1 ? item.preview : null
           };
@@ -78,13 +80,22 @@ function createRecentStore(userDataPath) {
       const resolved = path.resolve(filePath);
       const items = await read();
       const existing = items.find((item) => samePath(item.path, resolved));
-      const next = [{
+      const next = retain([{
         path: resolved,
+        pinned: existing?.pinned === true,
         openedAt: Date.now(),
         modifiedAt,
         preview: existing && Math.abs(existing.modifiedAt - modifiedAt) < 1 ? existing.preview : null
-      }, ...items.filter((item) => !samePath(item.path, resolved))].slice(0, MAX_RECENT);
+      }, ...items.filter((item) => !samePath(item.path, resolved))]);
       await write(next);
+    }),
+    pin: (filePath, pinned) => serialized(async () => {
+      const items = await read();
+      const entry = items.find(item => samePath(item.path, filePath));
+      if (entry) { entry.pinned = pinned === true; await write(retain(items)); }
+    }),
+    remove: (filePath) => serialized(async () => {
+      await write((await read()).filter(item => !samePath(item.path, filePath)));
     }),
     setPreview: (filePath, preview) => serialized(async () => {
       if (!validPreview(preview)) throw new Error('Invalid PDF preview.');

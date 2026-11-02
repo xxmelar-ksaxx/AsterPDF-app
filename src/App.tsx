@@ -1,3 +1,4 @@
+import HomeView from './components/HomeView';
 import ReaderControls from './components/ReaderControls';
 import { flushSync } from 'react-dom';
 import { videoBlob } from './pdf/video-assets';
@@ -748,6 +749,7 @@ export default function App() {
     try {
       await finishInlineEdits();
       if (!(await window.aster.closeDocument(source.path))) return;
+      finishOpening();
       setSource(null);
       setDrafts([]); setEditingDirty(false); setPagePlan(null);
       setCommentChanges([]); setEditingComment(null);
@@ -2135,22 +2137,7 @@ export default function App() {
 
     {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error"><X size={16} aria-hidden="true" /></button></div>}
 
-    {!source ? <main className={`welcome ${recentPdfs.length ? 'has-recents' : ''}`}>
-      <div className="welcome-mark"><img src="./icon.png" alt="" /></div>
-      <span className="eyebrow">YOUR OFFLINE PDF WORKSPACE</span>
-      <h1>Every detail, in view.</h1>
-      <p>Open a PDF, Word document, or image. Organize pages, sign, compress, comment, and save as PDF — all offline.</p>
-      <button className="button primary welcome-open" onClick={() => void openSelected()}><FolderOpen size={20} /> Open a file <ChevronRight size={18} /></button>
-      <div className="drop-hint">or drop a PDF, DOCX, PNG, JPEG, or WebP anywhere in this window</div>
-      {recentPdfs.length > 0 ? <section className="recent-files" aria-labelledby="recent-title">
-        <div className="recent-heading"><div><span className="eyebrow">PICK UP WHERE YOU LEFT OFF</span><h2 id="recent-title">Recently opened</h2></div><span>{recentPdfs.length} {recentPdfs.length === 1 ? 'PDF' : 'PDFs'}</span></div>
-        <div className="recent-list">{recentPdfs.map((recent) => <button key={recent.path} className="recent-file" onClick={() => void openPath(recent.path)} aria-label={`Open ${recent.name}`} title={recent.path}>
-          <span className="recent-preview">{recent.preview ? <img src={recent.preview} alt="" /> : <FileText size={30} />}</span>
-          <span className="recent-details"><strong>{recent.name}</strong><span>{recent.path}</span><time dateTime={new Date(recent.openedAt).toISOString()}>Opened {new Date(recent.openedAt).toLocaleDateString()}</time></span>
-          <ChevronRight size={19} className="recent-chevron" />
-        </button>)}</div>
-      </section> : <div className="welcome-points"><span><FileText size={18} /> Clear page previews</span><span><MessageSquare size={18} /> PDF comments</span><span><ArrowDownToLine size={18} /> Local files only</span></div>}
-    </main> : <main className="workspace">
+    {!source ? <HomeView files={recentPdfs} onOpen={() => void openSelected()} onOpenPath={path => void openPath(path)} onChange={setRecentPdfs} onError={setError} /> : <main className="workspace">
       <section className="viewer-column">
         <div className={`viewer-toolbar${activeTool === 'edit' || activeTool === 'draw' ? ' has-edit-tools' : ''}`}>
           {pageGridOpen && <div className="grid-toolbar-heading"><button className="button outline" onClick={() => closePageGrid()} aria-label="Return to PDF view"><ChevronLeft size={16} />PDF view</button><span>{effectivePages.length} {effectivePages.length === 1 ? 'page' : 'pages'}</span></div>}

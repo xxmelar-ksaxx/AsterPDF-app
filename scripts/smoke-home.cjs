@@ -1,0 +1,32 @@
+const {_electron}=require('playwright');
+const {createServer}=require('vite');
+const {PDFDocument}=require('pdf-lib');
+const fs=require('node:fs/promises'),path=require('node:path'),os=require('node:os'),assert=require('node:assert/strict');
+async function poll(fn){for(let i=0;i<150;i++){if(await fn())return;await new Promise(r=>setTimeout(r,100));}throw Error('Home check timed out');}
+(async()=>{
+ const root=process.cwd(),temp=await fs.mkdtemp(path.join(os.tmpdir(),'aster-home-'));
+ const pdf=await PDFDocument.create();pdf.addPage([600,800]).drawText('Home workspace check',{x:40,y:700});const bytes=await pdf.save();
+ const names=['قالب تقارير المحسنين v.1.pdf','Studio 01 (1).pdf','Quarterly report.pdf','Brand guidelines.pdf','Project proposal.pdf','Meeting notes.pdf'];
+ const entries=[];for(let i=0;i<names.length;i++){const file=path.join(temp,names[i]);await fs.writeFile(file,bytes);entries.push({path:file,openedAt:Date.now()-i*86400000,modifiedAt:(await fs.stat(file)).mtimeMs,pinned:i===2});}
+ await fs.writeFile(path.join(temp,'recent-pdfs.json'),JSON.stringify(entries));
+ const server=await createServer({configFile:false,root,server:{host:'127.0.0.1',port:0}});await server.listen();const env={...process.env,ASTERPDF_DEV_URL:`http://127.0.0.1:${server.httpServer.address().port}`};delete env.ELECTRON_RUN_AS_NODE;let app;
+ try{
+ app=await _electron.launch({executablePath:require('electron'),args:[root,`--user-data-dir=${temp}`],env,timeout:60000});let doc;
+ await poll(async()=>{doc=app.context().pages().find(p=>p.url().startsWith(env.ASTERPDF_DEV_URL)&&!p.url().includes('workspace=1'));return doc&&await doc.locator('.home-file').count()===6;});doc.setDefaultTimeout(15000);const errors=[];doc.on('pageerror',e=>errors.push(e.message));
+ assert.equal(await doc.getByRole('region',{name:'Pinned',exact:true}).locator('.home-file').count(),1);
+ const search=doc.getByRole('searchbox',{name:'Search recent files'});await search.fill('المحسنين');assert.equal(await doc.locator('.home-file').count(),1);assert.equal(await doc.locator('.home-filename bdi').getAttribute('dir'),'auto');await search.fill('zzzz');await doc.getByText('No matching documents',{exact:true}).waitFor();await doc.getByRole('button',{name:'Clear search',exact:true}).first().click();
+ await doc.getByRole('button',{name:'Pin Studio 01 (1).pdf',exact:true}).focus();await doc.getByRole('button',{name:'Pin Studio 01 (1).pdf',exact:true}).click();await poll(async()=>await doc.getByRole('region',{name:'Pinned',exact:true}).locator('.home-file').count()===2);
+ assert.equal(JSON.parse(await fs.readFile(path.join(temp,'recent-pdfs.json'),'utf8')).find(f=>f.path===entries[1].path).pinned,true);
+ await doc.getByRole('button',{name:'Options for Studio 01 (1).pdf',exact:true}).click();await doc.getByRole('button',{name:'Unpin document',exact:true}).click();await poll(async()=>await doc.getByRole('region',{name:'Pinned',exact:true}).locator('.home-file').count()===1);
+ await doc.getByRole('button',{name:'Options for Meeting notes.pdf',exact:true}).click();await doc.getByRole('button',{name:'Show in folder',exact:true}).waitFor();await doc.keyboard.press('Escape');assert.equal(await doc.locator('.home-file-menu').count(),0);
+ await app.evaluate(({shell})=>{shell.showItemInFolder=file=>{global.__revealedHomeFile=file;};});await doc.getByRole('button',{name:'Options for Meeting notes.pdf',exact:true}).click();await doc.getByRole('button',{name:'Show in folder',exact:true}).click();await poll(async()=>await app.evaluate(()=>global.__revealedHomeFile)===entries[5].path);await doc.getByRole('button',{name:'Options for Meeting notes.pdf',exact:true}).click();await search.click();assert.equal(await doc.locator('.home-file-menu').count(),0);
+ await doc.getByRole('button',{name:'Options for Meeting notes.pdf',exact:true}).click();await doc.getByRole('button',{name:'Remove from recent',exact:true}).click();await poll(async()=>await doc.locator('.home-file').count()===5);assert.ok((await fs.stat(entries[5].path)).isFile());
+ await doc.locator('.home-view').evaluate(el=>el.scrollTop=0);await doc.screenshot({path:path.join(temp,'home-list.png')});await doc.getByRole('button',{name:'Grid view',exact:true}).click();assert.equal(await doc.locator('.home-files-grid').count(),2);await doc.reload();await doc.locator('.home-files-grid').first().waitFor();assert.equal(await doc.getByRole('button',{name:'Grid view',exact:true}).getAttribute('aria-pressed'),'true');await doc.screenshot({path:path.join(temp,'home-grid.png')});
+ const transfer=await doc.evaluateHandle(()=>{const data=new DataTransfer();data.items.add(new File(['pdf'],'drop.pdf',{type:'application/pdf'}));return data;});await doc.locator('.home-view').dispatchEvent('dragenter',{dataTransfer:transfer});await doc.getByText('Drop to open',{exact:true}).waitFor();await doc.locator('.home-view').dispatchEvent('dragleave');assert.equal(await doc.locator('.home-drop-overlay').count(),0);
+ await doc.getByRole('button',{name:'Open Studio 01 (1).pdf',exact:true}).click();await doc.locator('.rail-page-number').waitFor();assert.equal(await doc.locator('.sidebar-content').count(),0);
+ const shell=app.context().pages().find(p=>p.url().includes('workspace=1'));await shell.locator('.workspace-brand').click();await doc.locator('.home-view').waitFor();
+ await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].setSize(800,700));await doc.getByRole('button',{name:'List view',exact:true}).click();await doc.locator('dialog.save-feedback[open]').waitFor({state:'hidden'});await new Promise(r=>setTimeout(r,400));await doc.screenshot({path:path.join(temp,'home-small.png')});assert.ok(await doc.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth));
+ await doc.evaluate(async()=>{for(const file of await window.aster.getRecentPdfs())await window.aster.recentAction(file.path,'remove');});await doc.reload();await doc.locator('.home-empty').waitFor();await doc.getByRole('button',{name:'Open a file',exact:true}).waitFor();await doc.screenshot({path:path.join(temp,'home-empty.png')});assert.deepEqual(errors,[]);
+ console.log('PASS home: search, Arabic names, pin/unpin persistence, menus, non-destructive removal, list/grid persistence, drop feedback, file opening, collapsed sidebar, compact and empty views. Screenshots: '+temp);
+ }finally{if(app){await app.evaluate(({app})=>app.exit(0)).catch(()=>{});await app.close().catch(()=>{});}await server.close();}
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -308,6 +308,16 @@ documentIpc.handle('pdf:embed-shaped-text', (event, bytes, placements) => {
     return new Uint8Array(bytes);
   });
   documentIpc.handle('recent:list', (event) => { requireApp(event); return recentStore.list(); });
+  documentIpc.handle('recent:action', async (event, filePath, action) => {
+    requireApp(event);
+    const entry = (await recentStore.list()).find(item => item.path === filePath);
+    if (!entry) throw new Error('This file is no longer in your recent documents.');
+    if (action === 'pin' || action === 'unpin') await recentStore.pin(entry.path, action === 'pin');
+    else if (action === 'remove') await recentStore.remove(entry.path);
+    else if (action === 'reveal') shell.showItemInFolder(entry.path);
+    else throw new Error('Unknown recent document action.');
+    return recentStore.list();
+  });
   documentIpc.handle('recent:set-preview', (event, filePath, preview) => {
     requireApp(event);
     if (typeof filePath !== 'string' || filePath !== currentPath) return;

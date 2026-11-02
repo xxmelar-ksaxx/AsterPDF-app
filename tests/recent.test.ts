@@ -5,11 +5,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-type Recent = { path: string; name: string; openedAt: number; preview: string | null };
+type Recent = { path: string; name: string; openedAt: number; preview: string | null; pinned?: boolean };
 type Store = {
   list(): Promise<Recent[]>;
   record(filePath: string, modifiedAt: number): Promise<void>;
   setPreview(filePath: string, preview: string): Promise<void>;
+  pin(filePath: string, pinned: boolean): Promise<void>;
+  remove(filePath: string): Promise<void>;
 };
 const require = createRequire(import.meta.url);
 const { createRecentStore } = require('../electron/recent.cjs') as { createRecentStore(dir: string): Store };
@@ -34,4 +36,30 @@ test('recent PDFs persist in order, keep previews, and skip missing files', asyn
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('pinned documents persist beyond recent history and removal leaves the file intact', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'asterpdf-recent-pins-'));
+  try {
+    const store = createRecentStore(directory);
+    const pinned = path.join(directory, 'pinned.pdf');
+    await writeFile(pinned, '%PDF-1.7');
+    await store.record(pinned, (await stat(pinned)).mtimeMs);
+    await store.pin(pinned, true);
+    for (let index = 0; index < 35; index++) {
+      const file = path.join(directory, `${index}.pdf`);
+      await writeFile(file, '%PDF-1.7');
+      await store.record(file, (await stat(file)).mtimeMs);
+    }
+    const reopened = createRecentStore(directory);
+    assert.equal((await reopened.list()).length, 33);
+    assert.equal((await reopened.list()).find(item => item.path === pinned)?.pinned, true);
+    await reopened.record(pinned, (await stat(pinned)).mtimeMs);
+    assert.equal((await reopened.list()).find(item => item.path === pinned)?.pinned, true);
+    await reopened.pin(pinned, false);
+    assert.equal((await reopened.list()).find(item => item.path === pinned)?.pinned, false);
+    await reopened.remove(pinned);
+    assert.equal((await reopened.list()).some(item => item.path === pinned), false);
+    assert.equal((await stat(pinned)).isFile(), true);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -52,6 +52,7 @@ declare global {
       onDataProgress(handler: (progress: { token: string; message: string }) => void): () => void;
       onWordProgress(handler: (progress: { token: string; message: string }) => void): () => void;
       getRecentPdfs(): Promise<RecentPdf[]>;
+      recentAction(filePath: string, action: 'pin' | 'unpin' | 'remove' | 'reveal'): Promise<RecentPdf[]>;
       setRecentPreview(path: string, preview: string): Promise<void>;
       getSettings(): Promise<{ authorName: string }>;
       getUpdateStatus(): Promise<UpdateStatus>;
@@ -125,6 +126,7 @@ export interface OpenedFile extends OpenedPdf {
 }
 
 export interface RecentPdf {
+  pinned?: boolean;
   path: string;
   name: string;
   openedAt: number;

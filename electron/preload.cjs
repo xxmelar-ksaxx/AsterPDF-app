@@ -79,6 +79,7 @@ embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-tex
     return () => ipcRenderer.removeListener('word:progress', listener);
   },
   getRecentPdfs: () => ipcRenderer.invoke('recent:list'),
+  recentAction: (filePath, action) => ipcRenderer.invoke('recent:action', filePath, action),
   setRecentPreview: (filePath, preview) => ipcRenderer.invoke('recent:set-preview', filePath, preview),
   getSettings: () => ipcRenderer.invoke('settings:get'),
   getUpdateStatus: () => ipcRenderer.invoke('updates:status'),
