@@ -1,9 +1,11 @@
+import { joinParagraphFrames } from './join-paragraph-frames';
+import { detectParagraphs, type Paragraph } from '../pdf/paragraphs';
 import useMarqueeSelection, { type SelectionCandidate } from './useMarqueeSelection';
 import { isDrawingObject } from '../pdf/overlays';
 import { textOverlaySize } from './text-overlay-size';
 import useEditSelectionDrag from './useEditSelectionDrag';
 import type { EditSelection } from '../types';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { MessageSquare } from 'lucide-react';
 import { onFinishInlineEdit } from '../finish-inline-edit';
 import { AnnotationType, OPS, type PDFDocumentProxy, type PageViewport } from 'pdfjs-dist';
@@ -19,10 +21,10 @@ import PdfLinks from './PdfLinks';
 import type { TextMarkupSelection } from '../pdf/comments';
 import type { ColorCommand, FontCommand, FontSelection, InstalledFont } from './FontPicker';
 import type { OriginalPdfObject, OriginalPdfText } from '../types';
-import OriginalTextEditor, { type TextEdit } from './OriginalTextEditor';
+import OriginalTextEditor, { resolveTextFont, type TextEdit } from './OriginalTextEditor';
 import OriginalObjectLayer from './OriginalObjectLayer';
 import useOriginalDragPreview, { type PreviewBox } from './useOriginalDragPreview';
-import { transformedObject, transformedText, isOriginalDeleted } from '../pdf/original-transforms';
+import { transformedObject, transformedText, isOriginalDeleted, stageObjectPatch } from '../pdf/original-transforms';
 import type { OriginalTransform } from '../types';
 import type { OriginalObjectChange, OriginalObjectSelection } from '../types';
 
@@ -57,6 +59,10 @@ type Props = {
   colorCommand: ColorCommand | null;
   installedFonts: InstalledFont[];
   onMoveOriginalText: (pageIndex: number, objectIndex: number, text: string, dx: number, dy: number) => Promise<void>;
+  paragraphRequest: {indices: number[]} | null;
+  onRequestHandled: () => void;
+  paragraphMode: boolean;
+  onReplaceParagraph: (pageIndex: number, sources: OriginalPdfText[], replacement: OverlayObject, overlayIds?: string[]) => void;
   originalTransforms: OriginalTransform[];
   pageNumber: number;
   sourcePageNumber: number;
@@ -115,7 +121,7 @@ type Props = {
 };
 
 export default function PdfPage({
-  editSelection, onSelectEditObjects, onSelectNativeText, onMoveEditSelection, onCopyEditSelection, onDeleteEditSelection, document, getSourceBytes, originalTransforms, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
+  paragraphRequest, onRequestHandled, paragraphMode, onReplaceParagraph, editSelection, onSelectEditObjects, onSelectNativeText, onMoveEditSelection, onCopyEditSelection, onDeleteEditSelection, document, getSourceBytes, originalTransforms, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
   popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, selectingLinks, editActive, onLinkMenu, onNavigateLink, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
@@ -134,9 +140,45 @@ export default function PdfPage({
   const editingOriginalRef = useRef<typeof editingOriginal>(null);
   const originalDragRef = useRef<{ index: number; text: string; startX: number; startY: number; box: PreviewBox } | null>(null);
   const [originalDrag, setOriginalDrag] = useState<{ index: number; dx: number; dy: number } | null>(null);
-  const livePreview = useOriginalDragPreview(viewport, getSourceBytes, sourcePageNumber - 1, near && editActive && overlayTool === 'select', canvasRef, originalTransforms);
+  const [paragraphDraft, setParagraphDraft] = useState<(Paragraph & {caret?: {x:number; y:number}}) | null>(null);
+  const pendingParagraph = useRef(0);
+  const [preparingParagraph, setPreparingParagraph] = useState<string | null>(null);
+  const blockKey = (block:Paragraph) => block.sources.length ? String(block.sources[0].index) : block.overlayIds![0];
+  useEffect(() => {
+    setPreparingParagraph(null);
+    const cancel = () => { pendingParagraph.current++; setPreparingParagraph(null); };
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') cancel(); };
+    window.addEventListener('pointerdown', cancel, true);
+    window.addEventListener('keydown', key);
+    return () => { pendingParagraph.current++; window.removeEventListener('pointerdown', cancel, true); window.removeEventListener('keydown', key); };
+  }, [getSourceBytes, originalTransforms, overlayTool, paragraphMode, viewport]);
+  const withoutParagraph = useCallback((block:Paragraph) => block.sources.reduce((changes,source) =>
+    stageObjectPatch(changes,sourcePageNumber-1,source.index,{deleted:true,text:source.text}),originalTransforms),
+    [sourcePageNumber,originalTransforms]);
+  const previewTransforms = useMemo(() => paragraphDraft ? withoutParagraph(paragraphDraft) : originalTransforms,[paragraphDraft,withoutParagraph,originalTransforms]);
+  const livePreview = useOriginalDragPreview(viewport, getSourceBytes, sourcePageNumber - 1, near && editActive && overlayTool === 'select', canvasRef, previewTransforms);
+  const beginParagraph = async (block: Paragraph, caret?: {x:number;y:number}) => {
+    if (!viewport) return;
+    const request = ++pendingParagraph.current;
+    setPreparingParagraph(blockKey(block));
+    const changes = withoutParagraph(block);
+    const object = block.object;
+    const face = resolveTextFont(object.fontChoice || 'helvetica','',object.text || '',installedFonts,object);
+    try {
+      // Decode the page without the source text and load its editing font before
+      // exposing the editor. The layout effect can install both in one paint.
+      await Promise.all([block.sources.length ? livePreview.prepareScene(block.sources.at(-1)!.index, changes) : Promise.resolve(),
+        window.document.fonts.load(`${face.fontStyle} ${face.fontWeight} ${object.fontSize}px ${face.family}`, object.text)]);
+      if (pendingParagraph.current === request)
+        setParagraphDraft({...block, caret, object:{...object,id:crypto.randomUUID()}});
+    } catch (cause) {
+      if (pendingParagraph.current === request) onError(`Could not prepare this text block: ${cause instanceof Error ? cause.message : cause}`);
+    } finally {
+      if (pendingParagraph.current === request) setPreparingParagraph(null);
+    }
+  };
   const groupDrag=useEditSelectionDrag({selection:editSelection,pageId,viewport,stage:stageRef,overlays,preview:livePreview,
-    disabled:objectEditingBusy||!editActive||(overlayTool!=='select'&&overlayTool!=='text'),onMove:onMoveEditSelection,onCopy:onCopyEditSelection,onDelete:onDeleteEditSelection,onError});
+    disabled:Boolean(paragraphDraft)||objectEditingBusy||!editActive||(overlayTool!=='select'&&overlayTool!=='text'),onMove:onMoveEditSelection,onCopy:onCopyEditSelection,onDelete:onDeleteEditSelection,onError});
   useEffect(() => {
     const cancel = (event: KeyboardEvent) => { if (event.key === 'Escape' && originalDragRef.current) { originalDragRef.current = null; setOriginalDrag(null); livePreview.cancel(); } };
     window.addEventListener('keydown', cancel); return () => window.removeEventListener('keydown', cancel);
@@ -188,6 +230,27 @@ export default function PdfPage({
     return () => { window.document.removeEventListener('pointerdown', outside); unsubscribe(); };
   }, [editingOriginal]);
 
+  const paragraphBlocks = useMemo(() => {
+    if (!paragraphMode || !viewport || !inspectOriginalText) return [];
+    const candidates = originalText.filter(text => !isOriginalDeleted(originalTransforms, sourcePageNumber-1, text.index))
+      .map(text => transformedText(text, originalTransforms, sourcePageNumber-1));
+    const native = detectParagraphs(candidates, viewport, viewport.width / size.width, pageId, installedFonts);
+    return joinParagraphFrames(native,overlays,size.width,size.height,installedFonts);
+  }, [paragraphMode, viewport, inspectOriginalText, originalText, originalTransforms, sourcePageNumber, size.width, size.height, pageId, installedFonts, overlays]);
+
+  useEffect(() => {
+    if (!paragraphRequest) return;
+    onRequestHandled();
+    const selected = originalText.filter(source => paragraphRequest.indices.includes(source.index) &&
+      !isOriginalDeleted(originalTransforms, sourcePageNumber-1, source.index))
+      .map(source => transformedText(source, originalTransforms, sourcePageNumber-1));
+    const blocks = viewport && detectParagraphs(selected, viewport, viewport.width / size.width, pageId, installedFonts, true);
+    if (blocks?.length !== 1 || blocks[0].sources.length !== paragraphRequest.indices.length) {
+      onError('Select horizontal text with the same font, size, and color on one page.');
+      return;
+    }
+    void beginParagraph(blocks[0]);
+  }, [paragraphRequest]);
   const setSheet = useCallback((element: HTMLDivElement | null) => {
     sheetRef.current = element;
     registerPage(pageNumber, element);
@@ -371,7 +434,18 @@ export default function PdfPage({
         getSourceBytes={getSourceBytes} pageId={pageId} pageIndex={sourcePageNumber-1} viewport={activeViewport}
         selections={editSelection} onObjectsChange={setOriginalObjects} selection={originalObjectSelection} onSelect={onSelectOriginalObject} onChange={onEditOriginalObject} onError={onError} livePreview={livePreview} transforms={originalTransforms} />}
       {inspectOriginalText && activeViewport && <div className="original-text-layer" aria-label="Original PDF text">
-        {originalText.filter(original=>!isOriginalDeleted(originalTransforms,sourcePageNumber-1,original.index)).map((original) => {
+        {paragraphMode ? paragraphBlocks.map(block => {
+          const frame = block.object;
+          return <button key={blockKey(block)} className="paragraph-hit" type="button"
+            aria-label={`Edit paragraph: ${frame.text}`} title="Edit this text block" aria-busy={preparingParagraph === blockKey(block)}
+            style={{left:frame.x*width, top:frame.y*height, width:frame.width*width, height:frame.height*height}}
+            onPointerEnter={() => {const last=block.sources.at(-1); if (last && !paragraphDraft && !objectEditingBusy) livePreview.warmScene(last.index,withoutParagraph(block));}}
+            onPointerLeave={livePreview.stopWarming} disabled={objectEditingBusy || Boolean(paragraphDraft)}
+            onClick={event => {
+              event.stopPropagation();
+              void beginParagraph(block, event.detail ? {x:event.clientX,y:event.clientY} : undefined);
+            }} />;
+        }) : originalText.filter(original=>!isOriginalDeleted(originalTransforms,sourcePageNumber-1,original.index)).map((original) => {
           const object = transformedText(original, originalTransforms, sourcePageNumber - 1);
           const a = activeViewport.convertToViewportPoint(object.box[0], object.box[1]);
           const b = activeViewport.convertToViewportPoint(object.box[2], object.box[3]);
@@ -412,11 +486,15 @@ export default function PdfPage({
           onChange={(value) => { const next = { ...editingOriginalRef.current!, value };
             editingOriginalRef.current = next; setEditingOriginal(next); }} onFinish={finishOriginalText} />}
       </div>}
-      {activeViewport && <OverlayLayer pageId={pageId} width={width} height={height} scale={scale} tool={overlayTool} drawActive={drawActive}
+      {activeViewport && <OverlayLayer paragraphCaret={paragraphDraft?.caret} paragraphDraft={paragraphDraft?.object} onFinishParagraph={replacement => {
+          if (replacement && paragraphDraft) onReplaceParagraph(sourcePageNumber-1, paragraphDraft.sources, replacement, paragraphDraft.overlayIds);
+          setParagraphDraft(null);
+        }} pageId={pageId} width={width} height={height} scale={scale} tool={overlayTool} drawActive={drawActive}
         fontSize={overlayFontSize} fontChoice={overlayFontChoice} viewport={activeViewport} fonts={installedFonts}
         textAppearance={textAppearance}
         fontCommand={fontCommand} onFontEditChange={onFontEditChange}
-        color={overlayColor} lineWidth={overlayLineWidth} drawStyle={drawStyle} image={overlayImage} objects={overlays}
+        color={overlayColor} lineWidth={overlayLineWidth} drawStyle={drawStyle} image={overlayImage} blockMembers={paragraphBlocks.flatMap(block=>block.overlayIds || [])}
+        objects={paragraphDraft?.overlayIds ? overlays.filter(item=>!paragraphDraft.overlayIds!.includes(item.id)) : overlays}
         selectedIds={editSelection.filter(s=>s.kind==='overlay').map(s=>s.id)} selectedId={selectedOverlayId} onAdd={onAddOverlay} onUpdate={onUpdateOverlay} onDelete={onDeleteOverlay} onSelect={onSelectOverlay} />}
       {groupDrag.frame}{groupDrag.popup}{marquee.visual}
       {near && !ready && <span className="page-rendering">Rendering page {pageNumber}…</span>}

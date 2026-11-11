@@ -1,10 +1,11 @@
+import FlowTextField from './FlowTextField';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PageViewport } from 'pdfjs-dist';
 import type { OriginalPdfText } from '../types';
 import type { InstalledFont } from './FontPicker';
 import type { TextAppearance } from '../pdf/overlays';
 import { layoutTextLines } from '../pdf/text-layout';
-import { applyTextInput, displayPosition, plainTextInput, smartTextInput, sourcePosition, type TextInputView } from '../pdf/smart-text-input';
+import { applyTextInput, displayBreaks, displayPosition, plainTextInput, smartTextInput, sourcePosition, type TextInputView } from '../pdf/smart-text-input';
 
 export type TextEdit = OriginalPdfText & { value: string; fontChoice: string };
 
@@ -53,11 +54,11 @@ export function resolveTextFont(choice: string, pdfName: string, value: string, 
   return { family, fontStyle, fontWeight, arabic };
 }
 
-export default function OriginalTextEditor({ edit, viewport, canvas, fonts, onChange, onFinish, mask = true, label = 'Edit original PDF text', appearance = {}, frameWidth }: {
+export default function OriginalTextEditor({ edit, viewport, canvas, fonts, onChange, onFinish, mask = true, label = 'Edit original PDF text', appearance = {}, frameWidth, initialCaret }: {
   edit: TextEdit; viewport: PageViewport; canvas: HTMLCanvasElement | null; fonts: InstalledFont[];
   onChange: (value: string) => void; onFinish: (commit: boolean) => void;
   mask?: boolean; label?: string;
-  appearance?: TextAppearance; frameWidth?: number;
+  appearance?: TextAppearance; frameWidth?: number; initialCaret?: {x:number; y:number};
 }) {
   const input = useRef<HTMLDivElement>(null);
   const multilineInput = useRef<HTMLTextAreaElement>(null);
@@ -96,19 +97,22 @@ export default function OriginalTextEditor({ edit, viewport, canvas, fonts, onCh
   const descent = metrics.fontBoundingBoxDescent || size * 0.3;
   const editorAlign = appearance.textAlign === 'smart-justify' ? 'justify' : appearance.textAlign || 'left';
   const smart = !mask && appearance.textAlign === 'smart-justify' && frameWidth !== undefined;
-  if (smart) managedHistory.current = true;
-  const lineHeight = Math.max(size * 1.4, ascent + descent);
+  const formattedBreaks = Boolean(appearance.breakSpacing || edit.value.includes('\u2028'));
+  if (smart || formattedBreaks) managedHistory.current = true;
+  const lineHeight = appearance.lineSpacing ? size * appearance.lineSpacing : Math.max(size * 1.4, ascent + descent);
   const lines = useMemo(() => {
     const context = window.document.createElement('canvas').getContext('2d')!;
     context.font = `${fontStyle} ${fontWeight} ${size}px ${family}`;
-    return layoutTextLines(edit.value, (text) => context.measureText(text).width, frameWidth);
-  }, [edit.value, frameWidth, size, family, fontStyle, fontWeight, fontRevision]);
+    return layoutTextLines(edit.value, (text) => context.measureText(text).width, frameWidth, appearance.breakSpacing);
+  }, [edit.value, frameWidth, appearance.breakSpacing, size, family, fontStyle, fontWeight, fontRevision]);
+  const flow = !mask && appearance.paragraphGap !== undefined;
   const formattedInput = useMemo(() => {
-    if (!smart || frameWidth === undefined) return plainTextInput(edit.value);
+    if (!smart || frameWidth === undefined) return flow ? plainTextInput(edit.value) : displayBreaks(plainTextInput(edit.value), appearance.breakSpacing || 0);
     const context = window.document.createElement('canvas').getContext('2d')!;
     context.font = `${fontStyle} ${fontWeight} ${size}px ${family}`;
-    return smartTextInput(edit.value, (text) => context.measureText(text).width, frameWidth);
-  }, [smart, edit.value, frameWidth, size, family, fontStyle, fontWeight, fontRevision]);
+    const view = smartTextInput(edit.value, text => context.measureText(text).width, frameWidth);
+    return flow ? view : displayBreaks(view, appearance.breakSpacing || 0);
+  }, [flow, smart, appearance.breakSpacing, edit.value, frameWidth, size, family, fontStyle, fontWeight, fontRevision]);
   const inputView = compositionView || formattedInput;
   const readSelection = (element: HTMLTextAreaElement, view?: TextInputView) => {
     // React can deliver select immediately after input, before the new render.
@@ -157,7 +161,27 @@ export default function OriginalTextEditor({ edit, viewport, canvas, fonts, onCh
     element.setSelectionRange(displayPosition(inputView, start), displayPosition(inputView, end), direction);
   }, [inputView]);
   useLayoutEffect(() => {
-    if (multilineInput.current) { multilineInput.current.focus(); multilineInput.current.select(); return; }
+    const field = multilineInput.current;
+    if (field) {
+      field.focus();
+      if (!initialCaret) { field.select(); return; }
+      // Hit-test the browser's shaped text so mixed scripts and wrapped lines
+      // place the insertion point at the word the user actually clicked.
+      const mirror = document.createElement('div');
+      mirror.className = field.className;
+      mirror.style.cssText = field.style.cssText;
+      mirror.style.pointerEvents = 'auto';
+      const node = document.createTextNode(field.value || ' ');
+      mirror.append(node);
+      field.after(mirror);
+      try {
+        const range = document.caretRangeFromPoint(initialCaret.x, initialCaret.y);
+        const offset = range?.startContainer === node ? range.startOffset : field.value.length;
+        field.setSelectionRange(offset, offset);
+        selection.current = readSelection(field);
+      } finally { mirror.remove(); }
+      return;
+    }
     input.current?.focus();
     if (input.current) window.getSelection()?.selectAllChildren(input.current);
   }, [edit.index]);
@@ -179,9 +203,14 @@ export default function OriginalTextEditor({ edit, viewport, canvas, fonts, onCh
       width: Math.abs(first[0] - second[0]) + 2, height: Math.abs(first[1] - second[1]) + 2, background
     }} />}
     <div className="original-text-input-position" style={{ transform }}>
-      {!mask ? <textarea ref={multilineInput} className="original-text-editable added-text-multiline" aria-label={label} aria-multiline="true"
+      {flow ? <FlowTextField view={formattedInput} label={label} gap={appearance.paragraphGap! * viewport.scale} caret={initialCaret}
+        selection={selection} onEdit={changeInput} onFinish={onFinish} onHistory={restoreInput}
+        style={{top:-ascent-(lineHeight-ascent-descent)/2, width:frameWidth ?? Math.max(size,...lines.map(line=>line.width))+2,
+          lineHeight:lineHeight+'px', fontSize:size, fontFamily:family, fontWeight, fontStyle, textAlign:editorAlign, direction:arabic?'rtl':'ltr',
+          textDecoration:[appearance.underline && 'underline',appearance.strikeThrough && 'line-through'].filter(Boolean).join(' ') || 'none',
+          color:`rgba(${edit.color.slice(0,3).join(',')}, ${edit.color[3]/255})`}} /> : !mask ? <textarea ref={multilineInput} className="original-text-editable added-text-multiline" aria-label={label} aria-multiline="true"
         value={inputView.text} spellCheck={false} wrap={frameWidth === undefined ? 'off' : 'soft'}
-        title="Enter for a new line · Click outside or Ctrl/Cmd+Enter to finish"
+        title="Enter for a paragraph · Shift+Enter for a line break · Ctrl/Cmd+Enter to finish"
         onDragStart={(event) => event.preventDefault()}
         style={{ top: -ascent - (lineHeight - ascent - descent) / 2,
           width: frameWidth ?? Math.max(size * .6, ...lines.map((line) => line.width)) + 2,
@@ -205,13 +234,13 @@ export default function OriginalTextEditor({ edit, viewport, canvas, fonts, onCh
           changeInput(next.source, readSelection(event.currentTarget, next));
         }}
         onCopy={(event) => {
-          if (!smart) return;
+          if (!smart && !formattedBreaks) return;
           const element = event.currentTarget;
           event.preventDefault();
           event.clipboardData.setData('text/plain', edit.value.slice(sourcePosition(inputView, element.selectionStart), sourcePosition(inputView, element.selectionEnd)));
         }}
         onCut={(event) => {
-          if (!smart) return;
+          if (!smart && !formattedBreaks) return;
           const element = event.currentTarget;
           const from = sourcePosition(inputView, element.selectionStart), to = sourcePosition(inputView, element.selectionEnd);
           event.preventDefault();
@@ -226,7 +255,14 @@ export default function OriginalTextEditor({ edit, viewport, canvas, fonts, onCh
             event.preventDefault(); restoreInput(event.shiftKey); return;
           }
           arrowStart.current = event.currentTarget.selectionStart;
-          if (smart && (event.key === 'Backspace' || event.key === 'Delete') && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          if (event.key === 'Enter' && (event.shiftKey || formattedBreaks) && !event.ctrlKey && !event.metaKey) {
+            event.preventDefault();
+            managedHistory.current = true;
+            const {start, end} = readSelection(event.currentTarget);
+            changeInput(edit.value.slice(0,start) + (event.shiftKey ? '\u2028' : '\n') + edit.value.slice(end), {start:start+1,end:start+1,direction:'none'});
+            return;
+          }
+          if ((smart || formattedBreaks) && (event.key === 'Backspace' || event.key === 'Delete') && !event.ctrlKey && !event.metaKey && !event.altKey) {
             // Delete a source grapheme, never one of the display-only Kashidas.
             let from = sourcePosition(inputView, event.currentTarget.selectionStart);
             let to = sourcePosition(inputView, event.currentTarget.selectionEnd);
@@ -246,7 +282,7 @@ export default function OriginalTextEditor({ edit, viewport, canvas, fonts, onCh
           else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); onFinish(true); }
         }}
         onKeyUp={(event) => {
-          if (!smart || event.shiftKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+          if ((!smart && !formattedBreaks) || event.shiftKey || !['ArrowLeft', 'ArrowRight'].includes(event.key)) return;
           const element = event.currentTarget;
           if (element.selectionStart !== element.selectionEnd) return;
           let position = element.selectionStart;

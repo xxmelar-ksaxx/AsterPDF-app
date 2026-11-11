@@ -15,13 +15,14 @@ export default function useOriginalDragPreview(viewport: PageViewport | null, ge
   const groupCache = useRef<{key:string;source:Uint8Array;promise:Promise<{image:ImageBitmap;moving:boolean}[]>} | null>(null);
   const clearGroupCache = () => { const cached=groupCache.current;groupCache.current=null;void cached?.promise.then(layers=>layers.forEach(l=>l.image.close()),()=>{}); };
   const cache = useRef<Entry | null>(null), scene = useRef<Scene | null>(null);
+  const reserved = useRef(0);
   const warmTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const latest = useRef({ viewport, getSourceBytes, pageIndex, transforms }); latest.current = { viewport, getSourceBytes, pageIndex, transforms };
   const paintedSource = useRef<Uint8Array | null>(null), generation = useRef(0);
   const pageTransforms = () => latest.current.transforms.filter(item => item.pageIndex === latest.current.pageIndex);
-  const keyFor = (index: number) => {
+  const keyFor = (index: number, changes = latest.current.transforms) => {
     const v=latest.current.viewport;
-    return `${v?.width}/${v?.height}/${v?.rotation}/${latest.current.pageIndex}/${JSON.stringify(pageTransforms().filter(item=>item.index!==index))}`;
+    return `${v?.width}/${v?.height}/${v?.rotation}/${latest.current.pageIndex}/${JSON.stringify(changes.filter(item=>item.pageIndex===latest.current.pageIndex && item.index!==index))}`;
   };
   const cssMatrix = (index: number) => {
     const {viewport:v,transforms:items,pageIndex:page}=latest.current;
@@ -61,14 +62,14 @@ export default function useOriginalDragPreview(viewport: PageViewport | null, ge
     const delta=[sx,0,0,sy,next.x-drag.before.x*sx,next.y-drag.before.y*sy];
     paintMatrix(multiply(delta,element.current?.dataset.phase==='snapshot'?identity:drag.matrix));
   };
-  const prepare = (index: number) => {
+  const prepare = (index: number, items = latest.current.transforms) => {
     const {viewport:v,getSourceBytes:bytes,pageIndex:page}=latest.current;
     if(!v)return Promise.reject(new Error('Page is not ready.'));
-    const source=bytes(),key=keyFor(index);
+    const source=bytes(),key=keyFor(index,items);
     if(cache.current?.source===source&&cache.current.index===index&&cache.current.key===key)return cache.current.promise;
     const pending=cache.current?.promise;discardCache();
     const entry:Entry={index,source,key,promise:Promise.resolve([])};
-    const ratio=Math.min(devicePixelRatio||1,2,Math.sqrt(3_900_000/(v.width*v.height))),items=latest.current.transforms;
+    const ratio=Math.min(devicePixelRatio||1,2,Math.sqrt(3_900_000/(v.width*v.height)));
     entry.promise=(pending?pending.catch(()=>{}):Promise.resolve()).then(()=>{
       if(cache.current!==entry)throw new Error('Preview changed.');
       return window.aster.previewOriginalObject(source,page,index,Math.max(1,Math.ceil(v.width*ratio)),Math.max(1,Math.ceil(v.height*ratio)),(v.rotation%360+360)%360,items);
@@ -87,7 +88,7 @@ export default function useOriginalDragPreview(viewport: PageViewport | null, ge
     if(scene.current?.index===index&&scene.current.source===source&&scene.current.key===key){
       if(active.current&&!active.current.finished)update(active.current.next);else paintMatrix(cssMatrix(index));return;
     }
-    void prepare(index).then(images=>{
+    const paint = (images: ImageBitmap[]) => {
       const v=latest.current.viewport,node=element.current;
       if(request!==generation.current||!v||!node||source!==latest.current.getSourceBytes()||key!==keyFor(index))return;
       const canvases=images.map(image=>{
@@ -98,7 +99,10 @@ export default function useOriginalDragPreview(viewport: PageViewport | null, ge
       node.replaceChildren(...canvases.slice(0,3));
       node.dataset.phase='isolated';scene.current={index,source,key,original,paints:canvases.slice(3,5)};
       if(active.current&&!active.current.finished)update(active.current.next);else paintMatrix(cssMatrix(index));
-    }).catch(()=>{ /* Keep the last usable visual; the document edit remains staged. */ });
+    };
+    const cached = cache.current;
+    if (cached?.images && cached.index === index && cached.key === key && cached.source === source) paint(cached.images);
+    else void prepare(index).then(paint).catch(()=>{ /* Preserve the last usable page preview. */ });
   };
   const sync = () => {
     if(group.current || active.current&&!active.current.finished)return;
@@ -189,9 +193,19 @@ export default function useOriginalDragPreview(viewport: PageViewport | null, ge
   useLayoutEffect(()=>{if(!viewport){++generation.current;hide();discardCache();return;}sync();},[transforms,getSourceBytes,viewport?.width,viewport?.height,viewport?.rotation,pageIndex]);
   useEffect(()=>{if(!enabled)clearTimeout(warmTimer.current);},[enabled]);
   useEffect(()=>()=>{clearTimeout(warmTimer.current);++generation.current;active.current=null;hide();discardCache();clearGroupCache();},[]);
-  return {element,begin,update,finish,cancel,beginGroup,updateGroup,finishGroup,cancelGroup,
+  return {element,prepareScene:async (index:number, changes:OriginalTransform[]) => {
+    clearTimeout(warmTimer.current);
+    reserved.current++;
+    try { await prepare(index,changes); } finally { reserved.current--; }
+  },
+    warmScene:(index:number, changes:OriginalTransform[]) => {
+      clearTimeout(warmTimer.current);
+      if (reserved.current || latest.current.getSourceBytes().byteLength >= 64*1024*1024) return;
+      warmTimer.current=setTimeout(()=>{if (!reserved.current) void prepare(index,changes).catch(()=>{});},140);
+    },
+    stopWarming:()=>clearTimeout(warmTimer.current),begin,update,finish,cancel,beginGroup,updateGroup,finishGroup,cancelGroup,
     warmGroup:(indices:number[])=>{if(indices.length&&latest.current.getSourceBytes().byteLength<64*1024*1024)void prepareGroup(indices).catch(()=>{});},
-    warm:(index:number)=>{clearTimeout(warmTimer.current);if(!enabled)return;warmTimer.current=setTimeout(()=>{if(!active.current&&latest.current.getSourceBytes().byteLength<64*1024*1024)void prepare(index).catch(()=>{});},120);},
+    warm:(index:number)=>{clearTimeout(warmTimer.current);if(!enabled||reserved.current)return;warmTimer.current=setTimeout(()=>{if(!active.current&&latest.current.getSourceBytes().byteLength<64*1024*1024)void prepare(index).catch(()=>{});},120);},
     painted:(source:Uint8Array)=>{paintedSource.current=source;sync();}
   };
 }

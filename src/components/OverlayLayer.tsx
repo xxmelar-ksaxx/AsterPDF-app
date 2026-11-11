@@ -15,6 +15,10 @@ import VideoPlayer from './VideoPlayer';
 export type OverlayTool = 'select' | 'eraser' | OverlayKind;
 export type PendingImage = { dataUrl: string; aspect: number; videoId?: string; videoFile?: File; name?: string };
 type Props = {
+  blockMembers?: string[];
+  paragraphDraft?: OverlayObject;
+  paragraphCaret?: {x:number; y:number};
+  onFinishParagraph?: (replacement?: OverlayObject) => void;
   pageId: string; width: number; height: number; scale: number;
   tool: OverlayTool | null; color: string; lineWidth: number;
   drawActive: boolean;
@@ -35,10 +39,10 @@ type Gesture = { kind: 'create'; start: { x: number; y: number }; points: { x: n
   | { kind: 'move' | 'resize'; start: { x: number; y: number }; original: OverlayObject; handle?: ResizeHandle };
 const clamp = (value: number) => Math.max(0, Math.min(1, value));
 
-type TextEdit = { object: OverlayObject; isNew: boolean; value: string };
+type TextEdit = { object: OverlayObject; isNew: boolean; value: string; caret?: {x:number; y:number} };
 
 export default function OverlayLayer({ pageId, width, height, scale, tool, drawActive, color, lineWidth, drawStyle, fontSize, fontChoice, textAppearance, viewport, fonts, fontCommand, onFontEditChange, image,
-  objects, selectedId, selectedIds = [], onAdd, onUpdate, onDelete, onSelect, showVideoPlayers = true }: Props) {
+  objects, selectedId, selectedIds = [], onAdd, onUpdate, onDelete, onSelect, showVideoPlayers = true, paragraphDraft, paragraphCaret, onFinishParagraph, blockMembers }: Props) {
   const layer = useRef<SVGSVGElement>(null);
   const gesture = useRef<Gesture | null>(null);
   const [preview, setPreviewState] = useState<OverlayObject | null>(null);
@@ -74,17 +78,28 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
   const startEventRef = useRef<Event | null>(null);
   const reportTextStyle = (object: OverlayObject) => onFontEditChange({ pageId, index: -1, overlayId: object.id,
     fontName: 'Added text', choice: object.fontChoice || 'noto-sans', fontSize: textSize(object), color: object.color,
-    appearance: { bold: object.bold, italic: object.italic, underline: object.underline, strikeThrough: object.strikeThrough, textAlign: object.textAlign, textSizing: object.textSizing } });
-  const startText = (object: OverlayObject, isNew: boolean) => {
-    const next = { object, isNew, value: isNew ? '' : object.text || '' };
+    appearance: { bold: object.bold, italic: object.italic, underline: object.underline, strikeThrough: object.strikeThrough, textAlign: object.textAlign, textSizing: object.textSizing, lineSpacing: object.lineSpacing, breakSpacing: object.breakSpacing, paragraphGap:object.paragraphGap } });
+  const startText = (object: OverlayObject, isNew: boolean, caret?: {x:number; y:number}) => {
+    const next = { object, isNew, caret, value: isNew ? '' : object.text || '' };
     editingRef.current = next; setEditing(next); onSelect(isNew ? null : object.id);
     reportTextStyle(object);
   };
+  useLayoutEffect(() => {
+    if (!paragraphDraft) return;
+    startText(paragraphDraft, false, paragraphCaret);
+  }, [paragraphDraft]);
   const finishText = (commit: boolean) => {
     const current = editingRef.current;
     if (!current) return;
     editingRef.current = null; setEditing(null);
     onFontEditChange(null);
+    if (paragraphDraft && current.object.id === paragraphDraft.id) {
+      const replacement = { ...current.object, text: current.value };
+      const changed = (Object.keys(replacement) as (keyof OverlayObject)[]).some(key => replacement[key] !== paragraphDraft[key]);
+      onFinishParagraph?.(commit && changed ? { ...replacement,
+        ...textOverlaySize(replacement, width / scale, height / scale, fonts) } : undefined);
+      return;
+    }
     if (!commit) { onSelect(null); return; }
     if (!current.value.trim()) { if (!current.isNew) onDelete(current.object.id); onSelect(null); return; }
     const updated = { ...current.object, text: current.value,
@@ -95,7 +110,7 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
       if (!original || original.text !== updated.text || original.fontChoice !== updated.fontChoice ||
         textSize(original) !== textSize(updated) || original.color !== updated.color ||
         original.width !== updated.width || original.height !== updated.height ||
-        ['bold', 'italic', 'underline', 'strikeThrough', 'textAlign', 'textSizing'].some((key) => original[key as keyof OverlayObject] !== updated[key as keyof OverlayObject])) onUpdate(updated);
+        ['bold', 'italic', 'underline', 'strikeThrough', 'textAlign', 'textSizing', 'lineSpacing', 'breakSpacing', 'paragraphGap'].some((key) => original[key as keyof OverlayObject] !== updated[key as keyof OverlayObject])) onUpdate(updated);
     }
     onSelect(null);
   };
@@ -204,7 +219,7 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
       }
       setPreview(active.kind === 'move'
         ? { ...original, x: original.x + dx, y: original.y + dy }
-        : { ...original, ...resizeImage(original, active.handle || 'se', dx, dy, event.shiftKey), ...(original.kind === 'text' ? { textSizing: 'fixed' as const } : {}) });
+        : { ...original, ...resizeImage(original, active.handle || 'se', dx, dy, event.shiftKey), ...(original.kind === 'text' ? { textSizing: original.textSizing === 'paragraph' ? 'paragraph' as const : 'fixed' as const } : {}) });
     }
   };
   const end = () => {
@@ -250,7 +265,7 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
     if (object.kind === 'text') {
       const style = resolveTextFont(object.fontChoice || 'helvetica', '', object.text || '', fonts, object);
       const align = object.textAlign === 'justify' || object.textAlign === 'smart-justify' ? style.arabic ? 'right' : 'left' : object.textAlign || 'left';
-      const { lines, lineHeight } = textOverlayLayout(object, width / scale, fonts);
+      const { lines } = textOverlayLayout(object, width / scale, fonts);
       const textX = x + (align === 'center' ? w / 2 : align === 'right' ? w : 0);
       return <text fill={object.color} xmlSpace="preserve"
         fontSize={textSize(object) * scale} fontFamily={style.family} fontWeight={style.fontWeight} fontStyle={style.fontStyle}
@@ -258,9 +273,9 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
         direction={style.arabic ? 'rtl' : 'ltr'} textAnchor={align === 'center' ? 'middle' : (align === 'right') !== style.arabic ? 'end' : 'start'}>
         {lines.map((line, index) => line.runs ? line.runs.map((run, runIndex) => {
           const rtl = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/u.test(run.text);
-          return <tspan key={`${index}-${runIndex}`} x={x + run.x * scale} y={y + (textSize(object) + index * lineHeight) * scale}
+          return <tspan key={`${index}-${runIndex}`} x={x + run.x * scale} y={y + (textSize(object) + line.offsetY) * scale}
             direction={rtl ? 'rtl' : 'ltr'} textAnchor={rtl ? 'end' : 'start'}>{run.text}</tspan>;
-        }) : <tspan key={index} x={textX} y={y + (textSize(object) + index * lineHeight) * scale}>{line.text}</tspan>)}</text>;
+        }) : <tspan key={index} x={textX} y={y + (textSize(object) + line.offsetY) * scale}>{line.text}</tspan>)}</text>;
     }
     return <image href={object.image} x={x} y={y} width={w} height={h} preserveAspectRatio="none" />;
   };
@@ -272,8 +287,9 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
     {objects.filter((object) => !object.hidden).map((object) => {
       const current = preview?.id === object.id ? preview : object;
       const shown = current.kind === 'text' ? { ...current, ...textOverlaySize(current, width / scale, height / scale, fonts) } : current;
-      const readOnly = !tool || (!drawActive && isDrawingObject(object));
-      return <g key={object.id} data-overlay-id={object.id} data-overlay-kind={object.kind} className={`overlay-object${object.locked ? ' overlay-locked' : ''}${readOnly ? ' overlay-readonly' : ''}`}
+      const blockMember = blockMembers?.includes(object.id);
+      const readOnly = blockMember || !tool || (!drawActive && isDrawingObject(object));
+      return <g key={object.id} data-overlay-id={object.id} data-overlay-kind={object.kind} className={`overlay-object${blockMember ? ' paragraph-member' : ''}${object.locked ? ' overlay-locked' : ''}${readOnly ? ' overlay-readonly' : ''}`}
         onContextMenu={(event) => {
           if (object.locked || readOnly || tool !== 'select') return;
           event.preventDefault(); event.stopPropagation(); onSelect(object.id);
@@ -284,7 +300,7 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
         {editing?.object.id !== object.id && <g opacity={shown.opacity ?? 1} pointerEvents={object.kind === 'text' ? 'none' : undefined}>{render(shown)}</g>}
         {!readOnly && (object.kind === 'text' ? editing?.object.id !== object.id && <TextFrame x={shown.x * width} y={shown.y * height}
           width={Math.max(16, shown.width * width)} height={Math.max(16, shown.height * height)} selected={selectedIds.includes(object.id) || selectedId === object.id}
-          onInteriorClick={(event) => { event.stopPropagation(); if (tool === 'eraser') onDelete(object.id); else if(!drawActive && (event.ctrlKey || event.metaKey)) onSelect(object.id,true); else startText(object, false); }}
+          onInteriorClick={(event) => { event.stopPropagation(); if (tool === 'eraser') onDelete(object.id); else if(!drawActive && (event.ctrlKey || event.metaKey)) onSelect(object.id,true); else startText(object, false, object.textSizing === 'paragraph' ? {x:event.clientX,y:event.clientY} : undefined); }}
           onBorderPointerDown={(event) => beginObject(event, object, 'move')} />
           : <rect x={shown.x * width} y={shown.y * height} width={Math.max(16, shown.width * width)} height={Math.max(16, shown.height * height)}
             fill="transparent" stroke={selectedIds.includes(object.id) || selectedId === object.id ? '#5c922c' : 'transparent'} strokeDasharray="5 3" strokeWidth="2" />)}
@@ -339,10 +355,10 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
       const object = editing.object, size = textSize(object);
       const x = object.x * width, y = object.y * height + size * scale;
       const origin = viewport.convertToPdfPoint(x, y), right = viewport.convertToPdfPoint(x + scale, y), up = viewport.convertToPdfPoint(x, y - scale);
-      return <OriginalTextEditor key={object.id} mask={false} label="Edit text on page" canvas={null} viewport={viewport} fonts={fonts}
-        appearance={object} frameWidth={object.textSizing === 'fixed' ? object.width * width : undefined}
+      return <OriginalTextEditor key={object.id} initialCaret={editing.caret} mask={false} label={paragraphDraft ? "Edit PDF paragraph" : "Edit text on page"} canvas={null} viewport={viewport} fonts={fonts}
+        appearance={object} frameWidth={object.textSizing && object.textSizing !== 'auto' ? object.width * width : undefined}
         edit={{ index: -1, text: object.text || '', value: editing.value, box: [0, 0, 0, 0], fontName: '', fontChoice: object.fontChoice || 'helvetica',
-          fontSize: size, color: [1, 3, 5].map((offset) => Number.parseInt(object.color.slice(offset, offset + 2), 16)).concat(255),
+          fontSize: size, color: [1, 3, 5].map((offset) => Number.parseInt(object.color.slice(offset, offset + 2), 16)).concat(Math.round(255 * (object.opacity ?? 1))),
           matrix: [right[0] - origin[0], right[1] - origin[1], up[0] - origin[0], up[1] - origin[1], ...origin] }}
         onChange={(value) => {
           const current = editingRef.current!;

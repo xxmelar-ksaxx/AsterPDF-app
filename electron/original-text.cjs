@@ -404,12 +404,13 @@ async function embedShapedOverlays(rawBytes, placements) {
         typeof item.text !== 'string' || !item.text || item.text.length > 10000 || /[\r\n]/.test(item.text) ||
         !Number.isFinite(item.size) || item.size < 4 || item.size > 500 ||
         !Array.isArray(item.matrix) || item.matrix.length !== 6 || !item.matrix.every(Number.isFinite) ||
+        (item.opacity !== undefined && (!Number.isFinite(item.opacity) || item.opacity < 0 || item.opacity > 1)) ||
         !Array.isArray(item.color) || item.color.length !== 3 || !item.color.every((value) => Number.isInteger(value) && value >= 0 && value <= 255))
         throw new Error('Invalid shaped text object.');
       const page = pdfium.FPDF_LoadPage(document, item.pageIndex);
       if (!page) throw new Error('Could not load the page for Arabic text.');
       try {
-        addShapedText(pdfium, document, page, item.text, fonts.get(item), item.size, item.matrix, item.color, item.bold === true);
+        addShapedText(pdfium, document, page, item.text, fonts.get(item), item.size, item.matrix, item.color, item.bold === true, item.opacity);
         if (!pdfium.FPDFPage_GenerateContent(page)) throw new Error('Could not save the Arabic page content.');
       } finally { pdfium.FPDF_ClosePage(page); }
     }

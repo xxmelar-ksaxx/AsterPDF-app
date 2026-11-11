@@ -20,6 +20,14 @@ function reverseLtrGroups(items, charOf) {
 
 function shapedGlyphs(fontBytes, input) {
   const font = fontkit.create(fontBytes);
+  // Fontkit caches glyph outlines by ID. Naskh can use the same base outline
+  // for different dotted letters, so retain the code points of each occurrence.
+  const getGlyph = font.getGlyph.bind(font);
+  font.getGlyph = (id, characters) => {
+    const glyph = getGlyph(id, characters);
+    if (!glyph || !characters) return glyph;
+    return Object.create(glyph, { codePoints: { value: characters } });
+  };
   const run = font.layout(input);
   const placed = reverseLtrGroups(run.glyphs.map((glyph, index) => ({ glyph, position: run.positions[index] })), ({ glyph }) =>
     glyph.codePoints.length === 1 ? String.fromCodePoint(glyph.codePoints[0]) : '');
@@ -132,8 +140,8 @@ function createShapedText(pdfium, document, page, original, objectIndex, replace
   }
 }
 
-function addShapedText(pdfium, document, page, text, fontBytes, size, matrix, color, bold = false) {
-  return writeShapedLine(pdfium, document, page, text, fontBytes, size, matrix, [...color, 255], pdfium.FPDFPage_CountObjects(page), bold ? 2 : 0);
+function addShapedText(pdfium, document, page, text, fontBytes, size, matrix, color, bold = false, opacity = 1) {
+  return writeShapedLine(pdfium, document, page, text, fontBytes, size, matrix, [...color, Math.round(opacity * 255)], pdfium.FPDFPage_CountObjects(page), bold ? 2 : 0);
 }
 
 function writeShapedLine(pdfium, document, page, text, fontBytes, size, matrix, color, insertAt, renderMode) {

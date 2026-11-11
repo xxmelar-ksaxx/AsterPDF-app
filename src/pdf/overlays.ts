@@ -8,7 +8,7 @@ import { pruneUnusedObjects } from './prune-unused';
 import { addVideoAnnotation, restoreVideoAssets, writeVideoAssets } from './video-assets';
 
 export type OverlayKind = 'pen' | 'rectangle' | 'ellipse' | 'line' | 'text' | 'image' | 'video';
-export type TextAppearance = { bold?: boolean; italic?: boolean; underline?: boolean; strikeThrough?: boolean; textAlign?: 'left' | 'center' | 'right' | 'justify' | 'smart-justify'; textSizing?: 'auto' | 'fixed' };
+export type TextAppearance = { bold?: boolean; italic?: boolean; underline?: boolean; strikeThrough?: boolean; textAlign?: 'left' | 'center' | 'right' | 'justify' | 'smart-justify'; textSizing?: 'auto' | 'fixed' | 'paragraph'; lineSpacing?: number; breakSpacing?: number; paragraphGap?: number };
 export type OverlayObject = TextAppearance & {
   id: string;
   pageId: string;
@@ -62,7 +62,10 @@ export async function readOverlayPackage(bytes: Uint8Array, loaded?: PDFDocument
       (item.editingTool !== undefined && item.editingTool !== 'draw' && item.editingTool !== 'edit') ||
       (['bold', 'italic', 'underline', 'strikeThrough'].some((key) => item[key] !== undefined && typeof item[key] !== 'boolean')) ||
       (item.textAlign !== undefined && !['left', 'center', 'right', 'justify', 'smart-justify'].includes(item.textAlign)) ||
-      (item.textSizing !== undefined && item.textSizing !== 'auto' && item.textSizing !== 'fixed') ||
+      (item.textSizing !== undefined && item.textSizing !== 'auto' && item.textSizing !== 'fixed' && item.textSizing !== 'paragraph') ||
+      (item.lineSpacing !== undefined && (!Number.isFinite(item.lineSpacing) || item.lineSpacing < .75 || item.lineSpacing > 3)) ||
+      (item.paragraphGap !== undefined && (!Number.isFinite(item.paragraphGap) || item.paragraphGap < 0 || item.paragraphGap > 2000)) ||
+      (item.breakSpacing !== undefined && (![0,1,2].includes(item.breakSpacing))) ||
       !Number.isFinite(item.x) || !Number.isFinite(item.y) || !Number.isFinite(item.width) || !Number.isFinite(item.height) ||
       (item.opacity !== undefined && (!Number.isFinite(item.opacity) || item.opacity < 0 || item.opacity > 1)) ||
       (item.radius !== undefined && (!Number.isFinite(item.radius) || item.radius < 0)) ||

@@ -1,10 +1,11 @@
+import ParagraphSpacing from './components/ParagraphSpacing';
 import HomeView from './components/HomeView';
 import ReaderControls from './components/ReaderControls';
 import { flushSync } from 'react-dom';
 import { videoBlob } from './pdf/video-assets';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
+  Pilcrow, ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
   FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X, Presentation,
   ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical, TriangleAlert,
   Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus, Video, PanelRight,
@@ -48,7 +49,7 @@ import { HyperlinkDialog, HyperlinkMenu } from './components/HyperlinkTools';
 import { addPdfLinks } from './pdf/links';
 import { useUpdates } from './updates';
 import { stageTransform, stageObjectPatch } from './pdf/original-transforms';
-import type { EditSelection, OriginalTransform } from './types';
+import type { EditSelection, OriginalPdfText, OriginalTransform } from './types';
 import { finishInlineEdits } from './finish-inline-edit';
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
@@ -230,9 +231,11 @@ export default function App() {
   const [overlays, setOverlays] = useState<OverlayObject[]>([]);
   const clipboardLock = useRef(false);
   const pasteOffset = useRef(0);
+  const [paragraphRequest, setParagraphRequest] = useState<{pageId: string; indices: number[]} | null>(null);
   const [editSelection, setEditSelection] = useState<EditSelection[]>([]);
   const [selectedOverlayId, setSelectedOverlayId] = useState<string | null>(null);
-  const [overlayTool, setOverlayTool] = useState<OverlayTool>('select');
+  const selectedLines = editSelection.filter((item): item is Extract<EditSelection, {kind:'native'}> => item.kind === 'native' && typeof item.text === 'string' && item.pageId === editSelection[0]?.pageId);
+  const [overlayTool, setOverlayTool] = useState<OverlayTool | 'paragraph'>('select');
   const [selectedOriginal, setSelectedOriginal] = useState<OriginalObjectSelection | null>(null);
   const [objectColorChannel, setObjectColorChannel] = useState<'fill' | 'stroke'>('fill');
   const originalObjectLock = useRef(false);
@@ -842,7 +845,7 @@ export default function App() {
       const color = [1, 3, 5].map((offset) => Number.parseInt(item.color.slice(offset, offset + 2), 16));
       const shear = item.italic ? Math.tan(Math.PI / 15) : 0;
       return [{ pageIndex: target.index, text: item.text, size, fontChoice: item.fontChoice, bold: item.bold,
-        matrix: [Math.cos(angle), Math.sin(angle), -Math.sin(angle) + shear * Math.cos(angle), Math.cos(angle) + shear * Math.sin(angle), x, y], color }];
+        matrix: [Math.cos(angle), Math.sin(angle), -Math.sin(angle) + shear * Math.cos(angle), Math.cos(angle) + shear * Math.sin(angle), x, y], color, opacity:item.opacity }];
     });
     if (shaped.length) annotated = await window.aster.embedShapedText(annotated, shaped);
     return { bytes: await attachOverlayPackage(annotated, base, objects), base, objects };
@@ -1264,6 +1267,17 @@ export default function App() {
     setEditingDirty(true);
     window.aster.setDirty(true);
   }, [source, busy, pendingCommentCount, pagePlan, effectivePages.length, overlays, transforms]);
+  const replaceParagraph = (pageIndex: number, originals: OriginalPdfText[], replacement: OverlayObject, overlayIds: string[] = []) => {
+    if (!source || busy || pendingCommentCount) return;
+    const keep = Boolean(replacement.text?.trim());
+    const remaining = overlays.filter(item=>!overlayIds.includes(item.id));
+    commitOverlays(keep ? [...remaining, replacement] : remaining);
+    setTransforms(previous => originals.reduce((changes, original) =>
+      stageObjectPatch(changes, pageIndex, original.index, { deleted: true, text: original.text }), previous));
+    setSelectedOriginal(null);
+    setSelectedOverlayId(keep ? replacement.id : null);
+    setEditSelection(keep ? [{kind:'overlay', id:replacement.id, pageId:replacement.pageId}] : []);
+  };
   const chooseEditSelection = useCallback((item: EditSelection | null, toggle = false) => {
     const focused=window.document.activeElement;
     if(focused instanceof HTMLElement)focused.blur();
@@ -1393,7 +1407,7 @@ export default function App() {
       setOverlayColor(selected.color); setOverlayLineWidth(selected.lineWidth);
       if (selected.kind === 'text') {
         setOverlayFontSize(textSize(selected)); setOverlayFontChoice(selected.fontChoice || 'helvetica');
-        setTextAppearance({ bold: selected.bold, italic: selected.italic, underline: selected.underline, strikeThrough: selected.strikeThrough, textAlign: selected.textAlign, textSizing: selected.textSizing });
+        setTextAppearance({ bold: selected.bold, italic: selected.italic, underline: selected.underline, strikeThrough: selected.strikeThrough, textAlign: selected.textAlign, textSizing: selected.textSizing, lineSpacing: selected.lineSpacing, breakSpacing: selected.breakSpacing, paragraphGap:selected.paragraphGap });
       }
       if (selected.kind !== 'text' && selected.kind !== 'image' && selected.kind !== 'video') setDrawDefaults({ color: selected.color, lineWidth: selected.lineWidth,
         fill: selected.fill ?? null, fillHidden: selected.fillHidden ?? false, opacity: selected.opacity ?? 1, radius: selected.radius ?? 0, radiusCorners: selected.radiusCorners });
@@ -2187,6 +2201,9 @@ export default function App() {
               disabled={busy || pendingCommentCount > 0 || Boolean(pagePlan)} onClick={() => {
                 if (selectingLinks) setSelectingLinks(false); else void startHyperlink([]);
               }}><TextSelect size={17} /></button>
+            <button className={overlayTool === 'paragraph' && !selectingLinks ? 'active' : ''} aria-label="Edit paragraph" title="Edit paragraph · Click a block of original PDF text"
+              aria-pressed={overlayTool === 'paragraph' && !selectingLinks} disabled={busy || pendingCommentCount > 0}
+              onClick={() => {setSelectingLinks(false); setOverlayTool('paragraph');}}><Pilcrow size={17} /></button>
             <button aria-label="Add hyperlink" title="Add hyperlink to selected text" data-added-text-controls
               disabled={busy || pendingCommentCount > 0 || Boolean(pagePlan)} onMouseDown={event => event.preventDefault()}
               onClick={() => void startHyperlink()}><Link2 size={17} /></button>
@@ -2217,8 +2234,9 @@ export default function App() {
               <button disabled={!canFormatText} aria-label="Smart justify" title="Smart Justify · Arabic Kashida on wrapped lines"
                 aria-pressed={activeTextAppearance.textAlign === 'smart-justify'} onClick={() => changeTextAppearance({ textAlign: 'smart-justify' })}><SmartJustifyIcon /></button>
               <button disabled={!canFormatText} aria-label="Auto-size text container" title="Auto-size text container · Drag its handles for a fixed size"
-                aria-pressed={activeTextAppearance.textSizing !== 'fixed'} onClick={() => changeTextAppearance({ textSizing: 'auto' })}><Maximize2 size={16} /></button>
+                aria-pressed={!activeTextAppearance.textSizing || activeTextAppearance.textSizing === 'auto'} onClick={() => changeTextAppearance({ textSizing: 'auto' })}><Maximize2 size={16} /></button>
             </div>
+            {canFormatText && <ParagraphSpacing appearance={activeTextAppearance} onChange={changeTextAppearance} />}
             </>}
             <button className={overlayTool === 'image' && !overlayImage?.videoId ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label="Add image overlay"
               title={overlayTool === 'image' && !overlayImage?.videoId ? 'Click on a page to place the image. Esc to cancel.' : 'Add an image'}><ImagePlus size={17} /></button>
@@ -2251,6 +2269,9 @@ export default function App() {
               onChange={(value) => changeOverlayFontSize(value)} onPreview={(value) => changeOverlayFontSize(value, false)} /></div>
             : <button className={sidebarTab === 'draw' && !sidebarCollapsed ? 'active' : ''} title="Properties and layers" aria-label="Toggle drawing panel"
               aria-expanded={sidebarTab === 'draw' && !sidebarCollapsed} onClick={() => { setSidebarTab('draw'); setSidebarCollapsed(sidebarTab === 'draw' ? !sidebarCollapsed : false); }}><PanelRight size={17} /></button>}
+          {activeTool === 'edit' && selectedLines.length > 1 && selectedLines.length === editSelection.length &&
+            <button aria-label="Edit selected lines as paragraph" title="Edit selected lines as one paragraph" disabled={busy}
+              onClick={() => setParagraphRequest({pageId:selectedLines[0].pageId, indices:selectedLines.map(line => line.index)})}><Pilcrow size={17}/></button>}
           {activeTool === 'edit' && editSelection.length > 1 && <><span className="selection-count" role="status">{editSelection.length} selected</span><button onMouseDown={e=>e.preventDefault()} onClick={()=>copyEditSelection()} disabled={busy} title="Copy selected objects (Ctrl/Cmd+C)" aria-label="Copy selected objects"><Copy size={17}/></button><button onClick={deleteEditSelection} disabled={busy} title="Delete selected objects" aria-label="Delete selected objects"><Trash2 size={17}/></button></>}
           {selectedOverlay && <button disabled={selectedOverlay.locked} onClick={() => deleteOverlay(selectedOverlay.id)} title="Delete selected object" aria-label="Delete selected object"><Trash2 size={17} /></button>}
           {selectedOriginal && <button disabled={busy} onClick={() => void editOriginalObject(selectedOriginal, { type: 'delete' })} title="Delete selected PDF object" aria-label="Delete selected PDF object"><Trash2 size={17} /></button>}
@@ -2275,8 +2296,9 @@ export default function App() {
             {document && effectivePages.map((planned, index) => {
               const page = index + 1;
               return <PdfPage key={planned.id} document={document} pageNumber={page} sourcePageNumber={planned.sourceIndex + 1} rotation={planned.turns * 90}
-                onRenderSettled={pageRendered}
-                getSourceBytes={getSourceBytes} originalTransforms={visibleTransforms} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && overlayTool === 'select' && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
+                paragraphRequest={paragraphRequest?.pageId === planned.id ? paragraphRequest : null} onRequestHandled={() => setParagraphRequest(null)}
+                paragraphMode={activeTool === 'edit' && overlayTool === 'paragraph'} onReplaceParagraph={replaceParagraph} onRenderSettled={pageRendered}
+                getSourceBytes={getSourceBytes} originalTransforms={visibleTransforms} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && (overlayTool === 'select' || overlayTool === 'paragraph') && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
                 editSelection={activeTool === 'edit' ? editSelection : []} onSelectNativeText={selectNativeText} onSelectEditObjects={selectEditObjects} onMoveEditSelection={moveEditSelection} onCopyEditSelection={copyEditSelection} onDeleteEditSelection={deleteEditSelection} objectEditingBusy={busy} originalObjectSelection={selectedOriginal} onSelectOriginalObject={selectOriginalObject} onEditOriginalObject={editOriginalObject}
                 onFontEditChange={changeFontEditing} fontCommand={fontCommand} colorCommand={colorCommand} installedFonts={installedFonts}
                 size={displayPageSize(page)}
@@ -2284,7 +2306,7 @@ export default function App() {
                 comments={showCommentPins ? commentsByPage.get(page) ?? EMPTY_COMMENTS : EMPTY_COMMENTS} selectedId={selectedId}
                 placing={placing} pendingPoint={pendingPoint} pageId={planned.id}
                 signatures={placedSignatures.filter((signature) => signature.pageId === planned.id)} selectedSignatureId={selectedSignatureId} placingSignature={activeSignature}
-                overlayTool={!selectingLinks && !pendingCommentCount && (activeTool === 'edit' || activeTool === 'draw') ? overlayTool : null}
+                overlayTool={!selectingLinks && !pendingCommentCount && (activeTool === 'edit' || activeTool === 'draw') ? (overlayTool === 'paragraph' ? 'select' : overlayTool) : null}
                 drawActive={activeTool === 'draw'}
                 textAppearance={textAppearance}
                 overlayColor={activeTool === 'draw' ? drawDefaults.color : overlayColor} overlayLineWidth={activeTool === 'draw' ? drawDefaults.lineWidth : overlayLineWidth} drawStyle={drawDefaults} overlayFontSize={overlayFontSize} overlayFontChoice={overlayFontChoice} overlayImage={overlayImage}

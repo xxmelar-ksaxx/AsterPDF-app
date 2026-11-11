@@ -5,10 +5,10 @@ const bidi = bidiFactory();
 export type TextLine = { text: string; width: number; paragraphEnd: boolean };
 
 // Shared by the editor, page preview and PDF export. Explicit empty lines count.
-export function layoutTextLines(text: string, measure: (text: string) => number, wrapWidth?: number): TextLine[] {
+export function layoutTextLines(text: string, measure: (text: string) => number, wrapWidth?: number, breakSpacing = 0): TextLine[] {
   const lines: TextLine[] = [];
   const add = (value: string, paragraphEnd = false) => lines.push({ text: value, width: measure(value), paragraphEnd });
-  const paragraphs = text.replace(/\r\n?/g, '\n').split('\n');
+  const paragraphs = text.replace(/\r\n?/g, '\n').replace(/\n/g, '\n'.repeat(1 + breakSpacing)).split(/[\n\u2028]/u);
   for (const paragraph of paragraphs) {
     if (!wrapWidth || measure(paragraph) <= wrapWidth) { add(paragraph, true); continue; }
     let line = '';

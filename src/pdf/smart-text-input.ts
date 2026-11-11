@@ -41,6 +41,24 @@ export function smartTextInput(source: string, measure: (text: string) => number
   return { source, text, boundaries };
 }
 
+// Soft line breaks and generated paragraph spacing share the native textarea's
+// caret and IME. Only the user's logical breaks are stored in the document.
+export function displayBreaks(view: TextInputView, extra: number): TextInputView {
+  if (!extra && !view.text.includes('\u2028')) return view;
+  let text = '';
+  const boundaries = [0];
+  for (let i = 0; i < view.text.length; i++) {
+    const char = view.text[i];
+    if (char === '\n') {
+      text += '\n'.repeat(extra);
+      for (let n = 0; n < extra; n++) boundaries.push(view.boundaries[i]);
+    }
+    text += char === '\u2028' ? '\n' : char;
+    boundaries.push(view.boundaries[i + 1]);
+  }
+  return {source: view.source, text, boundaries};
+}
+
 export function sourcePosition(view: TextInputView, position: number) {
   return view.boundaries[Math.max(0, Math.min(position, view.text.length))];
 }

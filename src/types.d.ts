@@ -38,7 +38,7 @@ declare global {
       readInstalledFont(id: string, text: string): Promise<Uint8Array>;
       replaceOriginalText(bytes: Uint8Array, pageIndex: number, objectIndex: number, expectedText: string, replacement: string, fontChoice?: string, color?: number[]): Promise<Uint8Array>;
       moveOriginalText(bytes: Uint8Array, pageIndex: number, objectIndex: number, expectedText: string, dx: number, dy: number): Promise<Uint8Array>;
-      embedShapedText(bytes: Uint8Array, placements: { pageIndex: number; text: string; size: number; matrix: number[]; color: number[]; fontChoice?: string; bold?: boolean }[]): Promise<Uint8Array>;
+      embedShapedText(bytes: Uint8Array, placements: { pageIndex: number; text: string; size: number; matrix: number[]; color: number[]; fontChoice?: string; bold?: boolean; opacity?: number }[]): Promise<Uint8Array>;
       prepareCompressedSave(expectedPath: string): Promise<{ token: string; path: string } | null>;
       finishCompressedSave(bytes: Uint8Array, token: string, expectedPath: string): Promise<{ path: string; name: string }>;
       discardCompressedSave(token: string): Promise<void>;
