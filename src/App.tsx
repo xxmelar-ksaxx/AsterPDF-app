@@ -5,7 +5,7 @@ import { flushSync } from 'react-dom';
 import { videoBlob } from './pdf/video-assets';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Pilcrow, ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
+  TextCursorInput, Pilcrow, ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
   FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X, Presentation,
   ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical, TriangleAlert,
   Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus, Video, PanelRight,
@@ -181,7 +181,7 @@ export default function App() {
     const clearSelection = () => { setSelectedId(null); setPopupCommentId(null); setPendingCommentScroll(null); };
     const dismissOutside = (event: PointerEvent) => {
       const target = event.target;
-      if (target instanceof Element && (target.closest('.comment-pin, .comment-popup, .sidebar-resize') ||
+      if (target instanceof Element && (target.closest('.comment-pin, .comment-popup, .sidebar-resize, .sidebar-toggle') ||
         target.closest('[data-comment-color]')?.getAttribute('data-comment-color') === selectedId ||
         target.closest<HTMLElement>('[data-comment-id]')?.dataset.commentId === selectedId)) return;
       clearSelection();
@@ -334,6 +334,7 @@ export default function App() {
   const pageRefs = useRef(new Map<number, HTMLDivElement>());
   const restoreScrollRef = useRef<number | null>(null);
   const zoomAnchorRef = useRef<{ page: number; localOffset: number; scale: number } | null>(null);
+  const commentAnchorRef = useRef<{ page: number; fraction: number; screenY: number } | null>(null);
   const savingRef = useRef(false);
   const estimateForRef = useRef<{ bytes: Uint8Array; plan: PlannedPage[] | null } | null>(null);
   const lastAutoAttemptRef = useRef(0);
@@ -1659,14 +1660,16 @@ export default function App() {
     rememberMarkup();
     window.aster.setDirty(true);
     setDrafts(current => [...current, ...notes]);
-    setSelectedId(notes[notes.length - 1].id); setPopupCommentId(notes[notes.length - 1].id);
+    const last = notes[notes.length - 1];
+    setSelectedId(last.id);
+    setPopupCommentId(last.id);
     window.getSelection()?.removeAllRanges();
   }, [source, busy, returningHome, editingDirty, placedSignatures.length, pagePlan, authorName, markupColors, rememberMarkup]);
 
   const chooseMarkupTool = (kind: MarkupKind) => {
     if (pendingPoint?.replyTo && noteText.trim()) { setError('Post or cancel your current reply before switching to a markup tool.'); return; }
     if (!authorName) { setSettingsOpen(true); return; }
-    const selections = selectedPdfText();
+    const selections = kind === 'Caret' ? [] : selectedPdfText();
     setPlacing(false); setPendingPoint(null); setPopupCommentId(null);
     setMarkupTool(current => current === kind && !selections.length ? null : kind);
     if (selections.length) addTextMarkup(kind, selections);
@@ -1674,7 +1677,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeTool !== 'comments') { setMarkupTool(null); return; }
-    if (!markupTool) return;
+    if (!markupTool || markupTool === 'Caret') return;
     let frame = 0;
     const apply = () => {
       cancelAnimationFrame(frame);
@@ -1936,6 +1939,59 @@ export default function App() {
     setZoom(next);
   };
 
+  function openSidebarForComment(comment: PdfComment) {
+    const stage = pageRefs.current.get(comment.page)?.querySelector('.page-stage');
+    const pin = stage?.querySelector('.comment-pin.selected');
+    if (sidebarCollapsed && stage && pin) {
+      const bounds = stage.getBoundingClientRect();
+      const screenY = pin.getBoundingClientRect().top;
+      commentAnchorRef.current = { page: comment.page, fraction: (screenY - bounds.top) / bounds.height, screenY };
+    }
+    void selectTool('comments');
+    setPendingCommentScroll(comment.id);
+  }
+
+  function toggleSidebar() {
+    const viewer = viewerRef.current;
+    if (viewer && sidebarTab === 'comments') {
+      const bounds = viewer.getBoundingClientRect();
+      const center = (bounds.top + bounds.bottom) / 2;
+      let nearest = Infinity;
+      for (const [page, sheet] of pageRefs.current) {
+        const stage = sheet.querySelector('.page-stage');
+        if (!stage) continue;
+        const rect = stage.getBoundingClientRect();
+        if (!rect.height || rect.bottom <= bounds.top || rect.top >= bounds.bottom) continue;
+        const marker = stage.querySelector('.comment-pin.selected')?.getBoundingClientRect();
+        const visibleMarker = marker && marker.top >= bounds.top && marker.top < bounds.bottom;
+        const screenY = visibleMarker ? marker.top : Math.max(rect.top, Math.min(center, rect.bottom));
+        const distance = Math.abs(screenY - center);
+        if (!visibleMarker && distance >= nearest) continue;
+        nearest = distance;
+        commentAnchorRef.current = { page, fraction: (screenY - rect.top) / rect.height, screenY };
+        if (visibleMarker) break;
+      }
+    }
+    setSidebarCollapsed(!sidebarCollapsed);
+  }
+
+  useLayoutEffect(() => {
+    const anchor = commentAnchorRef.current;
+    const viewer = viewerRef.current;
+    if (!anchor || !viewer) return;
+    // Restore the reading position after fit-width pages adopt the new width.
+    if (viewerWidth !== viewer.clientWidth) {
+      setViewerWidth(viewer.clientWidth);
+      return;
+    }
+    const stage = pageRefs.current.get(anchor.page)?.querySelector('.page-stage');
+    if (stage) {
+      const bounds = stage.getBoundingClientRect();
+      viewer.scrollTop += bounds.top + anchor.fraction * bounds.height - anchor.screenY;
+    }
+    commentAnchorRef.current = null;
+  }, [sidebarCollapsed, viewerWidth]);
+
   useLayoutEffect(() => {
     const anchor = zoomAnchorRef.current;
     if (!anchor) return;
@@ -2165,14 +2221,14 @@ export default function App() {
               onClick={() => { setMarkupTool(null); setPlacing(false); }}><MousePointer2 size={18} /></button>
             <button className={`icon-button${placing ? ' active' : ''}`} onClick={startComment} disabled={!document || busy || editingDirty}
               title={placing ? 'Click on page to add a comment' : 'Add comment'} aria-label="Add comment" aria-pressed={placing}><MessageSquare size={18} /></button>
-            {(['Highlight', 'Strikeout', 'Underline'] as const).map(kind => <button key={kind} className={`icon-button markup-tool${markupTool === kind ? ' active' : ''}`}
+            {(['Highlight', 'Strikeout', 'Underline', 'Caret'] as const).map(kind => <button key={kind} className={`icon-button markup-tool${markupTool === kind ? ' active' : ''}`}
               style={{ '--markup-color': markupColors[kind] } as React.CSSProperties} onMouseDown={event => event.preventDefault()}
               onClick={() => chooseMarkupTool(kind)} disabled={!document || busy || editingDirty || Boolean(pagePlan)} aria-pressed={markupTool === kind}
-              aria-label={kind === 'Highlight' ? 'Highlight text' : kind === 'Strikeout' ? 'Mark text for removal' : 'Mark text for replacement'}
-              title={kind === 'Highlight' ? 'Highlight text' : kind === 'Strikeout' ? 'Removal — strikethrough' : 'Replacement — underline'}>
-              {kind === 'Highlight' ? <Highlighter size={18} /> : kind === 'Strikeout' ? <Strikethrough size={18} /> : <Underline size={18} />}
+              aria-label={kind === 'Caret' ? 'Insert text here' : kind === 'Highlight' ? 'Highlight text' : kind === 'Strikeout' ? 'Mark text for removal' : 'Mark text for replacement'}
+              title={kind === 'Caret' ? 'Insert text here' : kind === 'Highlight' ? 'Highlight text' : kind === 'Strikeout' ? 'Removal — strikethrough' : 'Replacement — underline'}>
+              {kind === 'Caret' ? <TextCursorInput size={18} /> : kind === 'Highlight' ? <Highlighter size={18} /> : kind === 'Strikeout' ? <Strikethrough size={18} /> : <Underline size={18} />}
             </button>)}
-            <span className="comment-tool-hint">{markupTool ? 'Drag across text' : placing ? 'Click on page…' : 'Select text to mark up'}</span>
+            <span className="comment-tool-hint">{markupTool === 'Caret' ? 'Click between words' : markupTool ? 'Drag across text' : placing ? 'Click on page…' : 'Select text to mark up'}</span>
           </div>
           : activeTool === 'edit' || activeTool === 'draw' ? null
           : activeTool === 'pages' ? <div className="page-tools toolbar-page-tools" aria-label="Selected page actions">
@@ -2316,7 +2372,8 @@ export default function App() {
                 registerPage={registerPage} onMeasure={measurePage} onPlace={choosePoint}
                 onAddSignature={addSignatureAt} onUpdateSignature={updateSignature} onSelectSignature={setSelectedSignatureId} onDeleteSignature={requestSignatureRemoval}
                 popupCommentId={popupCommentId}
-                commentsActive={activeTool === 'comments'} markingText={Boolean(markupTool)} onCommentColor={changeMarkupColor} recentColors={recentColors}
+                commentsActive={activeTool === 'comments'} markingText={Boolean(markupTool)} insertingText={markupTool === 'Caret'} onCommentColor={changeMarkupColor} recentColors={recentColors}
+                onMark={selection => { if (markupTool) addTextMarkup(markupTool, selection); }}
                 editActive={activeTool === 'edit'} selectingLinks={activeTool === 'edit' && selectingLinks}
                 onLinkMenu={(x, y, selection) => { if (!busy && !pendingCommentCount && !pagePlan) setLinkMenu({ x, y, selection }); }}
                 onNavigateLink={sourcePage => {
@@ -2324,15 +2381,19 @@ export default function App() {
                   if (index >= 0) scrollToPage(index + 1);
                 }}
                 onAddMarkupComment={(comment) => {
-                  setPopupCommentId(null); setSelectedId(comment.id); selectTool('comments');
-                  setMarkupTool(null); setEditingComment({ comment, text: comment.text, bold: comment.bold }); setPendingCommentScroll(comment.id);
+                  openSidebarForComment(comment); setPopupCommentId(null); setSelectedId(comment.id);
+                  setMarkupTool(null); setEditingComment({ comment, text: comment.text, bold: comment.bold });
                 }}
                 onDeleteMarkup={(comment) => changeComment(comment, 'delete')}
                 onReplyComment={startReply}
                 commentEditingDisabled={busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}
                 onSelectComment={(id) => { setSelectedId(id); setPopupCommentId(id); }}
                 onCloseComment={() => { setSelectedId(null); setPopupCommentId(null); }}
-                onOpenCommentSidebar={(id) => { setPopupCommentId(null); setSelectedId(id); selectTool('comments'); setPendingCommentScroll(id); }}
+                onOpenCommentSidebar={(id) => {
+                  const comment = allComments.find(item => item.id === id);
+                  if (comment) openSidebarForComment(comment);
+                  setPopupCommentId(null); setSelectedId(id);
+                }}
                 onError={reportPageError} />;
             })}
           </div>
@@ -2386,7 +2447,7 @@ export default function App() {
         </div>}
         </div>}
         <div className="sidebar-rail" role="toolbar" aria-label="PDF tools" aria-orientation="vertical">
-          <button className="sidebar-toggle" onClick={() => setSidebarCollapsed((collapsed) => !collapsed)} aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-expanded={!sidebarCollapsed}>{sidebarCollapsed ? <ChevronLeft size={19} /> : <ChevronRight size={19} />}</button>
+          <button className="sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-expanded={!sidebarCollapsed}>{sidebarCollapsed ? <ChevronLeft size={19} /> : <ChevronRight size={19} />}</button>
           <button className={activeTool === 'comments' ? 'active' : ''} onClick={() => selectTool('comments')} aria-label="Comments" title="Comments" aria-pressed={activeTool === 'comments'}><MessageSquare size={18} />{conversationComments.length > 0 && <span className="sidebar-rail-count">{conversationComments.length}</span>}</button>
           <button className={activeTool === 'pages' ? 'active' : ''} onClick={() => selectTool('pages')} aria-label="Pages" title="Pages" aria-pressed={activeTool === 'pages'}><FileText size={18} /></button>
           <button className={activeTool === 'edit' ? 'active' : ''} onClick={() => selectTool('edit')} aria-label="Edit" title="Edit" aria-pressed={activeTool === 'edit'}><Pencil size={18} /></button>

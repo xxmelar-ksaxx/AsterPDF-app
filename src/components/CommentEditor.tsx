@@ -37,7 +37,7 @@ export default function CommentEditor({ value, bold, onChange, label, placeholde
       last.current = serialized;
     }
   }, [serialized, value, bold]);
-  useLayoutEffect(() => { editor.current?.focus(); }, []);
+  useLayoutEffect(() => { editor.current?.focus({ preventScroll: true }); }, []);
   const update = () => {
     if (!editor.current) return;
     const current = readEditor(editor.current);

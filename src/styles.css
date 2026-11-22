@@ -52,6 +52,7 @@
 .pdf-selection-layer>:not(.markedContent),.pdf-selection-layer .markedContent span:not(.markedContent){z-index:1;--font-height:0;--scale-x:1;--rotate:0deg;font-size:calc(var(--text-scale-factor) * var(--font-height));transform:rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv))}
 .pdf-selection-layer .markedContent{display:contents}
 .pdf-selection-layer ::selection{color:transparent;background:#3d8bf34d}
+.pdf-selection-layer ::highlight(pdf-markup-drag){color:transparent;background:#3d8bf34d}
 .pdf-selection-layer[data-main-rotation="90"]{transform:rotate(90deg) translateY(-100%)}
 .pdf-selection-layer[data-main-rotation="180"]{transform:rotate(180deg) translate(-100%,-100%)}
 .pdf-selection-layer[data-main-rotation="270"]{transform:rotate(270deg) translateX(-100%)}

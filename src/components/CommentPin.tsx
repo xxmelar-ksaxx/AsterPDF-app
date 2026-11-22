@@ -87,7 +87,7 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
       </div>}
       {(!isMarkup || hasComment) && <button className="text-button comment-reply-action" disabled={colorDisabled} onClick={onReply}><Reply size={15} />Reply</button>}
       {markupKind(comment.kind) && comment.quadPoints?.length && <div className="comment-markup-color">
-        <span>{comment.kind === 'Strikeout' ? 'Removal' : comment.kind === 'Underline' ? 'Replacement' : 'Highlight'} color</span>
+        <span>{comment.kind === 'Caret' ? 'Insertion' : comment.kind === 'Strikeout' ? 'Removal' : comment.kind === 'Underline' ? 'Replacement' : 'Highlight'} color</span>
         {!colorDisabled && <ColorPicker commentId={comment.id} value={comment.color ?? MARKUP_COLORS[comment.kind]} recent={recentColors}
           label="Change markup color" onChange={onColor} />}
         <button className="icon-button" title={hasComment ? 'Edit comment' : 'Add comment'} aria-label={hasComment ? 'Edit markup comment' : 'Add comment to markup'}

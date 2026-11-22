@@ -78,6 +78,8 @@ type Props = {
   onOpenCommentSidebar: (id: string) => void;
   commentsActive: boolean;
   markingText: boolean;
+  insertingText: boolean;
+  onMark: (selection: TextMarkupSelection[]) => void;
   selectingLinks: boolean;
   editActive: boolean;
   onLinkMenu: (x: number, y: number, selection: TextMarkupSelection[]) => void;
@@ -122,7 +124,7 @@ type Props = {
 
 export default function PdfPage({
   paragraphRequest, onRequestHandled, paragraphMode, onReplaceParagraph, editSelection, onSelectEditObjects, onSelectNativeText, onMoveEditSelection, onCopyEditSelection, onDeleteEditSelection, document, getSourceBytes, originalTransforms, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
-  popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, selectingLinks, editActive, onLinkMenu, onNavigateLink, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
+  popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, insertingText, onMark, selectingLinks, editActive, onLinkMenu, onNavigateLink, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
   overlayTool, drawActive, overlayColor, overlayLineWidth, drawStyle, overlayFontSize, textAppearance, overlayFontChoice, overlayImage, overlays, selectedOverlayId,
@@ -502,9 +504,10 @@ export default function PdfPage({
         <CommentMarkup key={`markup-${comment.id}`} comment={comment} viewport={activeViewport} selected={selectedId === comment.id}
           onSelect={() => onSelectComment(comment.id)} />)}
       {near && ready && activeViewport && (commentsActive || selectingLinks) && !placing && <PdfTextSelection pdf={document} sourcePage={sourcePageNumber} page={pageNumber}
-        viewport={activeViewport} marking={markingText} onError={onError} onClickMarkup={(x, y) => {
+        viewport={activeViewport} marking={markingText} inserting={insertingText} onMark={onMark} onError={onError} onClickMarkup={(x, y) => {
           const comment = markupAtPoint(comments, activeViewport, x, y);
           if (comment) onSelectComment(comment.id);
+          return Boolean(comment);
         }} />}
       {near && ready && activeViewport && <PdfLinks pdf={document} sourcePage={sourcePageNumber} viewport={activeViewport}
         selecting={editActive || markingText || placing || Boolean(overlayTool) || Boolean(placingSignature)}

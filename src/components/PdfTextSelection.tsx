@@ -3,6 +3,67 @@ import { TextLayer, type PDFDocumentProxy, type PageViewport } from 'pdfjs-dist'
 import type { TextMarkupSelection } from '../pdf/comments';
 
 const layers = new Map<HTMLElement, { page: number; viewport: PageViewport }>();
+const previewName = 'pdf-markup-drag';
+
+// PDF text runs can be stored in a different order from their positions on the page.
+// Measure visible characters so a drag cannot include intervening DOM siblings.
+function markupDrag(startX: number, startY: number) {
+  const candidates = Array.from(layers, ([layer, entry]) => ({
+    layer, ...entry, spans: Array.from(layer.querySelectorAll<HTMLSpanElement>('span[role="presentation"]')),
+  }));
+  const cache = new Map<HTMLElement, { range: Range; x: number; y: number }[]>();
+  const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+  return (x: number, y: number) => {
+    const preview = new Highlight();
+    const selections: TextMarkupSelection[] = [];
+    const left = Math.min(startX, x), right = Math.max(startX, x);
+    const top = Math.min(startY, y), bottom = Math.max(startY, y);
+    for (const { layer, spans, viewport, page } of candidates) {
+      const origin = layer.parentElement!.getBoundingClientRect();
+      const quadPoints: number[] = [], words: string[] = [];
+      for (const span of spans) {
+        const box = span.getBoundingClientRect();
+        if (box.right < left || box.left > right || box.bottom < top || box.top > bottom) continue;
+        const node = span.firstChild;
+        if (!(node instanceof Text)) continue;
+        let glyphs = cache.get(span);
+        if (!glyphs) {
+          glyphs = Array.from(segmenter.segment(node.data), ({ index, segment }) => {
+            const range = document.createRange();
+            range.setStart(node, index); range.setEnd(node, index + segment.length);
+            const rect = range.getBoundingClientRect();
+            return { range, x: rect.left + rect.width / 2 - box.left, y: rect.top + rect.height / 2 - box.top };
+          });
+          cache.set(span, glyphs);
+        }
+        let run: Range | undefined;
+        const flush = () => {
+          if (!run) return;
+          preview.add(run);
+          words.push(run.toString());
+          for (const rect of run.getClientRects()) {
+            if (!rect.width || !rect.height) continue;
+            for (const [cx, cy] of [[rect.left, rect.top], [rect.right, rect.top], [rect.left, rect.bottom], [rect.right, rect.bottom]])
+              quadPoints.push(...viewport.convertToPdfPoint(cx - origin.left, cy - origin.top));
+          }
+          run = undefined;
+        };
+        for (const glyph of glyphs) {
+          const cx = box.left + glyph.x, cy = box.top + glyph.y;
+          // A horizontal stroke anywhere inside a line can select its characters.
+          const inset = Math.min(box.height * .4, Math.max(0, box.height / 2 - 1));
+          if (cx < left || cx > right || cy + inset < top || cy - inset > bottom) { flush(); continue; }
+          run ??= glyph.range.cloneRange();
+          run.setEnd(node, glyph.range.endOffset);
+        }
+        flush();
+      }
+      if (quadPoints.length) selections.push({ page, text: words.join(' '), quadPoints });
+    }
+    CSS.highlights.set(previewName, preview);
+    return selections;
+  };
+}
 const pages = new Map<HTMLElement, { page: number; viewport: PageViewport }>();
 export function registerSelectionPage(stage: HTMLElement, page: number, viewport: PageViewport) {
   pages.set(stage, { page, viewport });
@@ -95,11 +156,16 @@ export function selectedPdfText(): TextMarkupSelection[] {
   return result;
 }
 
-export default function PdfTextSelection({ pdf, sourcePage, page, viewport, marking, onError, onClickMarkup }: {
-  pdf: PDFDocumentProxy; sourcePage: number; page: number; viewport: PageViewport; marking: boolean;
-  onError: (message: string) => void; onClickMarkup: (x: number, y: number) => void;
+export default function PdfTextSelection({ pdf, sourcePage, page, viewport, marking, inserting, onMark, onError, onClickMarkup }: {
+  pdf: PDFDocumentProxy; sourcePage: number; page: number; viewport: PageViewport; marking: boolean; inserting: boolean;
+  onError: (message: string) => void; onClickMarkup: (x: number, y: number) => boolean;
+  onMark: (selection: TextMarkupSelection[]) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const drag = useRef<ReturnType<typeof markupDrag> | null>(null);
+  const moved = useRef(false);
+  const start = useRef({ x: 0, y: 0 });
+  useEffect(() => () => { drag.current = null; CSS.highlights.delete(previewName); }, [marking, viewport]);
   const [empty, setEmpty] = useState(false);
   useEffect(() => {
     const container = ref.current!;
@@ -121,8 +187,46 @@ export default function PdfTextSelection({ pdf, sourcePage, page, viewport, mark
     return () => { cancelled = true; layer?.cancel(); layers.delete(container); container.replaceChildren(); };
   }, [pdf, sourcePage, page, viewport, onError]);
   return <>
-    <div ref={ref} className="pdf-selection-layer" onDragStart={event => event.preventDefault()} onClick={event => {
+    <div ref={ref} className="pdf-selection-layer" onPointerDown={event => {
+      moved.current = false;
+      if (inserting) { if (event.button === 0) event.preventDefault(); return; }
+      if (!marking || event.button !== 0 || !event.isPrimary) return;
+      event.preventDefault();
+      window.getSelection()?.removeAllRanges();
+      start.current = { x: event.clientX, y: event.clientY };
+      drag.current = markupDrag(event.clientX, event.clientY);
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }} onPointerMove={event => {
+      if (!drag.current || !event.isPrimary) return;
+      moved.current ||= Math.hypot(event.clientX - start.current.x, event.clientY - start.current.y) >= 2;
+      if (moved.current) drag.current(event.clientX, event.clientY);
+    }} onPointerUp={event => {
+      if (!drag.current || !event.isPrimary) return;
+      if (moved.current) onMark(drag.current(event.clientX, event.clientY));
+      drag.current = null;
+      CSS.highlights.delete(previewName);
+    }} onLostPointerCapture={() => {
+      drag.current = null; CSS.highlights.delete(previewName);
+    }} onDragStart={event => event.preventDefault()} onClick={event => {
       event.stopPropagation();
+      if (moved.current) return;
+      if (inserting) {
+        const layer = event.currentTarget;
+        const origin = layer.parentElement!.getBoundingClientRect();
+        if (onClickMarkup(event.clientX - origin.left, event.clientY - origin.top)) return;
+        const range = document.caretRangeFromPoint(event.clientX, event.clientY);
+        const caret = range?.getBoundingClientRect();
+        const nearText = range && layer.contains(range.startContainer) && caret && caret.height > 0 &&
+          Math.abs(caret.left - event.clientX) < caret.height && event.clientY >= caret.top && event.clientY <= caret.bottom;
+        const x = (nearText ? caret.left : event.clientX) - origin.left;
+        const height = nearText ? caret.height : 12 * viewport.scale;
+        const top = (nearText ? caret.top : event.clientY - height / 2) - origin.top;
+        const halfWidth = .8 * viewport.scale;
+        const quadPoints = [top, top + height].flatMap(y =>
+          [x - halfWidth, x + halfWidth].flatMap(edge => viewport.convertToPdfPoint(edge, y)));
+        onMark([{ page, text: '', quadPoints }]);
+        return;
+      }
       if (window.getSelection()?.isCollapsed) {
         const origin = event.currentTarget.parentElement!.getBoundingClientRect();
         onClickMarkup(event.clientX - origin.left, event.clientY - origin.top);

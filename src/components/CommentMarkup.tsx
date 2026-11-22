@@ -27,7 +27,7 @@ export default function CommentMarkup({ comment, viewport, selected, onSelect }:
       const polygon = `${ax},${ay} ${bx},${by} ${dx},${dy} ${cx},${cy}`;
       const t = comment.kind === 'Strikeout' ? .5 : .92;
       return <g key={index}>
-        {comment.kind === 'Highlight' ? <polygon points={polygon} fill={color} opacity={comment.opacity ?? .35} /> :
+        {(comment.kind === 'Highlight' || comment.kind === 'Caret') ? <polygon points={polygon} fill={color} opacity={comment.opacity ?? .35} /> :
           <line x1={ax + (cx - ax) * t} y1={ay + (cy - ay) * t} x2={bx + (dx - bx) * t} y2={by + (dy - by) * t}
             stroke={color} opacity={comment.opacity ?? 1} strokeWidth={Math.max(.7 * viewport.scale, Math.hypot(cx - ax, cy - ay) * .065)} />}
         <polygon className="comment-markup-hit" points={polygon} fill="transparent" stroke={selected ? color : 'none'} strokeWidth="1" strokeDasharray="3 3"
