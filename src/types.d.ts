@@ -1,6 +1,8 @@
 export {};
 
 declare global {
+  type PrinterSettings = { deviceName: string; copies: number; landscape: boolean; color: boolean; pageSize: 'A4' | 'Letter' | 'Legal' | 'A3'; duplexMode: 'simplex' | 'longEdge' | 'shortEdge' };
+  type PrintSelection = { settings: PrinterSettings; indices: number[] };
   type WorkspaceState = {
     update?: UpdateStatus | null;
     activeId: string | null; dragging: boolean;
@@ -43,6 +45,8 @@ declare global {
       finishCompressedSave(bytes: Uint8Array, token: string, expectedPath: string): Promise<{ path: string; name: string }>;
       discardCompressedSave(token: string): Promise<void>;
       printDocx(): Promise<Uint8Array>;
+      listPrinters(): Promise<{ name: string; displayName: string }[]>;
+      printDocument(settings: PrinterSettings): Promise<void>;
       prepareWordExport(expectedPath: string): Promise<{ token: string; path: string } | null>;
       convertToWord(bytes: Uint8Array, token: string, expectedPath: string): Promise<WordExportResult>;
       discardWordExport(token: string): Promise<void>;
@@ -65,7 +69,7 @@ declare global {
       setSaving(value: boolean): void;
       onDiscardRequest(handler: (id: string) => void): () => void;
       answerDiscardRequest(id: string, discard: boolean): void;
-      onMenu(channel: 'menu:home' | 'menu:update' | 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:settings' | 'menu:about' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word' | 'menu:pdf-to-data', handler: () => void): () => void;
+      onMenu(channel: 'menu:home' | 'menu:update' | 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:print' | 'menu:settings' | 'menu:about' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word' | 'menu:pdf-to-data', handler: () => void): () => void;
     };
   }
 }

@@ -299,6 +299,25 @@ documentIpc.handle('pdf:embed-shaped-text', (event, bytes, placements) => {
     requireApp(event);
     if (preparedCompressedSave?.token === token) preparedCompressedSave = null;
   });
+  documentIpc.handle('pdf:printers', async event => {
+    requireApp(event);
+    return (await tab.contents.getPrintersAsync()).map(({ name, displayName }) => ({ name, displayName }));
+  });
+  documentIpc.handle('pdf:print', async (event, settings) => {
+    requireApp(event);
+    const { deviceName, copies, landscape, color, pageSize, duplexMode } = settings;
+    if (!Number.isInteger(copies) || copies < 1 || copies > 99 || typeof landscape !== 'boolean' ||
+        typeof color !== 'boolean' || !['A3', 'A4', 'Letter', 'Legal'].includes(pageSize) ||
+        !['simplex', 'shortEdge', 'longEdge'].includes(duplexMode)) throw new Error('Invalid print settings.');
+    const printers = await tab.contents.getPrintersAsync();
+    if (!printers.some(printer => printer.name === deviceName)) throw new Error('The selected printer is no longer available.');
+    return new Promise((resolve, reject) => {
+      tab.contents.print({ silent: true, printBackground: true, deviceName, copies, landscape, color, pageSize, duplexMode, collate: true }, (success, reason) => {
+        if (success || /cancel/i.test(reason)) resolve();
+        else reject(new Error(reason || 'The printer could not complete the job.'));
+      });
+    });
+  });
   documentIpc.handle('docx:print', async (event) => {
     requireApp(event);
     const bytes = await tab.contents.printToPDF({
@@ -463,6 +482,7 @@ app.whenReady().then(() => {
         { label: 'Open File…', accelerator: 'CmdOrCtrl+O', click: () => send('menu:open') },
         { label: 'Save', accelerator: 'CmdOrCtrl+S', click: () => send('menu:save') },
         { label: 'Save As…', accelerator: 'CmdOrCtrl+Shift+S', click: () => send('menu:save-as') },
+        { label: 'Print…', accelerator: 'CmdOrCtrl+P', click: () => send('menu:print') },
         { type: 'separator' },
         { role: 'quit' }
       ]

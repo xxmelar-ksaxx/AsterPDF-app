@@ -62,6 +62,8 @@ embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-tex
   finishCompressedSave: (bytes, token, expectedPath) => ipcRenderer.invoke('pdf:finish-compressed-save', bytes, token, expectedPath),
   discardCompressedSave: (token) => ipcRenderer.invoke('pdf:discard-compressed-save', token),
   printDocx: () => ipcRenderer.invoke('docx:print'),
+  listPrinters: () => ipcRenderer.invoke('pdf:printers'),
+  printDocument: settings => ipcRenderer.invoke('pdf:print', settings),
   prepareWordExport: expectedPath => ipcRenderer.invoke('word:prepare-export', expectedPath),
   convertToWord: (bytes, token, expectedPath) => ipcRenderer.invoke('word:convert', bytes, token, expectedPath),
   discardWordExport: token => ipcRenderer.invoke('word:discard-export', token),
@@ -101,7 +103,7 @@ embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-tex
   },
   answerDiscardRequest: (id, discard) => ipcRenderer.send('pdf:confirm-discard-result', id, discard),
   onMenu: (channel, handler) => {
-    if (!['menu:home', 'menu:update', 'menu:open', 'menu:save', 'menu:save-as', 'menu:settings', 'menu:about', 'menu:undo', 'menu:redo', 'menu:pdf-to-word', 'menu:pdf-to-data'].includes(channel)) return () => {};
+    if (!['menu:home', 'menu:update', 'menu:open', 'menu:save', 'menu:save-as', 'menu:print', 'menu:settings', 'menu:about', 'menu:undo', 'menu:redo', 'menu:pdf-to-word', 'menu:pdf-to-data'].includes(channel)) return () => {};
     const listener = () => handler();
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);

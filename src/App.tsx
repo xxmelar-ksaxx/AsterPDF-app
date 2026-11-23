@@ -1,3 +1,5 @@
+import { printPdf } from './pdf/print';
+import PrintPreview from './components/PrintPreview';
 import ParagraphSpacing from './components/ParagraphSpacing';
 import HomeView from './components/HomeView';
 import ReaderControls from './components/ReaderControls';
@@ -212,6 +214,10 @@ export default function App() {
   const [returningHome, setReturningHome] = useState(false);
   const returningHomeRef = useRef(false);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
+  const [printing, setPrinting] = useState(false);
+  const [printPages, setPrintPages] = useState<readonly string[] | null>(null);
+  const printDecision = useRef<((print: PrintSelection | null) => void) | null>(null);
+  useEffect(() => () => { printDecision.current?.(null); }, []);
   const [openingMessage, setOpeningMessage] = useState<string | null>(null);
   const openingRef = useRef<{ bytes?: Uint8Array; pdf?: PDFDocumentProxy } | null>(null);
   const finishOpening = useCallback(() => {
@@ -854,6 +860,37 @@ export default function App() {
 
   const latestWordBuild = useRef(buildPendingPdf);
   useLayoutEffect(() => { latestWordBuild.current = buildPendingPdf; }, [buildPendingPdf]);
+  async function printCurrentDocument() {
+    if (!document || !source || busy || savingRef.current || installLockRef.current || returningHomeRef.current) return;
+    savingRef.current = true;
+    try {
+      await finishInlineEdits();
+      setBusy(true);
+      setSaveMessage('Preparing PDF for printing…');
+      setPrinting(true);
+      await paintSaveFeedback();
+      const notes: NewNote[] = pendingPoint && noteText.trim() && authorName ? [{
+        id: crypto.randomUUID(), page: pendingPoint.page, x: pendingPoint.x, y: pendingPoint.y,
+        author: authorName, ...trimComment({ text: noteText, bold: noteBold }), date: new Date().toISOString(), replyTo: pendingPoint.replyTo
+      }] : [];
+      const { bytes } = await latestWordBuild.current(notes);
+      await printPdf(bytes, setSaveMessage, pages => new Promise(resolve => {
+        printDecision.current = resolve;
+        setSaveMessage(null);
+        setPrintPages(pages);
+      }));
+    } catch (cause) {
+      setError(`Could not print the PDF: ${messageOf(cause)}`);
+    } finally {
+      setPrinting(false);
+      setPrintPages(null);
+      printDecision.current = null;
+      savingRef.current = false;
+      setBusy(false);
+      setSaveMessage(null);
+    }
+  }
+
   const exportDocument = useCallback(async (kind: 'word' | 'data') => {
     if (!source || !document) { setError('Open a PDF before exporting its content.'); return; }
     if (busy || savingRef.current || returningHomeRef.current || installLockRef.current) return;
@@ -1610,6 +1647,7 @@ export default function App() {
       window.aster.onMenu('menu:update', () => { setSettingsOpen(true); if (!updates.downloading && updates.state?.transfer.phase !== 'ready') void updates.download(); }),
       window.aster.onMenu('menu:open', () => { if (!installLockRef.current) void openSelected(); }),
       window.aster.onMenu('menu:save', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current()).catch((cause) => setError(messageOf(cause))); }),
+      window.aster.onMenu('menu:print', () => { void printCurrentDocument(); }),
       window.aster.onMenu('menu:save-as', () => { if (!installLockRef.current) void finishInlineEdits().then(() => latestSave.current(true)).catch((cause) => setError(messageOf(cause))); }),
       window.aster.onMenu('menu:settings', () => { if (!installLockRef.current) setSettingsOpen(true); }),
       window.aster.onMenu('menu:about', () => { if (!installLockRef.current && !openingRef.current && !savingRef.current) setAboutOpen(true); }),
@@ -2521,7 +2559,9 @@ export default function App() {
       <button className="icon-button" aria-label="Dismiss Word export result" onClick={() => setWordExportResult(null)}><X size={17} /></button>
     </div>}
     <SaveFeedback message={discardRequestId ? null : openingMessage || (saveMessage ? (wordExporting ? saveMessage : compressionProgress || saveMessage) : null)}
-      title={openingMessage ? 'Opening your PDF' : wordExporting === 'data' ? 'Extracting PDF data' : wordExporting ? 'Converting to Word' : 'Saving your PDF'} />
+      title={openingMessage ? 'Opening your PDF' : printing ? 'Preparing print preview' : wordExporting === 'data' ? 'Extracting PDF data' : wordExporting ? 'Converting to Word' : 'Saving your PDF'} />
+    {printPages && source && <PrintPreview pages={printPages} initialPage={pageNumber} name={source.path.split(/[\\/]/).pop() || 'Document'}
+      onFinish={print => { setPrintPages(null); printDecision.current?.(print); printDecision.current = null; }} />}
     {discardRequestId && <div className="modal-backdrop discard-backdrop"><div className="settings-modal discard-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-description">
       <div className="discard-icon"><TriangleAlert size={23} /></div>
       <h2 id="discard-title">Discard unsaved changes?</h2>
