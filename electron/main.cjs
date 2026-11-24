@@ -139,7 +139,7 @@ async function selectFiles(append = false) {
   return opened;
 }
 
-async function writePdfBytes(rawBytes, target) {
+async function writePdfBytes(rawBytes, target, keepSource = false) {
   if (writing) throw new Error('A PDF save is already in progress.');
   const bytes = validatePdfBytes(rawBytes);
   const temporary = path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.tmp`);
@@ -153,8 +153,10 @@ async function writePdfBytes(rawBytes, target) {
     await fs.rm(temporary, { force: true }).catch(() => {});
     writing = false;
   }
-  currentPath = target;
-  workspace.publish(tab.owner);
+  if (!keepSource) {
+    currentPath = target;
+    workspace.publish(tab.owner);
+  }
   await fs.stat(target).then((stats) => recentStore.record(target, stats.mtimeMs)).catch(() => {});
   return { path: target, name: path.basename(target) };
 }
@@ -198,13 +200,13 @@ async function prepareCompressedSave(expectedPath) {
   return { token: preparedCompressedSave.token, path: target };
 }
 
-async function finishCompressedSave(rawBytes, token, expectedPath) {
+async function finishCompressedSave(rawBytes, token, expectedPath, keepSource) {
   const prepared = preparedCompressedSave;
   if (!prepared || token !== prepared.token || expectedPath !== prepared.expectedPath || currentPath !== expectedPath) {
     throw new Error('The compressed save location is no longer valid.');
   }
   preparedCompressedSave = null;
-  return writePdfBytes(rawBytes, prepared.target);
+  return writePdfBytes(rawBytes, prepared.target, keepSource === true);
 }
 
   documentIpc.on('pdf:confirm-discard-result', (event, id, discard) => {
@@ -292,8 +294,8 @@ documentIpc.handle('pdf:embed-shaped-text', (event, bytes, placements) => {
   requireApp(event); return embedShapedOverlays(bytes, placements);
 });
   documentIpc.handle('pdf:prepare-compressed-save', (event, expectedPath) => { requireApp(event); return prepareCompressedSave(expectedPath); });
-  documentIpc.handle('pdf:finish-compressed-save', (event, bytes, token, expectedPath) => {
-    requireApp(event); return finishCompressedSave(bytes, token, expectedPath);
+  documentIpc.handle('pdf:finish-compressed-save', (event, bytes, token, expectedPath, keepSource) => {
+    requireApp(event); return finishCompressedSave(bytes, token, expectedPath, keepSource);
   });
   documentIpc.handle('pdf:discard-compressed-save', (event, token) => {
     requireApp(event);

@@ -1,3 +1,5 @@
+import { compressPdf } from './pdf/compress-client';
+import type { CompressionEstimate, CompressionLevel, CompressionMode } from './pdf/compression';
 import { printPdf } from './pdf/print';
 import PrintPreview from './components/PrintPreview';
 import ParagraphSpacing from './components/ParagraphSpacing';
@@ -28,7 +30,7 @@ import PageThumbnail from './components/PageThumbnail';
 import { convertToPdf } from './import/convert';
 import { importVideo } from './import/video';
 import { clearVideos, storeVideo } from './pdf/video-assets';
-import { appendPdfs, composePagePlan, compressPdf, embedSignatures, type CompressionLevel, type PageEdit, type SignatureDraw } from './pdf/edit';
+import { appendPdfs, composePagePlan, embedSignatures, type PageEdit, type SignatureDraw } from './pdf/edit';
 import { changePagePlan, initialPagePlan, remapPageSelection, type PlannedPage } from './pdf/page-plan';
 import { cropSignature, importSignature, loadSignatures, storeSignatures, type PlacedSignature, type SavedSignature, type SignatureStroke } from './signatures/library';
 import { signatureDrawFromViewport } from './signatures/placement';
@@ -62,17 +64,11 @@ const DEFAULT_PAGE_SIZE: PageSize = { width: 612, height: 792 };
 const EMPTY_COMMENTS: PdfComment[] = [];
 const MAX_HISTORY_BYTES = 128 * 1024 * 1024;
 const COMPRESSION_PRESETS: { level: CompressionLevel; label: string; description: string }[] = [
-  { level: 'lossless', label: 'Lossless', description: 'Repack PDF objects. Keeps searchable text and comments.' },
-  { level: 'balanced', label: 'Balanced', description: 'Render pages at 140 DPI with good image quality.' },
-  { level: 'small', label: 'Smallest', description: 'Render pages at 90 DPI with stronger compression.' }
+  { level: 'lossless', label: 'Lossless', description: 'Keeps every image pixel. Best for print and fine detail.' },
+  { level: 'balanced', label: 'Balanced', description: 'Lightly compresses photos for reading on screen.' },
+  { level: 'small', label: 'Smallest', description: 'Reduces photo detail further for sharing.' }
 ];
 type EditorSnapshot = { bytes: Uint8Array; plan: PlannedPage[] | null; pageCount: number; overlays: OverlayObject[]; transforms: OriginalTransform[] };
-type CompressionEstimate =
-  | { status: 'idle' }
-  | { status: 'calculating'; progress: string }
-  | { status: 'ready'; originalSize: number; sizes: Record<CompressionLevel, number>; sampledPages: number }
-  | { status: 'error'; message: string };
-
 function formatFileSize(bytes: number): string {
   const unit = bytes >= 1024 * 1024 ? 'MB' : 'KB';
   const divisor = unit === 'MB' ? 1024 * 1024 : 1024;
@@ -312,8 +308,9 @@ export default function App() {
   const [pendingSignatureRemoval, setPendingSignatureRemoval] = useState<{ kind: 'placed' | 'saved'; id: string; name?: string } | null>(null);
   const [pendingSignatureDiscard, setPendingSignatureDiscard] = useState(false);
   const [compressionOpen, setCompressionOpen] = useState(false);
-  const [compressionChoice, setCompressionChoice] = useState<CompressionLevel | null>(null);
-  const [compressionEstimate, setCompressionEstimate] = useState<CompressionEstimate>({ status: 'idle' });
+  const [compressionMode, setCompressionMode] = useState<CompressionMode>('editable');
+  const [compressionChoice, setCompressionChoice] = useState<CompressionLevel>('balanced');
+  const [compressionResult, setCompressionResult] = useState('');
   const [compressionError, setCompressionError] = useState('');
   const [compressionProgress, setCompressionProgress] = useState('');
   const signatureCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -327,6 +324,24 @@ export default function App() {
   useEffect(() => () => clearVideos(), []);
   const savedBytesRef = useRef<Uint8Array | null>(null);
   const savedFileBytesRef = useRef<Uint8Array | null>(null);
+  const [sizeEstimate, setSizeEstimate] = useState<CompressionEstimate | null | undefined>();
+  const estimateInput = savedFileBytesRef.current ?? source?.bytes;
+  const estimateCache = useMemo(() => new Map<CompressionMode, CompressionEstimate>(), [estimateInput]);
+  useEffect(() => {
+    const cached = estimateCache.get(compressionMode);
+    setSizeEstimate(cached);
+    if (cached || !compressionOpen || !estimateInput || compressionResult || busy) return;
+    const worker = new Worker(new URL('./pdf/compression-estimate.worker.ts', import.meta.url), { type: 'module' });
+    worker.onmessage = ({ data }: MessageEvent<CompressionEstimate | null>) => {
+      if (data) estimateCache.set(compressionMode, data);
+      setSizeEstimate(data);
+      worker.terminate();
+    };
+    worker.onerror = () => { setSizeEstimate(null); worker.terminate(); };
+    const copy = estimateInput.slice();
+    worker.postMessage({ bytes: copy, mode: compressionMode }, [copy.buffer]);
+    return () => worker.terminate();
+  }, [compressionOpen, estimateCache, estimateInput, compressionResult, compressionMode, busy]);
   const savingCommentIdsRef = useRef(new Set<string>());
   const dragPageRef = useRef<number | null>(null);
   const gridReturnScrollRef = useRef<number | null>(null);
@@ -342,7 +357,6 @@ export default function App() {
   const zoomAnchorRef = useRef<{ page: number; localOffset: number; scale: number } | null>(null);
   const commentAnchorRef = useRef<{ page: number; fraction: number; screenY: number } | null>(null);
   const savingRef = useRef(false);
-  const estimateForRef = useRef<{ bytes: Uint8Array; plan: PlannedPage[] | null } | null>(null);
   const lastAutoAttemptRef = useRef(0);
 
   const measurePage = useCallback((page: number, size: PageSize) => {
@@ -502,36 +516,6 @@ export default function App() {
       documentTasksRef.current.delete(document);
     }
   }, [document]);
-
-  useEffect(() => {
-    setCompressionChoice(null);
-    if (!source) { estimateForRef.current = null; setCompressionEstimate({ status: 'idle' }); return; }
-    // Estimating every preset parses/renders the PDF too. Do this only when
-    // requested, never alongside a background comment save on a large file.
-    if (!compressionOpen) return;
-    estimateForRef.current = { bytes: source.bytes, plan: pagePlan };
-    setCompressionEstimate({ status: 'calculating', progress: 'Starting size estimates…' });
-    const worker = new Worker(new URL('./pdf/compression-estimator.worker.ts', import.meta.url), { type: 'module' });
-    let active = true;
-    worker.onmessage = (event: MessageEvent<
-      | { type: 'progress'; message: string }
-      | { type: 'ready'; originalSize: number; sizes: Record<CompressionLevel, number>; sampledPages: number }
-      | { type: 'error'; message: string }
-    >) => {
-      if (!active) return;
-      const result = event.data;
-      if (result.type === 'progress') setCompressionEstimate({ status: 'calculating', progress: result.message });
-      else if (result.type === 'ready') setCompressionEstimate({ status: 'ready', originalSize: result.originalSize,
-        sizes: result.sizes, sampledPages: result.sampledPages });
-      else setCompressionEstimate({ status: 'error', message: result.message });
-    };
-    worker.onerror = (event) => {
-      if (active) setCompressionEstimate({ status: 'error', message: event.message || 'Could not estimate compressed sizes.' });
-    };
-    const bytes = source.bytes.slice();
-    worker.postMessage({ bytes, plan: pagePlan }, [bytes.buffer]);
-    return () => { active = false; worker.terminate(); };
-  }, [source?.bytes, pagePlan, compressionOpen]);
 
   const effectivePages = useMemo(() => document ? (pagePlan ?? initialPagePlan(document.numPages)) : [], [document, pagePlan]);
   const visibleComments = useMemo(() => pagePlan
@@ -693,8 +677,7 @@ export default function App() {
       setHistoryFuture([]);
       setCompressionOpen(false);
       setCompressionError('');
-      setCompressionEstimate({ status: 'calculating', progress: 'Starting size estimates…' });
-      setCompressionChoice(null);
+      setCompressionChoice('balanced');
       setSidebarCollapsed(true);
       setSource({ path: opened.path, name: opened.kind === 'pdf' ? opened.name : opened.name.replace(/\.[^.]+$/, '.pdf'), bytes, needsSave: opened.kind !== 'pdf' });
       setSelectedId(null);
@@ -771,8 +754,7 @@ export default function App() {
       setPendingSignatureRemoval(null); setPendingSignatureDiscard(false);
       setHistoryPast([]); setHistoryFuture([]); setSelectedPages(new Set());
       setPageGridOpen(false); setGridDragOver(null); setPageNumber(1);
-      setCompressionOpen(false); setCompressionChoice(null); setCompressionError('');
-      setCompressionEstimate({ status: 'idle' });
+      setCompressionOpen(false); setCompressionChoice('balanced'); setCompressionError('');
       setActiveTool('comments'); setSidebarTab('comments'); setSidebarCollapsed(true);
       setFontEditing(null); setSettingsOpen(false); setError('');
       savedBytesRef.current = null; savedFileBytesRef.current = null;
@@ -1083,7 +1065,7 @@ export default function App() {
   }, [source, pagePlan, effectivePages, busy, pendingCommentCount, overlays, transforms]);
 
   const saveCompressedCopy = useCallback(async () => {
-    if (!source || !compressionChoice || busy || savingRef.current || pendingCommentCount) return;
+    if (!source || busy || savingRef.current || pendingCommentCount) return;
     savingRef.current = true;
     window.aster.setSaving(true);
     setBusy(true);
@@ -1096,33 +1078,36 @@ export default function App() {
       setCompressionProgress('Preparing PDF pages and signatures…');
       setSaveMessage('Preparing your compressed PDF…');
       await paintSaveFeedback();
-      const prepared = (await buildPendingPdf()).bytes;
-      setCompressionProgress(compressionChoice === 'lossless' ? 'Repacking PDF objects…' : 'Starting page compression…');
-      const bytes = await compressPdf(prepared, compressionChoice,
-        (page, total, stage) => setCompressionProgress(stage === 'starting'
-          ? `Compressing page ${page} of ${total} (${Math.round((page - 1) / total * 100)}%)…`
-          : `Finished page ${page} of ${total} (${Math.round(page / total * 100)}%)…`));
-      if (bytes.byteLength >= prepared.byteLength) throw new Error('This preset did not make the PDF smaller. Try another option.');
+      const savedInput = savedFileBytesRef.current;
+      const prepared = savedInput && source.bytes === savedBytesRef.current && !editingDirty && !pagePlan && !transforms.length && !drafts.length &&
+        !commentChanges.length && !placedSignatures.length ? savedInput : (await buildPendingPdf()).bytes;
+      setCompressionProgress('Analyzing PDF objects…');
+      const bytes = await compressPdf(prepared, compressionChoice, setCompressionProgress, compressionMode);
       setCompressionProgress('Writing compressed PDF…');
-      const saved = await window.aster.finishCompressedSave(bytes, token, source.path);
+      const saved = await window.aster.finishCompressedSave(bytes, token, source.path, compressionMode === 'delivery');
       token = null;
-      const editableCopy = await readOverlayPackage(bytes);
-      restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
-      setDrafts([]);
-      setEditingDirty(false);
-      setPagePlan(null);
-      setPlacedSignatures([]);
-      setOverlays(editableCopy?.objects ?? []);
-      setSelectedOverlayId(null);
-      setSelectedSignatureId(null);
-      setPlacingSignatureId(null);
-      setHistoryPast([]);
-      setHistoryFuture([]);
-      savedBytesRef.current = editableCopy?.base ?? bytes;
-      savedFileBytesRef.current = bytes;
-      setSource({ ...saved, bytes: editableCopy?.base ?? bytes });
-      setCompressionOpen(false);
-      setCompressionChoice(null);
+      if (compressionMode === 'editable') {
+        const editableCopy = await readOverlayPackage(bytes);
+        restoreScrollRef.current = viewerRef.current?.scrollTop ?? 0;
+        setDrafts([]);
+        setEditingDirty(false);
+        setPagePlan(null);
+        setPlacedSignatures([]);
+        setOverlays(editableCopy?.objects ?? []);
+        setSelectedOverlayId(null);
+        setSelectedSignatureId(null);
+        setPlacingSignatureId(null);
+        setHistoryPast([]);
+        setHistoryFuture([]);
+        savedBytesRef.current = editableCopy?.base ?? bytes;
+        savedFileBytesRef.current = bytes;
+        setSource({ ...saved, bytes: editableCopy?.base ?? bytes });
+      }
+      const difference = prepared.length - bytes.length;
+      const comparison = difference === 0 ? 'same size' :
+        `${(100 * Math.abs(difference) / prepared.length).toLocaleString(undefined, { maximumFractionDigits: 1 })}% ${difference > 0 ? 'smaller' : 'larger'}`;
+      setCompressionResult(`${saved.name} · ${formatFileSize(prepared.length)} → ${formatFileSize(bytes.length)} (${comparison}).`);
+      setCompressionChoice('balanced');
       setError('');
       void refreshRecent();
     } catch (cause) {
@@ -1138,7 +1123,7 @@ export default function App() {
       setBusy(false);
       setCompressionProgress('');
     }
-  }, [source, compressionChoice, busy, pendingCommentCount, buildPendingPdf, refreshRecent]);
+  }, [source, compressionChoice, compressionMode, busy, pendingCommentCount, buildPendingPdf, refreshRecent, editingDirty, pagePlan, transforms, drafts, commentChanges, placedSignatures]);
 
   const addSignatureAt = useCallback((pageId: string, placement: Omit<PlacedSignature, 'id' | 'pageId' | 'signatureId' | 'dataUrl'>) => {
     const signature = savedSignatures.find((item) => item.id === placingSignatureId);
@@ -2173,10 +2158,6 @@ export default function App() {
     return () => { window.document.removeEventListener('copy', copy); window.document.removeEventListener('cut', copy); window.document.removeEventListener('paste', paste); window.document.removeEventListener('keydown',key,true); };
   });
 
-  const visibleCompressionEstimate: CompressionEstimate = source &&
-    (estimateForRef.current?.bytes !== source.bytes || estimateForRef.current.plan !== pagePlan)
-    ? { status: 'calculating', progress: 'Starting size estimates…' } : compressionEstimate;
-
   const renderCommentEntry = (comment: PdfComment, root: PdfComment) => <CommentCard key={comment.id} comment={comment} selected={selectedId === comment.id}
     cardRef={(element) => { if (element) commentCardRefs.current.set(comment.id, element); else commentCardRefs.current.delete(comment.id); }}
     label={comment.text || (markupKind(comment.kind) ? comment.kind : commentLabel(comment))} date={displayDate(comment.date)} saving={savingCommentIdsRef.current.has(comment.id)}
@@ -2286,7 +2267,7 @@ export default function App() {
               </div>) : <p className="signature-empty">No saved signatures yet</p>}
               <button className="signature-add" role="menuitem" onClick={openNewSignature}>+ Signature</button>
             </div>}
-          </div> : activeTool === 'compress' ? <button className="button outline tool-action context-action" onClick={() => { setCompressionError(''); setCompressionOpen(true); }} disabled={!document || busy || pendingCommentCount > 0}><Shrink size={16} />Compress</button>
+          </div> : activeTool === 'compress' ? <button className="button outline tool-action context-action" onClick={() => { setCompressionError(''); setCompressionResult(''); setCompressionMode('editable'); setCompressionChoice('balanced'); setCompressionOpen(true); }} disabled={!document || busy || pendingCommentCount > 0}><Shrink size={16} />Compress</button>
           : <button className="button outline tool-action context-action" onClick={() => void addFiles()} disabled={!document || busy || pendingCommentCount > 0}><Files size={16} />Add files</button>}
         {(activeTool === 'edit' || activeTool === 'draw') && <div className="overlay-toolbar" role="toolbar" aria-label={activeTool === 'edit' ? 'Edit tools' : 'Draw tools'}>
           <button className={overlayTool === 'select' && !selectingLinks ? 'active' : ''} onClick={() => { setSelectingLinks(false); setOverlayTool('select'); }} aria-label="Select objects" aria-pressed={overlayTool === 'select' && !selectingLinks} title="Select and move objects (V)"><MousePointer2 size={17} /></button>
@@ -2503,18 +2484,37 @@ export default function App() {
       onAdd={() => void startHyperlink(linkMenu.selection)} onSelectText={() => void startHyperlink([])} />}
     {linkSelection && <HyperlinkDialog selection={linkSelection} onSave={applyHyperlink} onClose={() => setLinkSelection(null)} />}
 
-    {compressionOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (!busy && event.target === event.currentTarget) setCompressionOpen(false); }}><div className="settings-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="compression-title"><div className="modal-head"><div className="modal-icon"><Shrink size={21} /></div><button onClick={() => setCompressionOpen(false)} disabled={busy} aria-label="Close compression"><X size={19} /></button></div><h2 id="compression-title">Compress PDF</h2><p>Select a preset, then save a compressed copy. Compression starts after you choose where to save it.</p>
-      <div className="compression-estimate-status" role="status">{visibleCompressionEstimate.status === 'ready'
-        ? `Current PDF: ${formatFileSize(visibleCompressionEstimate.originalSize)} · Estimates based on ${visibleCompressionEstimate.sampledPages} sample ${visibleCompressionEstimate.sampledPages === 1 ? 'page' : 'pages'}.`
-        : visibleCompressionEstimate.status === 'calculating' ? <><span className="inline-spinner" />{visibleCompressionEstimate.progress}</>
-        : visibleCompressionEstimate.status === 'error' ? `Size estimates unavailable: ${visibleCompressionEstimate.message}. You can still choose a preset.` : 'Preparing size estimates…'}</div>
-      <div className="compression-options" role="group" aria-label="Compression preset">{COMPRESSION_PRESETS.map((preset) => <button key={preset.level} className={compressionChoice === preset.level ? 'selected' : ''} aria-pressed={compressionChoice === preset.level} disabled={busy}
-        onClick={() => { setCompressionChoice(preset.level); setCompressionError(''); }}><span className="compression-option-heading"><strong>{preset.label}</strong><b>{visibleCompressionEstimate.status === 'ready' ? `≈ ${formatFileSize(visibleCompressionEstimate.sizes[preset.level])}` : 'Estimate pending'}</b></span><span>{preset.description}</span></button>)}</div>
-      <p className="compression-warning">Balanced and Smallest flatten pages into images. Searchable text, links, form fields, and comments will no longer be interactive in the saved copy. The original PDF stays in place.</p>
-      {compressionError && <p className="compression-error" role="alert">{compressionError}</p>}
-      {busy && compressionProgress && <p className="compression-running" role="status"><span className="inline-spinner" />{compressionProgress}</p>}
-      <div className="modal-actions"><button className="button subtle" disabled={busy} onClick={() => setCompressionOpen(false)}>Cancel</button><button className="button primary" disabled={!compressionChoice || busy} onClick={() => void saveCompressedCopy()}><Save size={16} />Save compressed copy…</button></div>
-    </div></div>}
+    {compressionOpen && <div className="modal-backdrop" onMouseDown={event => { if (!busy && event.target === event.currentTarget) setCompressionOpen(false); }}>
+      <div className="settings-modal feature-modal compression-dialog" role="dialog" aria-modal="true" aria-labelledby="compression-title">
+        <div className="modal-head"><div className="modal-icon"><Shrink size={21} /></div><button onClick={() => setCompressionOpen(false)} disabled={busy} aria-label="Close compression"><X size={19} /></button></div>
+        <h2 id="compression-title">{compressionResult ? 'Compressed copy saved' : 'Compress PDF'}</h2>
+        {compressionResult ? <><p role="status">{compressionResult}</p><div className="modal-actions"><button className="button primary" onClick={() => setCompressionOpen(false)}>Done</button></div></> : <>
+          <div className="compression-modes" role="group" aria-label="Copy type">
+            <button aria-pressed={compressionMode === 'editable'} disabled={busy} onClick={() => { setCompressionMode('editable'); setCompressionError(''); }}>
+              <Pencil size={15} />Editable copy
+            </button>
+            <button aria-pressed={compressionMode === 'delivery'} disabled={busy} onClick={() => { setCompressionMode('delivery'); setCompressionError(''); }}>
+              <ArrowDownToLine size={15} />Delivery copy
+            </button>
+          </div>
+          <p className="compression-mode-detail">{compressionMode === 'editable'
+            ? 'Keeps editing data and metadata for future revisions.'
+            : 'Removes recognized design-source data and document metadata from the copy. Keep the original for future design revisions.'}</p>
+          <h3 className="compression-quality">Image quality</h3>
+          <div className="compression-options" role="group" aria-label="Compression preset">{COMPRESSION_PRESETS.map(preset =>
+            <button key={preset.level} aria-pressed={compressionChoice === preset.level} disabled={busy}
+              onClick={() => { setCompressionChoice(preset.level); setCompressionError(''); }}>
+              <img src={`./compression-${preset.level}.jpg`} alt="" />
+              <strong>{preset.label}</strong><span>{preset.description}</span>
+              <b className="preset-estimate" aria-label={sizeEstimate ? `Estimated file size ${formatFileSize(sizeEstimate.sizes[preset.level])}` : undefined}>{sizeEstimate ? `≈ ${formatFileSize(sizeEstimate.sizes[preset.level])}` : sizeEstimate === null ? 'Estimate unavailable' : 'Estimating…'}</b>
+            </button>)}</div>
+          <p className="compression-note">Text, vectors, links, forms and comments stay in the PDF.</p>
+          <p className="compression-size-note">Current file · {formatFileSize(estimateInput?.length ?? 0)}{sizeEstimate && ` · Estimated from ${sizeEstimate.pages} sample ${sizeEstimate.pages === 1 ? 'page' : 'pages'}`}. Unsaved edits can change the final size.</p>
+          {compressionError && <p className="compression-error" role="alert">{compressionError}</p>}
+          {busy && compressionProgress && <p className="compression-running" role="status"><span className="inline-spinner" />{compressionProgress}</p>}
+          <div className="modal-actions"><button className="button subtle" disabled={busy} onClick={() => setCompressionOpen(false)}>Cancel</button><button className="button primary" disabled={busy} onClick={() => void saveCompressedCopy()}><Save size={16} />Save compressed copy…</button></div>
+        </>}
+      </div></div>}
     {signatureOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSignatureOpen(false); }}><div className="settings-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="signature-title"><div className="modal-head"><div className="modal-icon"><PenLine size={21} /></div><button onClick={() => setSignatureOpen(false)} aria-label="Close signature"><X size={19} /></button></div><h2 id="signature-title">Add signature</h2><p>Draw below or import a PNG, JPEG, WebP, or SVG. Your signatures stay on this computer.</p><canvas className="signature-canvas" ref={signatureCanvasRef} width={1500} height={510}
       onPointerDown={(event) => signaturePointer(event, true)} onPointerMove={(event) => signaturePointer(event, false)} onPointerUp={finishSignature} onPointerCancel={finishSignature} />
       <div className="signature-controls"><button className={signatureInk === '#172333' ? 'active' : ''} onClick={() => setSignatureInk('#172333')}>Black</button><button className={signatureInk === '#204fb3' ? 'active' : ''} onClick={() => setSignatureInk('#204fb3')}>Blue</button><button onClick={() => { signatureCanvasRef.current?.getContext('2d')?.clearRect(0, 0, 1500, 510); signatureStrokesRef.current = []; setNewSignature(null); }}>Clear</button><button onClick={() => signatureImportRef.current?.click()}>Import image or SVG</button><input ref={signatureImportRef} type="file" hidden accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" onChange={(event) => { void importSignatureFile(event.target.files?.[0]); event.target.value = ''; }} /></div>

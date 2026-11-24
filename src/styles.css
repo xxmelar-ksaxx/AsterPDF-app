@@ -146,18 +146,27 @@ body.resizing-sidebar,body.resizing-sidebar *{cursor:col-resize!important;user-s
 .pages-panel .page-list{flex:1;min-height:0}
 .pages-panel .sidebar-bottom .text-button{font-size:11px}
 .feature-modal{width:min(560px,100%)}
-.compression-estimate-status{display:flex;align-items:center;gap:8px;min-height:25px;margin:-10px 0 12px;color:#65766b;font-size:11px}
 .inline-spinner{display:inline-block;width:13px;height:13px;flex:none;border:2px solid #d9e6bd;border-top-color:#6b952c;border-radius:50%;animation:saving-spin .7s linear infinite}
 @media(prefers-reduced-motion:reduce){.inline-spinner{animation:none;border-top-color:#6b952c;border-right-color:#6b952c}}
-.compression-options{display:grid;gap:9px;margin-bottom:17px}
-.compression-options button{border:1px solid #dce7d8;background:#fbfdf9;border-radius:10px;padding:13px;text-align:left;color:#25342c;display:grid;gap:5px}
-.compression-options button:hover{border-color:#98bf54;background:#f4fae9}
-.compression-options button.selected{border-color:#7dab36;background:#f2f9e7;box-shadow:0 0 0 2px #a9cf7040}
-.compression-option-heading{display:flex;align-items:center;justify-content:space-between;gap:12px}
-.compression-options .compression-option-heading b{color:#517c24;font-size:12px;white-space:nowrap}
-.compression-options button strong{font-size:13px}
-.compression-options button span{font-size:12px;color:#748077;line-height:1.5}
-.feature-modal .compression-warning{font-size:11px;color:#8c5c3c;background:#fff6ed;border:1px solid #f0d9c1;padding:10px;border-radius:8px;margin:0}
+.compression-dialog{width:min(620px,100%);max-height:calc(100vh - 40px);overflow:auto}
+.compression-modes{display:flex;gap:3px;padding:3px;margin:14px 0 7px;background:#f0f3ee;border-radius:10px}
+.compression-modes button{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;padding:8px 4px;border:1px solid transparent;border-radius:8px;background:transparent;color:#53635c;font-size:13px;font-weight:600}
+.compression-modes button[aria-pressed=true]{background:white;color:#294624;border-color:#d7e1d1;box-shadow:0 1px 3px #28472414}
+.compression-dialog .compression-mode-detail{margin:6px 0 15px;color:#4c5d54;font-size:13px}
+.compression-quality{margin:0 0 8px;font-size:13px;color:#293b30}
+.compression-dialog .compression-size-note{margin:3px 0 0;color:#5c6b62;font-size:12px}
+.compression-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px}
+.compression-options button{position:relative;border:1px solid #dce5da;background:white;border-radius:12px;padding:8px 8px 12px;text-align:left;color:#26362d;display:flex;align-items:stretch;flex-direction:column;gap:5px}
+.compression-options button:hover{border-color:#98b75e}
+.compression-options button[aria-pressed=true]{border-color:#769c3a;background:#f5faec;box-shadow:inset 0 0 0 1px #769c3a}
+.compression-options button[aria-pressed=true]::after{content:'✓';position:absolute;top:13px;right:13px;border-radius:50%;background:#355c2f;color:white;width:19px;height:19px;text-align:center;font-size:13px}
+.compression-options img{width:100%;aspect-ratio:2;object-fit:cover;border-radius:6px;margin-bottom:4px;image-rendering:pixelated}
+.compression-options .preset-estimate{margin-top:auto;padding:6px 4px 0;color:#44613c;font-size:13px;font-variant-numeric:tabular-nums}
+@media(max-width:500px){.compression-options .preset-estimate{grid-column:2}}
+.compression-options strong,.compression-options span{padding:0 4px}
+.compression-options span,.compression-dialog .compression-note{font-size:12px;line-height:1.5;color:#53635c}
+.compression-dialog .compression-note{margin:13px 0 0}
+@media(max-width:500px){.compression-options{grid-template-columns:1fr}.compression-options button{display:grid;grid-template-columns:70px 1fr;align-items:center}.compression-options img{grid-row:span 2;margin:0}.compression-options button[aria-pressed=true]::after{left:12px;top:12px}}
 .feature-modal .compression-running{display:flex;align-items:center;gap:8px;margin:14px 0 0;color:#527a2b;font-size:12px}
 .feature-modal .compression-error{margin:14px 0 0;color:#a13d35;font-size:12px}
 .signature-review{display:flex;align-items:center;gap:8px}

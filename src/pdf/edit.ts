@@ -1,7 +1,6 @@
 import { degrees, LineCapStyle, LineJoinStyle, lineTo, moveTo, PDFDocument, popGraphicsState,
   pushGraphicsState, rotateDegrees, scale, setLineCap, setLineJoin, setLineWidth, setStrokingRgbColor,
   stroke, translate } from 'pdf-lib';
-import * as pdfjs from 'pdfjs-dist';
 import type { VectorSignature } from '../signatures/library';
 import type { PlannedPage } from './page-plan';
 
@@ -148,41 +147,4 @@ export async function embedSignatures(bytes: Uint8Array, placements: SignatureDr
     });
   }
   return new Uint8Array(await pdf.save());
-}
-
-export type CompressionLevel = 'lossless' | 'balanced' | 'small';
-
-export async function compressPdf(bytes: Uint8Array, level: CompressionLevel,
-  onProgress?: (page: number, total: number, stage: 'starting' | 'finished') => void): Promise<Uint8Array> {
-  if (level === 'lossless') {
-    const pdf = await PDFDocument.load(bytes);
-    const optimized = new Uint8Array(await pdf.save({ useObjectStreams: true, objectsPerTick: 50 }));
-    return optimized.byteLength < bytes.byteLength ? optimized : bytes;
-  }
-  const task = pdfjs.getDocument({ data: bytes.slice() });
-  try {
-    const input = await task.promise;
-    const output = await PDFDocument.create();
-    const dpi = level === 'small' ? 90 : 140;
-    const quality = level === 'small' ? 0.5 : 0.75;
-    for (let index = 1; index <= input.numPages; index += 1) {
-      onProgress?.(index, input.numPages, 'starting');
-      const sourcePage = await input.getPage(index);
-      const natural = sourcePage.getViewport({ scale: 1 });
-      const viewport = sourcePage.getViewport({ scale: dpi / 72 });
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
-      const context = canvas.getContext('2d', { alpha: false });
-      if (!context) throw new Error('Canvas rendering is unavailable.');
-      await sourcePage.render({ canvas, canvasContext: context, viewport }).promise;
-      const imageBytes = new Uint8Array(await (await new Promise<Blob>((resolve, reject) =>
-        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('Image encoding failed.')), 'image/jpeg', quality))).arrayBuffer());
-      const image = await output.embedJpg(imageBytes);
-      output.addPage([natural.width, natural.height]).drawImage(image, { x: 0, y: 0, width: natural.width, height: natural.height });
-      canvas.width = canvas.height = 1;
-      onProgress?.(index, input.numPages, 'finished');
-    }
-    return new Uint8Array(await output.save());
-  } finally { await task.destroy(); }
 }

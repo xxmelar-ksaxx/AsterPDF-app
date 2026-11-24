@@ -59,7 +59,7 @@ moveOriginalText: (bytes, pageIndex, objectIndex, expectedText, dx, dy) =>
   ipcRenderer.invoke('pdf:move-original-text', bytes, pageIndex, objectIndex, expectedText, dx, dy),
 embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-text', bytes, placements),
   prepareCompressedSave: (expectedPath) => ipcRenderer.invoke('pdf:prepare-compressed-save', expectedPath),
-  finishCompressedSave: (bytes, token, expectedPath) => ipcRenderer.invoke('pdf:finish-compressed-save', bytes, token, expectedPath),
+  finishCompressedSave: (bytes, token, expectedPath, keepSource) => ipcRenderer.invoke('pdf:finish-compressed-save', bytes, token, expectedPath, keepSource),
   discardCompressedSave: (token) => ipcRenderer.invoke('pdf:discard-compressed-save', token),
   printDocx: () => ipcRenderer.invoke('docx:print'),
   listPrinters: () => ipcRenderer.invoke('pdf:printers'),

@@ -1,4 +1,4 @@
-import { PDFArray, PDFDict, PDFDocument, PDFObject, PDFRawStream, PDFRef } from 'pdf-lib';
+import { PDFArray, PDFDict, PDFDocument, PDFObject, PDFStream, PDFRef } from 'pdf-lib';
 
 /** Remove unreachable objects from a loaded PDF before replacing editing data.
  * pdf-lib otherwise serializes old, detached editing snapshots on every save.
@@ -16,9 +16,9 @@ export function pruneUnusedObjects(pdf: PDFDocument) {
       refs.add(item);
       const target = pdf.context.lookup(item);
       if (target) pending.push(target);
-    } else if (item instanceof PDFRawStream) pending.push(item.dict);
-    else if (item instanceof PDFDict) pending.push(...item.values());
-    else if (item instanceof PDFArray) pending.push(...item.asArray());
+    } else if (item instanceof PDFStream) pending.push(item.dict);
+    else if (item instanceof PDFDict) { for (const value of item.values()) pending.push(value); }
+    else if (item instanceof PDFArray) { for (const value of item.asArray()) pending.push(value); }
   }
   for (const [ref] of pdf.context.enumerateIndirectObjects()) {
     if (!refs.has(ref)) pdf.context.delete(ref);

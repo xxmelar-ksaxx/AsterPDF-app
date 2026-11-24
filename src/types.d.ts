@@ -42,7 +42,7 @@ declare global {
       moveOriginalText(bytes: Uint8Array, pageIndex: number, objectIndex: number, expectedText: string, dx: number, dy: number): Promise<Uint8Array>;
       embedShapedText(bytes: Uint8Array, placements: { pageIndex: number; text: string; size: number; matrix: number[]; color: number[]; fontChoice?: string; bold?: boolean; opacity?: number }[]): Promise<Uint8Array>;
       prepareCompressedSave(expectedPath: string): Promise<{ token: string; path: string } | null>;
-      finishCompressedSave(bytes: Uint8Array, token: string, expectedPath: string): Promise<{ path: string; name: string }>;
+      finishCompressedSave(bytes: Uint8Array, token: string, expectedPath: string, keepSource?: boolean): Promise<{ path: string; name: string }>;
       discardCompressedSave(token: string): Promise<void>;
       printDocx(): Promise<Uint8Array>;
       listPrinters(): Promise<{ name: string; displayName: string }[]>;

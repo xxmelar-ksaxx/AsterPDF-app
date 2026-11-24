@@ -240,7 +240,9 @@ async function main() {
     const originalSize = (await fs.stat(compressiblePath)).size;
     await window.getByRole('button', { name: 'Compress tool' }).click();
     await window.getByRole('button', { name: 'Compress', exact: true }).click();
-    await window.waitForFunction(() => (document.querySelector('.compression-estimate-status')?.textContent || '').includes('Current PDF:'), null, { timeout: 30000 });
+    await window.getByRole('button', { name: 'Editable copy', pressed: true }).waitFor();
+    await window.getByRole('button', { name: 'Delivery copy' }).click();
+    await window.getByRole('button', { name: /Balanced/, pressed: true }).waitFor();
     await window.getByRole('button', { name: /Smallest/ }).click();
     if (await window.locator('.unsaved-dot').count()) throw new Error('Selecting a preset changed the open PDF.');
     if ((await fs.stat(compressiblePath)).size !== originalSize) throw new Error('Preset selection changed the PDF.');
@@ -255,6 +257,8 @@ async function main() {
     await window.getByRole('button', { name: 'Save compressed copy' }).click();
     await window.getByRole('dialog', { name: 'Compress PDF' }).waitFor({ state: 'hidden', timeout: 30000 });
     await window.locator('.saving-spinner').waitFor({ state: 'hidden', timeout: 30000 });
+    await window.getByRole('button', { name: 'Done', exact: true }).click();
+    await window.getByText(compressiblePath, { exact: true }).first().waitFor();
     if ((await fs.stat(compressedPath)).size >= (await fs.stat(compressiblePath)).size) throw new Error('Compression did not reduce size.');
     if ((await fs.stat(compressiblePath)).size !== originalSize) throw new Error('Compression changed the original PDF.');
     process.stdout.write('DOCX/image conversion, grid sorting, page edits, signature, and offline compression passed.\n');

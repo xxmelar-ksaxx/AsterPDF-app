@@ -64,7 +64,7 @@ async function main() {
     assert.ok(secondSize<firstSize+100000,'Repeated autosaves must not accumulate editing snapshots');
     assert.deepEqual(await app.evaluate(()=>globalThis.autosaveCrashes),[]);
     assert.deepEqual(pageErrors,[]);
-    assert.ok(!workers.some(url=>url.includes('compression-estimator')),'Comments must not start compression estimates');
+    assert.ok(!workers.some(url=>url.includes('compression.worker')),'Comments must not start PDF compression');
     assert.equal(await doc.locator('.error-banner').count(),0);
     console.log(JSON.stringify({result:'Two background saves passed; typing stayed usable and the page canvas remained unchanged.',firstMB:firstSize/1048576,secondMB:secondSize/1048576}));
   } finally {
