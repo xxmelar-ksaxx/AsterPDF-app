@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, Search, Star } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -67,23 +68,23 @@ export default function FontPicker({ selection, fonts, loading, onSelect }: {
     <button type="button" className={selection?.choice === option.id ? 'selected' : ''} onClick={() => choose(option.id)}
       title={option.label}>{option.label}</button>
     {option.id !== 'original' && <button type="button" className={`font-star${favorites.includes(option.id) ? ' is-favorite' : ''}`}
-      aria-label={`${favorites.includes(option.id) ? 'Remove' : 'Add'} ${option.label} ${favorites.includes(option.id) ? 'from' : 'to'} favorites`}
-      title={favorites.includes(option.id) ? 'Remove favorite' : 'Add favorite'} onClick={() => toggleFavorite(option.id)}>
+      aria-label={t("{0} {1} {2} favorites", favorites.includes(option.id) ? 'Remove' : 'Add', option.label, favorites.includes(option.id) ? 'from' : 'to')}
+      title={favorites.includes(option.id) ? t("Remove favorite") : t("Add favorite")} onClick={() => toggleFavorite(option.id)}>
       <Star size={15} fill={favorites.includes(option.id) ? 'currentColor' : 'none'} /></button>}
   </div>);
   return <div className="font-picker" data-font-picker ref={root}>
-    <button type="button" className="font-picker-trigger" aria-label="Text font" aria-haspopup="dialog" aria-expanded={open}
-      disabled={!selection} title={selection ? 'Choose text font' : 'Select text on a page to change its font'}
-      onClick={() => setOpen((value) => !value)}><span>{selection ? labels.get(selection.choice) || selection.fontName : loading ? 'Loading fonts…' : 'Font'}</span><ChevronDown size={14} /></button>
-    {open && createPortal(<div className="font-picker-menu" data-font-picker ref={menu} role="dialog" aria-label="Text fonts" style={position}>
-      <label className="font-search"><Search size={15} /><input ref={search} type="search" aria-label="Search fonts" placeholder="Search fonts" value={query}
+    <button type="button" className="font-picker-trigger" aria-label={t("Text font")} aria-haspopup="dialog" aria-expanded={open}
+      disabled={!selection} title={selection ? t("Choose text font") : t("Select text on a page to change its font")}
+      onClick={() => setOpen((value) => !value)}><span>{selection ? labels.get(selection.choice) || selection.fontName : loading ? t("Loading fonts…") : t("Font")}</span><ChevronDown size={14} /></button>
+    {open && createPortal(<div className="font-picker-menu" data-font-picker ref={menu} role="dialog" aria-label={t("Text fonts")} style={position}>
+      <label className="font-search"><Search size={15} /><input ref={search} type="search" aria-label={t("Search fonts")} placeholder={t("Search fonts")} value={query}
         onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); } }} /></label>
       <div className="font-picker-scroll">
-        {!query && recentOptions.length > 0 && <><div className="font-section-title">Recent</div>{rows(recentOptions)}</>}
-        {!query && favoriteOptions.length > 0 && <><div className="font-section-title">Favorites</div>{rows(favoriteOptions)}</>}
-        <div className="font-section-title">{query ? 'Search results' : 'All fonts'}</div>
-        {loading && <p className="font-empty">Loading system fonts…</p>}
-        {matching.length ? rows(matching) : <p className="font-empty">No matching fonts</p>}
+        {!query && recentOptions.length > 0 && <><div className="font-section-title">{t("Recent")}</div>{rows(recentOptions)}</>}
+        {!query && favoriteOptions.length > 0 && <><div className="font-section-title">{t("Favorites")}</div>{rows(favoriteOptions)}</>}
+        <div className="font-section-title">{query ? t("Search results") : t("All fonts")}</div>
+        {loading && <p className="font-empty">{t("Loading system fonts…")}</p>}
+        {matching.length ? rows(matching) : <p className="font-empty">{t("No matching fonts")}</p>}
       </div>
     </div>, document.body)}
   </div>;

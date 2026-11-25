@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useLayoutEffect, useRef } from 'react';
 import { FileText } from 'lucide-react';
 
@@ -31,7 +32,7 @@ export default function SaveFeedback({ message, title = 'Saving your PDF' }: { m
         <circle className="save-feedback-ring" cx="44" cy="44" r="40" /></svg>
       <div className="save-feedback-document"><FileText size={28} strokeWidth={1.5} /></div>
     </div>
-    <h2 id="save-feedback-title">{title}</h2>
-    <p id="save-feedback-message" role="status" aria-live="polite">{message || lastMessage.current}</p>
+    <h2 id="save-feedback-title">{t(title)}</h2>
+    <p id="save-feedback-message" role="status" aria-live="polite">{t(message || lastMessage.current || '')}</p>
   </dialog>;
 }

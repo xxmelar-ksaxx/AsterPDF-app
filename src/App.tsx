@@ -1,3 +1,4 @@
+import { languageState, t } from './i18n';
 import { compressPdf } from './pdf/compress-client';
 import type { CompressionEstimate, CompressionLevel, CompressionMode } from './pdf/compression';
 import { printPdf } from './pdf/print';
@@ -93,7 +94,7 @@ function originalTextError(error: unknown): string {
 function displayDate(value?: string): string {
   if (!value) return '';
   const parsed = value.startsWith('D:') ? pdfjs.PDFDateString.toDateObject(value) : new Date(value);
-  return !parsed || Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleString(undefined, {
+  return !parsed || Number.isNaN(parsed.getTime()) ? '' : parsed.toLocaleString(languageState.language, {
     year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit'
   });
 }
@@ -1104,8 +1105,8 @@ export default function App() {
         setSource({ ...saved, bytes: editableCopy?.base ?? bytes });
       }
       const difference = prepared.length - bytes.length;
-      const comparison = difference === 0 ? 'same size' :
-        `${(100 * Math.abs(difference) / prepared.length).toLocaleString(undefined, { maximumFractionDigits: 1 })}% ${difference > 0 ? 'smaller' : 'larger'}`;
+      const comparison = difference === 0 ? t('same size') :
+        `${(100 * Math.abs(difference) / prepared.length).toLocaleString(undefined, { maximumFractionDigits: 1 })}% ${difference > 0 ? t('smaller') : t('larger')}`;
       setCompressionResult(`${saved.name} · ${formatFileSize(prepared.length)} → ${formatFileSize(bytes.length)} (${comparison}).`);
       setCompressionChoice('balanced');
       setError('');
@@ -2224,65 +2225,64 @@ export default function App() {
   }}>
 
 
-    {error && <div className="error-banner" role="alert"><span>{error}</span><button onClick={() => setError('')} aria-label="Dismiss error"><X size={16} aria-hidden="true" /></button></div>}
+    {error && <div className="error-banner" role="alert"><span>{t(error)}</span><button onClick={() => setError('')} aria-label={t("Dismiss error")}><X size={16} aria-hidden="true" /></button></div>}
 
     {!source ? <HomeView files={recentPdfs} onOpen={() => void openSelected()} onOpenPath={path => void openPath(path)} onChange={setRecentPdfs} onError={setError} /> : <main className="workspace">
       <section className="viewer-column">
         <div className={`viewer-toolbar${activeTool === 'edit' || activeTool === 'draw' ? ' has-edit-tools' : ''}`}>
-          {pageGridOpen && <div className="grid-toolbar-heading"><button className="button outline" onClick={() => closePageGrid()} aria-label="Return to PDF view"><ChevronLeft size={16} />PDF view</button><span>{effectivePages.length} {effectivePages.length === 1 ? 'page' : 'pages'}</span></div>}
-          {activeTool !== 'edit' && activeTool !== 'draw' && <div className="toolbar-spacer" />}
-          {placedSignatures.length > 0 ? <div className="signature-review" role="group" aria-label="Pending signatures">
-            <span className="signature-review-label" role="status">{placedSignatures.length} {placedSignatures.length === 1 ? 'signature' : 'signatures'} pending · confirm to comment</span>
-            <button className="button signature-confirm-action" onClick={() => void save()} disabled={busy} title="Confirm and save signatures" aria-label="Confirm and save signatures"><Check size={18} /><span>Confirm</span></button>
-            <button className="button signature-discard-action" onClick={() => setPendingSignatureDiscard(true)} disabled={busy} title="Discard pending signatures" aria-label="Discard pending signatures"><X size={18} /><span>Discard</span></button>
-          </div> : activeTool === 'comments' ? <div className="comment-tools" role="group" aria-label="Comment and text markup tools">
-            <button className={`icon-button${!markupTool && !placing ? ' active' : ''}`} title="Select text or comments" aria-label="Select text or comments" aria-pressed={!markupTool && !placing}
+          {pageGridOpen && <div className="grid-toolbar-heading"><button className="button outline" onClick={() => closePageGrid()} aria-label={t("Return to PDF view")}><ChevronLeft size={16} />{t("PDF view")}</button><span>{effectivePages.length} {effectivePages.length === 1 ? t("page") : t("pages")}</span></div>}
+          {placedSignatures.length > 0 ? <div className="signature-review" role="group" aria-label={t("Pending signatures")}>
+            <span className="signature-review-label" role="status">{placedSignatures.length} {placedSignatures.length === 1 ? t("signature") : t("signatures")} {t("pending · confirm to comment")}</span>
+            <button className="button signature-confirm-action" onClick={() => void save()} disabled={busy} title={t("Confirm and save signatures")} aria-label={t("Confirm and save signatures")}><Check size={18} /><span>{t("Confirm")}</span></button>
+            <button className="button signature-discard-action" onClick={() => setPendingSignatureDiscard(true)} disabled={busy} title={t("Discard pending signatures")} aria-label={t("Discard pending signatures")}><X size={18} /><span>{t("Discard")}</span></button>
+          </div> : activeTool === 'comments' ? <div className="comment-tools" role="group" aria-label={t("Comment and text markup tools")}>
+            <button className={`icon-button${!markupTool && !placing ? ' active' : ''}`} title={t("Select text or comments")} aria-label={t("Select text or comments")} aria-pressed={!markupTool && !placing}
               onClick={() => { setMarkupTool(null); setPlacing(false); }}><MousePointer2 size={18} /></button>
             <button className={`icon-button${placing ? ' active' : ''}`} onClick={startComment} disabled={!document || busy || editingDirty}
-              title={placing ? 'Click on page to add a comment' : 'Add comment'} aria-label="Add comment" aria-pressed={placing}><MessageSquare size={18} /></button>
+              title={placing ? t("Click on page to add a comment") : t("Add comment")} aria-label={t("Add comment")} aria-pressed={placing}><MessageSquare size={18} /></button>
             {(['Highlight', 'Strikeout', 'Underline', 'Caret'] as const).map(kind => <button key={kind} className={`icon-button markup-tool${markupTool === kind ? ' active' : ''}`}
               style={{ '--markup-color': markupColors[kind] } as React.CSSProperties} onMouseDown={event => event.preventDefault()}
               onClick={() => chooseMarkupTool(kind)} disabled={!document || busy || editingDirty || Boolean(pagePlan)} aria-pressed={markupTool === kind}
-              aria-label={kind === 'Caret' ? 'Insert text here' : kind === 'Highlight' ? 'Highlight text' : kind === 'Strikeout' ? 'Mark text for removal' : 'Mark text for replacement'}
-              title={kind === 'Caret' ? 'Insert text here' : kind === 'Highlight' ? 'Highlight text' : kind === 'Strikeout' ? 'Removal — strikethrough' : 'Replacement — underline'}>
+              aria-label={kind === 'Caret' ? t("Insert text here") : kind === 'Highlight' ? t("Highlight text") : kind === 'Strikeout' ? t("Mark text for removal") : t("Mark text for replacement")}
+              title={kind === 'Caret' ? t("Insert text here") : kind === 'Highlight' ? t("Highlight text") : kind === 'Strikeout' ? t("Removal — strikethrough") : t("Replacement — underline")}>
               {kind === 'Caret' ? <TextCursorInput size={18} /> : kind === 'Highlight' ? <Highlighter size={18} /> : kind === 'Strikeout' ? <Strikethrough size={18} /> : <Underline size={18} />}
             </button>)}
-            <span className="comment-tool-hint">{markupTool === 'Caret' ? 'Click between words' : markupTool ? 'Drag across text' : placing ? 'Click on page…' : 'Select text to mark up'}</span>
+            <span className="comment-tool-hint">{markupTool === 'Caret' ? t("Click between words") : markupTool ? t("Drag across text") : placing ? t("Click on page…") : t("Select text to mark up")}</span>
           </div>
           : activeTool === 'edit' || activeTool === 'draw' ? null
-          : activeTool === 'pages' ? <div className="page-tools toolbar-page-tools" aria-label="Selected page actions">
-            <button title="Undo edit" aria-label="Undo edit" disabled={busy || pendingCommentCount > 0 || !historyPast.length} onClick={undoEdit}><Undo2 size={16} /></button>
-            <button title="Redo edit" aria-label="Redo edit" disabled={busy || pendingCommentCount > 0 || !historyFuture.length} onClick={redoEdit}><Redo2 size={16} /></button>
-            <button title="Move page up" aria-label="Move page up" disabled={busy || pendingCommentCount > 0 || selectedIndices.every((index) => index === 0)} onClick={() => applySelection('move-up')}><ArrowUp size={16} /></button>
-            <button title="Move page down" aria-label="Move page down" disabled={busy || pendingCommentCount > 0 || selectedIndices.every((index) => index === effectivePages.length - 1)} onClick={() => applySelection('move-down')}><ArrowDown size={16} /></button>
-            <button title="Rotate left" aria-label="Rotate left" disabled={busy || pendingCommentCount > 0} onClick={() => applySelection('rotate-left')}><RotateCcw size={16} /></button>
-            <button title="Rotate right" aria-label="Rotate right" disabled={busy || pendingCommentCount > 0} onClick={() => applySelection('rotate-right')}><RotateCw size={16} /></button>
-            <button title="Duplicate page" aria-label="Duplicate page" disabled={busy || pendingCommentCount > 0} onClick={() => applySelection('duplicate')}><Copy size={16} /></button>
-            <button title="Delete page" aria-label="Delete page" disabled={busy || pendingCommentCount > 0 || selectedIndices.length >= effectivePages.length} onClick={() => applySelection('delete')}><Trash2 size={16} /></button>
-          </div> : activeTool === 'sign' ? <div className="signature-picker"><button className={`button ${placingSignatureId ? 'placing-button' : 'outline'} tool-action context-action`} onClick={startSignature} disabled={!document || busy || pendingCommentCount > 0} aria-expanded={signatureMenuOpen} aria-haspopup="menu"><PenLine size={16} />{placingSignatureId ? 'Place signature…' : 'Sign'}</button>
-            {signatureMenuOpen && <div className="signature-dropdown" role="menu" aria-label="Saved signatures">
+          : activeTool === 'pages' ? <div className="page-tools toolbar-page-tools" aria-label={t("Selected page actions")}>
+            <button title={t("Undo edit")} aria-label={t("Undo edit")} disabled={busy || pendingCommentCount > 0 || !historyPast.length} onClick={undoEdit}><Undo2 size={16} /></button>
+            <button title={t("Redo edit")} aria-label={t("Redo edit")} disabled={busy || pendingCommentCount > 0 || !historyFuture.length} onClick={redoEdit}><Redo2 size={16} /></button>
+            <button title={t("Move page up")} aria-label={t("Move page up")} disabled={busy || pendingCommentCount > 0 || selectedIndices.every((index) => index === 0)} onClick={() => applySelection('move-up')}><ArrowUp size={16} /></button>
+            <button title={t("Move page down")} aria-label={t("Move page down")} disabled={busy || pendingCommentCount > 0 || selectedIndices.every((index) => index === effectivePages.length - 1)} onClick={() => applySelection('move-down')}><ArrowDown size={16} /></button>
+            <button title={t("Rotate left")} aria-label={t("Rotate left")} disabled={busy || pendingCommentCount > 0} onClick={() => applySelection('rotate-left')}><RotateCcw size={16} /></button>
+            <button title={t("Rotate right")} aria-label={t("Rotate right")} disabled={busy || pendingCommentCount > 0} onClick={() => applySelection('rotate-right')}><RotateCw size={16} /></button>
+            <button title={t("Duplicate page")} aria-label={t("Duplicate page")} disabled={busy || pendingCommentCount > 0} onClick={() => applySelection('duplicate')}><Copy size={16} /></button>
+            <button title={t("Delete page")} aria-label={t("Delete page")} disabled={busy || pendingCommentCount > 0 || selectedIndices.length >= effectivePages.length} onClick={() => applySelection('delete')}><Trash2 size={16} /></button>
+          </div> : activeTool === 'sign' ? <div className="signature-picker"><button className={`button ${placingSignatureId ? 'placing-button' : 'outline'} tool-action context-action`} onClick={startSignature} disabled={!document || busy || pendingCommentCount > 0} aria-expanded={signatureMenuOpen} aria-haspopup="menu"><PenLine size={16} />{placingSignatureId ? t("Place signature…") : t("Sign")}</button>
+            {signatureMenuOpen && <div className="signature-dropdown" role="menu" aria-label={t("Saved signatures")}>
               {savedSignatures.length ? savedSignatures.map((signature) => <div className="signature-option" key={signature.id}>
                 <button role="menuitem" onClick={() => chooseSignature(signature.id)}><img src={signature.dataUrl} alt="" /><span>{signature.name}</span></button>
-                <button className="signature-option-delete" title={`Remove ${signature.name}`} aria-label={`Remove ${signature.name}`} onClick={() => { setSignatureMenuOpen(false); setPendingSignatureRemoval({ kind: 'saved', id: signature.id, name: signature.name }); }}><X size={14} /></button>
-              </div>) : <p className="signature-empty">No saved signatures yet</p>}
-              <button className="signature-add" role="menuitem" onClick={openNewSignature}>+ Signature</button>
+                <button className="signature-option-delete" title={t("Remove {0}", signature.name)} aria-label={t("Remove {0}", signature.name)} onClick={() => { setSignatureMenuOpen(false); setPendingSignatureRemoval({ kind: 'saved', id: signature.id, name: signature.name }); }}><X size={14} /></button>
+              </div>) : <p className="signature-empty">{t("No saved signatures yet")}</p>}
+              <button className="signature-add" role="menuitem" onClick={openNewSignature}>{t("+ Signature")}</button>
             </div>}
-          </div> : activeTool === 'compress' ? <button className="button outline tool-action context-action" onClick={() => { setCompressionError(''); setCompressionResult(''); setCompressionMode('editable'); setCompressionChoice('balanced'); setCompressionOpen(true); }} disabled={!document || busy || pendingCommentCount > 0}><Shrink size={16} />Compress</button>
-          : <button className="button outline tool-action context-action" onClick={() => void addFiles()} disabled={!document || busy || pendingCommentCount > 0}><Files size={16} />Add files</button>}
-        {(activeTool === 'edit' || activeTool === 'draw') && <div className="overlay-toolbar" role="toolbar" aria-label={activeTool === 'edit' ? 'Edit tools' : 'Draw tools'}>
-          <button className={overlayTool === 'select' && !selectingLinks ? 'active' : ''} onClick={() => { setSelectingLinks(false); setOverlayTool('select'); }} aria-label="Select objects" aria-pressed={overlayTool === 'select' && !selectingLinks} title="Select and move objects (V)"><MousePointer2 size={17} /></button>
+          </div> : activeTool === 'compress' ? <button className="button outline tool-action context-action" onClick={() => { setCompressionError(''); setCompressionResult(''); setCompressionMode('editable'); setCompressionChoice('balanced'); setCompressionOpen(true); }} disabled={!document || busy || pendingCommentCount > 0}><Shrink size={16} />{t("Compress")}</button>
+          : <button className="button outline tool-action context-action" onClick={() => void addFiles()} disabled={!document || busy || pendingCommentCount > 0}><Files size={16} />{t("Add files")}</button>}
+        {(activeTool === 'edit' || activeTool === 'draw') && <div className="overlay-toolbar" role="toolbar" aria-label={activeTool === 'edit' ? t("Edit tools") : t("Draw tools")}>
+          <button className={overlayTool === 'select' && !selectingLinks ? 'active' : ''} onClick={() => { setSelectingLinks(false); setOverlayTool('select'); }} aria-label={t("Select objects")} aria-pressed={overlayTool === 'select' && !selectingLinks} title={t("Select and move objects (V)")}><MousePointer2 size={17} /></button>
           {activeTool === 'edit' ? <>
-            <button className={selectingLinks ? 'active' : ''} aria-label="Select PDF text" aria-pressed={selectingLinks} title="Select text for copying or adding a hyperlink"
+            <button className={selectingLinks ? 'active' : ''} aria-label={t("Select PDF text")} aria-pressed={selectingLinks} title={t("Select text for copying or adding a hyperlink")}
               disabled={busy || pendingCommentCount > 0 || Boolean(pagePlan)} onClick={() => {
                 if (selectingLinks) setSelectingLinks(false); else void startHyperlink([]);
               }}><TextSelect size={17} /></button>
-            <button className={overlayTool === 'paragraph' && !selectingLinks ? 'active' : ''} aria-label="Edit paragraph" title="Edit paragraph · Click a block of original PDF text"
+            <button className={overlayTool === 'paragraph' && !selectingLinks ? 'active' : ''} aria-label={t("Edit paragraph")} title={t("Edit paragraph · Click a block of original PDF text")}
               aria-pressed={overlayTool === 'paragraph' && !selectingLinks} disabled={busy || pendingCommentCount > 0}
               onClick={() => {setSelectingLinks(false); setOverlayTool('paragraph');}}><Pilcrow size={17} /></button>
-            <button aria-label="Add hyperlink" title="Add hyperlink to selected text" data-added-text-controls
+            <button aria-label={t("Add hyperlink")} title={t("Add hyperlink to selected text")} data-added-text-controls
               disabled={busy || pendingCommentCount > 0 || Boolean(pagePlan)} onMouseDown={event => event.preventDefault()}
               onClick={() => void startHyperlink()}><Link2 size={17} /></button>
-            <button className={overlayTool === 'text' ? 'active' : ''} onClick={() => { setSelectingLinks(false); setOverlayTool('text'); }} aria-label="Add text overlay" title="Add editable text over the PDF"><Type size={17} /></button>
+            <button className={overlayTool === 'text' ? 'active' : ''} onClick={() => { setSelectingLinks(false); setOverlayTool('text'); }} aria-label={t("Add text overlay")} title={t("Add editable text over the PDF")}><Type size={17} /></button>
             {!selectedOriginal && <><FontPicker selection={textFontSelection} fonts={installedFonts} loading={fontsStatus === 'loading'} onSelect={(choice) => {
               if (selectedText && fontEditing?.overlayId !== selectedText.id) {
                 const updated = { ...selectedText, fontChoice: choice as OverlayObject['fontChoice'] };
@@ -2296,78 +2296,78 @@ export default function App() {
               if (fontEditing.overlayId) setOverlayFontChoice(choice as OverlayObject['fontChoice']);
               setFontCommand((old) => ({ pageId: fontEditing.pageId, index: fontEditing.index, overlayId: fontEditing.overlayId, choice, sequence: (old?.sequence || 0) + 1 }));
             }} />
-            <div className="text-format-tools" role="group" aria-label="Text formatting" data-added-text-controls>
-              <button disabled={!canFormatText} aria-label="Bold" title="Bold" aria-pressed={activeTextFont.fontWeight >= 600} onClick={() => changeTextAppearance({ bold: activeTextFont.fontWeight < 600 })}><Bold size={16} /></button>
-              <button disabled={!canFormatText} aria-label="Italic" title="Italic" aria-pressed={activeTextFont.fontStyle === 'italic'} onClick={() => changeTextAppearance({ italic: activeTextFont.fontStyle !== 'italic' })}><Italic size={16} /></button>
-              <button disabled={!canFormatText} aria-label="Underline" title="Underline" aria-pressed={Boolean(activeTextAppearance.underline)} onClick={() => changeTextAppearance({ underline: !activeTextAppearance.underline })}><Underline size={16} /></button>
-              <button disabled={!canFormatText} aria-label="Strikethrough" title="Strikethrough" aria-pressed={Boolean(activeTextAppearance.strikeThrough)} onClick={() => changeTextAppearance({ strikeThrough: !activeTextAppearance.strikeThrough })}><Strikethrough size={16} /></button>
+            <div className="text-format-tools" role="group" aria-label={t("Text formatting")} data-added-text-controls>
+              <button disabled={!canFormatText} aria-label={t("Bold")} title={t("Bold")} aria-pressed={activeTextFont.fontWeight >= 600} onClick={() => changeTextAppearance({ bold: activeTextFont.fontWeight < 600 })}><Bold size={16} /></button>
+              <button disabled={!canFormatText} aria-label={t("Italic")} title={t("Italic")} aria-pressed={activeTextFont.fontStyle === 'italic'} onClick={() => changeTextAppearance({ italic: activeTextFont.fontStyle !== 'italic' })}><Italic size={16} /></button>
+              <button disabled={!canFormatText} aria-label={t("Underline")} title={t("Underline")} aria-pressed={Boolean(activeTextAppearance.underline)} onClick={() => changeTextAppearance({ underline: !activeTextAppearance.underline })}><Underline size={16} /></button>
+              <button disabled={!canFormatText} aria-label={t("Strikethrough")} title={t("Strikethrough")} aria-pressed={Boolean(activeTextAppearance.strikeThrough)} onClick={() => changeTextAppearance({ strikeThrough: !activeTextAppearance.strikeThrough })}><Strikethrough size={16} /></button>
             </div>
-            <div className="text-format-tools" role="group" aria-label="Text alignment" data-added-text-controls>
+            <div className="text-format-tools" role="group" aria-label={t("Text alignment")} data-added-text-controls>
               {([{ align: 'left', Icon: AlignLeft }, { align: 'center', Icon: AlignCenter }, { align: 'right', Icon: AlignRight }, { align: 'justify', Icon: AlignJustify }] as const).map(({ align, Icon }) =>
-                <button key={align} disabled={!canFormatText} aria-label={`Align text ${align}`} title={`Align ${align} within text box`} aria-pressed={(activeTextAppearance.textAlign || 'left') === align}
+                <button key={align} disabled={!canFormatText} aria-label={t("Align text {0}", align)} title={t("Align {0} within text box", align)} aria-pressed={(activeTextAppearance.textAlign || 'left') === align}
                   onClick={() => changeTextAppearance({ textAlign: align })}><Icon size={16} /></button>)}
-              <button disabled={!canFormatText} aria-label="Smart justify" title="Smart Justify · Arabic Kashida on wrapped lines"
+              <button disabled={!canFormatText} aria-label={t("Smart justify")} title={t("Smart Justify · Arabic Kashida on wrapped lines")}
                 aria-pressed={activeTextAppearance.textAlign === 'smart-justify'} onClick={() => changeTextAppearance({ textAlign: 'smart-justify' })}><SmartJustifyIcon /></button>
-              <button disabled={!canFormatText} aria-label="Auto-size text container" title="Auto-size text container · Drag its handles for a fixed size"
+              <button disabled={!canFormatText} aria-label={t("Auto-size text container")} title={t("Auto-size text container · Drag its handles for a fixed size")}
                 aria-pressed={!activeTextAppearance.textSizing || activeTextAppearance.textSizing === 'auto'} onClick={() => changeTextAppearance({ textSizing: 'auto' })}><Maximize2 size={16} /></button>
             </div>
             {canFormatText && <ParagraphSpacing appearance={activeTextAppearance} onChange={changeTextAppearance} />}
             </>}
-            <button className={overlayTool === 'image' && !overlayImage?.videoId ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label="Add image overlay"
-              title={overlayTool === 'image' && !overlayImage?.videoId ? 'Click on a page to place the image. Esc to cancel.' : 'Add an image'}><ImagePlus size={17} /></button>
-            <button className={overlayImage?.videoId ? 'active' : ''} disabled={videoImporting} onClick={() => overlayVideoRef.current?.click()} aria-label="Add video" title={videoImporting ? 'Preparing video…' : overlayImage?.videoId ? 'Click on a page to place the video. Esc to cancel.' : 'Add MP4 video'}><Video size={17} /></button>
+            <button className={overlayTool === 'image' && !overlayImage?.videoId ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label={t("Add image overlay")}
+              title={overlayTool === 'image' && !overlayImage?.videoId ? t("Click on a page to place the image. Esc to cancel.") : t("Add an image")}><ImagePlus size={17} /></button>
+            <button className={overlayImage?.videoId ? 'active' : ''} disabled={videoImporting} onClick={() => overlayVideoRef.current?.click()} aria-label={t("Add video")} title={videoImporting ? t("Preparing video…") : overlayImage?.videoId ? t("Click on a page to place the video. Esc to cancel.") : t("Add MP4 video")}><Video size={17} /></button>
             <span className="overlay-divider" />
-            <button onClick={undoEdit} disabled={!historyPast.length} aria-label="Undo edit"><Undo2 size={17} /></button>
-            <button onClick={redoEdit} disabled={!historyFuture.length} aria-label="Redo edit"><Redo2 size={17} /></button>
+            <button onClick={undoEdit} disabled={!historyPast.length} aria-label={t("Undo edit")}><Undo2 size={17} /></button>
+            <button onClick={redoEdit} disabled={!historyFuture.length} aria-label={t("Redo edit")}><Redo2 size={17} /></button>
           </> : <>
-            <button className={overlayTool === 'rectangle' ? 'active' : ''} onClick={() => chooseDrawingTool('rectangle')} aria-pressed={overlayTool === 'rectangle'} aria-label="Draw rectangle" title="Rectangle (R) · Click or drag"><Square size={17} /></button>
-            <button className={overlayTool === 'ellipse' ? 'active' : ''} onClick={() => chooseDrawingTool('ellipse')} aria-pressed={overlayTool === 'ellipse'} aria-label="Draw ellipse" title="Ellipse (O) · Shift for a circle"><Circle size={17} /></button>
-            <button className={overlayTool === 'line' ? 'active' : ''} onClick={() => chooseDrawingTool('line')} aria-pressed={overlayTool === 'line'} aria-label="Draw line" title="Line (L) · Shift snaps the angle"><Minus size={17} /></button>
-            <button className={overlayTool === 'pen' ? 'active' : ''} onClick={() => chooseDrawingTool('pen')} aria-pressed={overlayTool === 'pen'} aria-label="Freehand pen" title="Freehand pen (P)"><Pencil size={17} /></button>
-            <button className={overlayTool === 'image' ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label="Add image overlay" title="Place an image"><ImagePlus size={17} /></button>
-            <button className={overlayTool === 'eraser' ? 'active' : ''} onClick={() => chooseDrawingTool('eraser')} aria-pressed={overlayTool === 'eraser'} aria-label="Erase object" title="Erase object (E)"><Eraser size={17} /></button>
+            <button className={overlayTool === 'rectangle' ? 'active' : ''} onClick={() => chooseDrawingTool('rectangle')} aria-pressed={overlayTool === 'rectangle'} aria-label={t("Draw rectangle")} title={t("Rectangle (R) · Click or drag")}><Square size={17} /></button>
+            <button className={overlayTool === 'ellipse' ? 'active' : ''} onClick={() => chooseDrawingTool('ellipse')} aria-pressed={overlayTool === 'ellipse'} aria-label={t("Draw ellipse")} title={t("Ellipse (O) · Shift for a circle")}><Circle size={17} /></button>
+            <button className={overlayTool === 'line' ? 'active' : ''} onClick={() => chooseDrawingTool('line')} aria-pressed={overlayTool === 'line'} aria-label={t("Draw line")} title={t("Line (L) · Shift snaps the angle")}><Minus size={17} /></button>
+            <button className={overlayTool === 'pen' ? 'active' : ''} onClick={() => chooseDrawingTool('pen')} aria-pressed={overlayTool === 'pen'} aria-label={t("Freehand pen")} title={t("Freehand pen (P)")}><Pencil size={17} /></button>
+            <button className={overlayTool === 'image' ? 'active' : ''} onClick={() => overlayImageRef.current?.click()} aria-label={t("Add image overlay")} title={t("Place an image")}><ImagePlus size={17} /></button>
+            <button className={overlayTool === 'eraser' ? 'active' : ''} onClick={() => chooseDrawingTool('eraser')} aria-pressed={overlayTool === 'eraser'} aria-label={t("Erase object")} title={t("Erase object (E)")}><Eraser size={17} /></button>
             <span className="overlay-divider" />
-            <button onClick={undoEdit} disabled={!historyPast.length} aria-label="Undo drawing" title="Undo (Ctrl/Cmd+Z)"><Undo2 size={17} /></button>
-            <button onClick={redoEdit} disabled={!historyFuture.length} aria-label="Redo drawing" title="Redo (Ctrl/Cmd+Shift+Z)"><Redo2 size={17} /></button>
+            <button onClick={undoEdit} disabled={!historyPast.length} aria-label={t("Undo drawing")} title={t("Undo (Ctrl/Cmd+Z)")}><Undo2 size={17} /></button>
+            <button onClick={redoEdit} disabled={!historyFuture.length} aria-label={t("Redo drawing")} title={t("Redo (Ctrl/Cmd+Shift+Z)")}><Redo2 size={17} /></button>
           </>}
           <span className="overlay-divider" />
-          {selectedOriginal?.object.fill && selectedOriginal.object.stroke && <div className="text-format-tools" role="group" aria-label="Object color target">
-            <button aria-label="Object fill color" title="Fill color" aria-pressed={objectColorChannel === 'fill'} onClick={() => setObjectColorChannel('fill')}><Square size={16} fill="currentColor" /></button>
-            <button aria-label="Object stroke color" title="Stroke color" aria-pressed={objectColorChannel === 'stroke'} onClick={() => setObjectColorChannel('stroke')}><Square size={16} /></button>
+          {selectedOriginal?.object.fill && selectedOriginal.object.stroke && <div className="text-format-tools" role="group" aria-label={t("Object color target")}>
+            <button aria-label={t("Object fill color")} title={t("Fill color")} aria-pressed={objectColorChannel === 'fill'} onClick={() => setObjectColorChannel('fill')}><Square size={16} fill="currentColor" /></button>
+            <button aria-label={t("Object stroke color")} title={t("Stroke color")} aria-pressed={objectColorChannel === 'stroke'} onClick={() => setObjectColorChannel('stroke')}><Square size={16} /></button>
           </div>}
           {(!selectedOriginal || selectedOriginal.object.fill || selectedOriginal.object.stroke) && <ColorPicker
-            label={selectedOriginal ? `Original object ${objectColorChannel} color` : 'Text and drawing color'}
+            label={selectedOriginal ? t("Original object {0} color", objectColorChannel) : t("Text and drawing color")}
             value={selectedOriginal?.object[objectColorChannel] ? '#' + selectedOriginal.object[objectColorChannel]!.slice(0,3).map(value => value.toString(16).padStart(2,'0')).join('') : activeTool === 'draw' ? currentDrawStyle.color : (!fontEditing && selectedOverlay?.color) || overlayColor}
             recent={recentColors} onChange={activeTool === 'draw' ? (color, commit) => changeDrawStyle({ color }, commit) : chooseOverlayColor} />}
           {activeTool === 'edit' ? !selectedOriginal && <div className="overlay-font-size" data-added-text-controls>
-            <NumberField label="Font size" icon={<Type size={15} />} unit="pt" min={4} max={500} value={overlayFontSize}
+            <NumberField label={t("Font size")} icon={<Type size={15} />} unit="pt" min={4} max={500} value={overlayFontSize}
               onChange={(value) => changeOverlayFontSize(value)} onPreview={(value) => changeOverlayFontSize(value, false)} /></div>
-            : <button className={sidebarTab === 'draw' && !sidebarCollapsed ? 'active' : ''} title="Properties and layers" aria-label="Toggle drawing panel"
+            : <button className={sidebarTab === 'draw' && !sidebarCollapsed ? 'active' : ''} title={t("Properties and layers")} aria-label={t("Toggle drawing panel")}
               aria-expanded={sidebarTab === 'draw' && !sidebarCollapsed} onClick={() => { setSidebarTab('draw'); setSidebarCollapsed(sidebarTab === 'draw' ? !sidebarCollapsed : false); }}><PanelRight size={17} /></button>}
           {activeTool === 'edit' && selectedLines.length > 1 && selectedLines.length === editSelection.length &&
-            <button aria-label="Edit selected lines as paragraph" title="Edit selected lines as one paragraph" disabled={busy}
+            <button aria-label={t("Edit selected lines as paragraph")} title={t("Edit selected lines as one paragraph")} disabled={busy}
               onClick={() => setParagraphRequest({pageId:selectedLines[0].pageId, indices:selectedLines.map(line => line.index)})}><Pilcrow size={17}/></button>}
-          {activeTool === 'edit' && editSelection.length > 1 && <><span className="selection-count" role="status">{editSelection.length} selected</span><button onMouseDown={e=>e.preventDefault()} onClick={()=>copyEditSelection()} disabled={busy} title="Copy selected objects (Ctrl/Cmd+C)" aria-label="Copy selected objects"><Copy size={17}/></button><button onClick={deleteEditSelection} disabled={busy} title="Delete selected objects" aria-label="Delete selected objects"><Trash2 size={17}/></button></>}
-          {selectedOverlay && <button disabled={selectedOverlay.locked} onClick={() => deleteOverlay(selectedOverlay.id)} title="Delete selected object" aria-label="Delete selected object"><Trash2 size={17} /></button>}
-          {selectedOriginal && <button disabled={busy} onClick={() => void editOriginalObject(selectedOriginal, { type: 'delete' })} title="Delete selected PDF object" aria-label="Delete selected PDF object"><Trash2 size={17} /></button>}
+          {activeTool === 'edit' && editSelection.length > 1 && <><span className="selection-count" role="status">{editSelection.length} {t("selected")}</span><button onMouseDown={e=>e.preventDefault()} onClick={()=>copyEditSelection()} disabled={busy} title={t("Copy selected objects (Ctrl/Cmd+C)")} aria-label={t("Copy selected objects")}><Copy size={17}/></button><button onClick={deleteEditSelection} disabled={busy} title={t("Delete selected objects")} aria-label={t("Delete selected objects")}><Trash2 size={17}/></button></>}
+          {selectedOverlay && <button disabled={selectedOverlay.locked} onClick={() => deleteOverlay(selectedOverlay.id)} title={t("Delete selected object")} aria-label={t("Delete selected object")}><Trash2 size={17} /></button>}
+          {selectedOriginal && <button disabled={busy} onClick={() => void editOriginalObject(selectedOriginal, { type: 'delete' })} title={t("Delete selected PDF object")} aria-label={t("Delete selected PDF object")}><Trash2 size={17} /></button>}
           <input ref={overlayVideoRef} type="file" hidden accept=".mp4,video/mp4" onChange={event => { void importOverlayVideo(event.target.files?.[0]); event.target.value = ''; }} />
           <input ref={overlayImageRef} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={(event) => { void importOverlayImage(event.target.files?.[0]); event.target.value = ''; }} />
         </div>}
         </div>
         {pageGridOpen ? <div className="page-grid-scroll">
-          <div className="page-grid-intro"><div><h2>Organize pages</h2><p>Drag a page to reorder it. Select pages to use the actions above.</p></div><span>{selectedPages.size ? `${selectedPages.size} selected` : `${effectivePages.length} pages`}</span></div>
-          <div className="page-grid" aria-label="Pages grid">{effectivePages.map((planned, index) => <article key={planned.id} className={`page-grid-card${selectedPages.has(index) ? ' selected' : ''}${gridDragOver === index ? ' drag-target' : ''}`} draggable={!busy && !pendingCommentCount}
+          <div className="page-grid-intro"><div><h2>{t("Organize pages")}</h2><p>{t("Drag a page to reorder it. Select pages to use the actions above.")}</p></div><span>{selectedPages.size ? t("{0} selected", selectedPages.size) : t("{0} pages", effectivePages.length)}</span></div>
+          <div className="page-grid" aria-label={t("Pages grid")}>{effectivePages.map((planned, index) => <article key={planned.id} className={`page-grid-card${selectedPages.has(index) ? ' selected' : ''}${gridDragOver === index ? ' drag-target' : ''}`} draggable={!busy && !pendingCommentCount}
             onDragStart={(event) => { dragPageRef.current = index; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(index)); }}
             onDragOver={(event) => { if (dragPageRef.current !== null) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setGridDragOver(index); } }}
             onDrop={(event) => { event.preventDefault(); event.stopPropagation(); const from = dragPageRef.current; dragPageRef.current = null; setGridDragOver(null); if (from !== null && from !== index) void applyEdit({ type: 'move', from, to: index }); }}
             onDragEnd={() => { dragPageRef.current = null; setGridDragOver(null); }}>
-            <div className="page-grid-card-head"><label><input type="checkbox" aria-label={`Select page ${index + 1}`} checked={selectedPages.has(index)} onChange={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })} /><strong>Page {index + 1}</strong></label><GripVertical size={18} aria-hidden="true" /></div>
-            <button className="page-grid-preview" aria-label={`Select page ${index + 1} preview`} aria-pressed={selectedPages.has(index)} onClick={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })}>{document && <PageThumbnail document={document} page={planned.sourceIndex + 1} rotation={planned.turns * 90} size="large" />}</button>
-            <div className="page-grid-card-foot"><span>{pagePlan ? `Original page ${planned.sourceIndex + 1}` : 'Drag to reorder'}</span><button onClick={() => closePageGrid(index + 1)} aria-label={`View page ${index + 1} in PDF`}>View page <ChevronRight size={14} /></button></div>
+            <div className="page-grid-card-head"><label><input type="checkbox" aria-label={t("Select page {0}", index + 1)} checked={selectedPages.has(index)} onChange={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })} /><strong>{t("Page")} {index + 1}</strong></label><GripVertical size={18} aria-hidden="true" /></div>
+            <button className="page-grid-preview" aria-label={t("Select page {0} preview", index + 1)} aria-pressed={selectedPages.has(index)} onClick={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })}>{document && <PageThumbnail document={document} page={planned.sourceIndex + 1} rotation={planned.turns * 90} size="large" />}</button>
+            <div className="page-grid-card-foot"><span>{pagePlan ? t("Original page {0}", planned.sourceIndex + 1) : t("Drag to reorder")}</span><button onClick={() => closePageGrid(index + 1)} aria-label={t("View page {0} in PDF", index + 1)}>{t("View page")} <ChevronRight size={14} /></button></div>
           </article>)}</div>
         </div> : <div className="viewer-scroll" ref={viewerRef}>
           <div className="page-wrap">
-            {!document && <div className="loading-page">Opening PDF…</div>}
+            {!document && <div className="loading-page">{t("Opening PDF…")}</div>}
             {document && effectivePages.map((planned, index) => {
               const page = index + 1;
               return <PdfPage key={planned.id} document={document} pageNumber={page} sourcePageNumber={planned.sourceIndex + 1} rotation={planned.turns * 90}
@@ -2417,7 +2417,7 @@ export default function App() {
             })}
           </div>
         </div>}
-        <div className="viewer-footer"><button className="icon-button presentation-button" aria-label="Start presentation" title="Present full screen · Arrow keys to navigate · L for laser pointer · Esc to exit" disabled={!document || busy || preparingInstall || installing} onClick={() => void startPresentation()}><Presentation size={17} /></button><span className="footer-document-path">{compressionProgress || source.path}</span><span>{document ? effectivePages.length : '…'} pages · Offline</span></div>
+        <div className="viewer-footer"><button className="icon-button presentation-button" aria-label={t("Start presentation")} title={t("Present full screen · Arrow keys to navigate · L for laser pointer · Esc to exit")} disabled={!document || busy || preparingInstall || installing} onClick={() => void startPresentation()}><Presentation size={17} /></button><span className="footer-document-path">{compressionProgress || source.path}</span><span>{document ? effectivePages.length : '…'} {t("pages · Offline")}</span></div>
       </section>
 
       <ResizableSidebar collapsed={sidebarCollapsed}>
@@ -2430,51 +2430,51 @@ export default function App() {
             onStyle={changeDrawStyle} onUpdate={updateOverlay} onSelect={(id) => { selectOverlay(id); setOverlayTool('select'); }}
             onDelete={deleteOverlay} onDuplicate={duplicateOverlay} onOrder={orderOverlay} onClose={() => setSidebarCollapsed(true)} />;
         })() : sidebarTab === 'comments' ? <>
-          <div className="sidebar-heading"><h2 className="comments-heading">Comments <span>{conversationComments.length}</span></h2><div className="comment-heading-actions">
-            <button className="icon-button" title={showCommentPins ? 'Hide comments on pages' : 'Show comments on pages'} aria-label={showCommentPins ? 'Hide comments on pages' : 'Show comments on pages'} aria-pressed={showCommentPins} onClick={() => setShowCommentPins((visible) => !visible)}>{showCommentPins ? <Eye size={19} /> : <EyeOff size={19} />}</button>
-            <button className="icon-button" title="Save a copy" aria-label="Save a copy" disabled={busy || commentSaving} onClick={() => void save(true)}><FilePlus2 size={19} /></button>
+          <div className="sidebar-heading"><h2 className="comments-heading">{t("Comments")} <span>{conversationComments.length}</span></h2><div className="comment-heading-actions">
+            <button className="icon-button" title={showCommentPins ? t("Hide comments on pages") : t("Show comments on pages")} aria-label={showCommentPins ? t("Hide comments on pages") : t("Show comments on pages")} aria-pressed={showCommentPins} onClick={() => setShowCommentPins((visible) => !visible)}>{showCommentPins ? <Eye size={19} /> : <EyeOff size={19} />}</button>
+            <button className="icon-button" title={t("Save a copy")} aria-label={t("Save a copy")} disabled={busy || commentSaving} onClick={() => void save(true)}><FilePlus2 size={19} /></button>
           </div></div>
           <div className="comment-list" ref={commentListRef}>
-            {listedComments.length === 0 && !pendingPoint ? <div className="empty-comments"><div><MessageSquare size={25} /></div><h3>Start a conversation</h3><p>{placedSignatures.length ? 'Confirm and save the pending signature above to add a comment.' : 'Comments in this PDF will appear here. Click “Add comment” and choose a spot on the page.'}</p>{!placedSignatures.length && <button className="text-button" onClick={startComment}>Add the first comment <ChevronRight size={15} /></button>}</div> : null}
+            {listedComments.length === 0 && !pendingPoint ? <div className="empty-comments"><div><MessageSquare size={25} /></div><h3>{t("Start a conversation")}</h3><p>{placedSignatures.length ? t("Confirm and save the pending signature above to add a comment.") : t("Comments in this PDF will appear here. Click “Add comment” and choose a spot on the page.")}</p>{!placedSignatures.length && <button className="text-button" onClick={startComment}>{t("Add the first comment")} <ChevronRight size={15} /></button>}</div> : null}
             {listedComments.map(thread => <section key={thread.id}
               className={`comment-card comment-thread${selectedId === thread.id || thread.replies?.some(reply => reply.id === selectedId) ? ' selected' : ''}`}
-              aria-label={`Comment thread by ${thread.author}`}>
+              aria-label={t("Comment thread by {0}", thread.author)}>
               {renderCommentEntry(thread, thread)}
-              {!!thread.replies?.length && <div className="comment-thread-replies" aria-label="Replies">
+              {!!thread.replies?.length && <div className="comment-thread-replies" aria-label={t("Replies")}>
                 {thread.replies.map(reply => renderCommentEntry(reply, thread))}
               </div>}
             </section>)}
           </div>
-          {pendingPoint && <div className="compose"><div className="compose-title"><span className="avatar">{authorName.charAt(0).toUpperCase()}</span><strong>{pendingPoint.replyTo ? 'Reply' : 'New comment'}</strong><button onClick={() => { setPendingPoint(null); setNoteText(''); setNoteBold([]); }} aria-label={pendingPoint.replyTo ? 'Cancel reply' : 'Cancel comment'}><X size={17} /></button></div>
-            {pendingPoint.replyTo && <div className="reply-context">Replying to {allComments.find(comment => comment.id === pendingPoint.replyTo)?.author ?? 'comment'}</div>}
-            <CommentEditor key={pendingPoint.replyTo ?? 'new'} label={pendingPoint.replyTo ? 'Write a reply' : 'Write a comment'} placeholder={pendingPoint.replyTo ? 'Write your reply…' : 'Write your comment…'} value={noteText} bold={noteBold} onChange={(text, bold) => { setNoteText(text); setNoteBold(bold); }}
+          {pendingPoint && <div className="compose"><div className="compose-title"><span className="avatar">{authorName.charAt(0).toUpperCase()}</span><strong>{pendingPoint.replyTo ? t("Reply") : t("New comment")}</strong><button onClick={() => { setPendingPoint(null); setNoteText(''); setNoteBold([]); }} aria-label={pendingPoint.replyTo ? t("Cancel reply") : t("Cancel comment")}><X size={17} /></button></div>
+            {pendingPoint.replyTo && <div className="reply-context">{t("Replying to")} {allComments.find(comment => comment.id === pendingPoint.replyTo)?.author ?? 'comment'}</div>}
+            <CommentEditor key={pendingPoint.replyTo ?? 'new'} label={pendingPoint.replyTo ? t("Write a reply") : t("Write a comment")} placeholder={pendingPoint.replyTo ? t("Write your reply…") : t("Write your comment…")} value={noteText} bold={noteBold} onChange={(text, bold) => { setNoteText(text); setNoteBold(bold); }}
               onKeyDown={event => { if (!event.nativeEvent.isComposing && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); addComment(); } }} />
-            <div className="compose-footer"><span>Page {pendingPoint.page} · {authorName}</span><button className="button primary" onClick={addComment} disabled={!noteText.trim() || busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}>{pendingPoint.replyTo ? 'Reply' : 'Add comment'}</button></div></div>}
-          <div className="sidebar-bottom"><CircleHelp size={16} /><span>Comments are saved inside the PDF.</span></div>
-        </> : <div className="pages-panel"><div className="sidebar-heading"><div><h2>Pages</h2><p>{selectedPages.size ? `${selectedPages.size} selected` : 'Drag pages to sort, or use the arrows.'}</p></div><button className="icon-button" onClick={openPageGrid} aria-label="Expand pages to grid" title="Expand pages to grid"><Maximize2 size={18} /></button></div>
-          <div className="page-selection"><button onClick={() => setSelectedPages(new Set(Array.from({ length: effectivePages.length }, (_, index) => index)))}>Select all</button><button onClick={() => setSelectedPages(new Set())} disabled={!selectedPages.size}>Clear</button></div>
+            <div className="compose-footer"><span>{t("Page")} {pendingPoint.page} · {authorName}</span><button className="button primary" onClick={addComment} disabled={!noteText.trim() || busy || returningHome || editingDirty || placedSignatures.length > 0 || Boolean(pagePlan)}>{pendingPoint.replyTo ? t("Reply") : t("Add comment")}</button></div></div>}
+          <div className="sidebar-bottom"><CircleHelp size={16} /><span>{t("Comments are saved inside the PDF.")}</span></div>
+        </> : <div className="pages-panel"><div className="sidebar-heading"><div><h2>{t("Pages")}</h2><p>{selectedPages.size ? t("{0} selected", selectedPages.size) : t("Drag pages to sort, or use the arrows.")}</p></div><button className="icon-button" onClick={openPageGrid} aria-label={t("Expand pages to grid")} title={t("Expand pages to grid")}><Maximize2 size={18} /></button></div>
+          <div className="page-selection"><button onClick={() => setSelectedPages(new Set(Array.from({ length: effectivePages.length }, (_, index) => index)))}>{t("Select all")}</button><button onClick={() => setSelectedPages(new Set())} disabled={!selectedPages.size}>{t("Clear")}</button></div>
           <div className="page-list">{effectivePages.map((planned, index) => <div key={planned.id} draggable={!busy && !pendingCommentCount} className={`page-row ${pageNumber === index + 1 ? 'active' : ''}`}
             onDragStart={(event) => { dragPageRef.current = index; event.dataTransfer.effectAllowed = 'move'; }}
             onDragOver={(event) => { if (dragPageRef.current !== null) { event.preventDefault(); event.stopPropagation(); } }}
             onDrop={(event) => { event.preventDefault(); event.stopPropagation(); const from = dragPageRef.current; dragPageRef.current = null; if (from !== null && from !== index) void applyEdit({ type: 'move', from, to: index }); }}
             onDragEnd={() => { dragPageRef.current = null; }}>
-            <input type="checkbox" aria-label={`Select page ${index + 1}`} checked={selectedPages.has(index)} onChange={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })} />
-            <button onClick={() => scrollToPage(index + 1)}>{document && <PageThumbnail document={document} page={planned.sourceIndex + 1} rotation={planned.turns * 90} />}<span className="page-row-label"><strong>Page {index + 1}</strong>{pagePlan && <em>Original page {planned.sourceIndex + 1}</em>}</span><small className="page-comment-count">{commentsByPage.get(index + 1)?.length || ''}</small></button>
-            <button className="page-insert" aria-label={`Add files after page ${index + 1}`} title="Add files after this page" disabled={busy || pendingCommentCount > 0} onClick={() => void addFiles(index)}><FilePlus2 size={15} /></button>
+            <input type="checkbox" aria-label={t("Select page {0}", index + 1)} checked={selectedPages.has(index)} onChange={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })} />
+            <button onClick={() => scrollToPage(index + 1)}>{document && <PageThumbnail document={document} page={planned.sourceIndex + 1} rotation={planned.turns * 90} />}<span className="page-row-label"><strong>{t("Page")} {index + 1}</strong>{pagePlan && <em>{t("Original page")} {planned.sourceIndex + 1}</em>}</span><small className="page-comment-count">{commentsByPage.get(index + 1)?.length || ''}</small></button>
+            <button className="page-insert" aria-label={t("Add files after page {0}", index + 1)} title={t("Add files after this page")} disabled={busy || pendingCommentCount > 0} onClick={() => void addFiles(index)}><FilePlus2 size={15} /></button>
           </div>)}</div>
-          <div className="sidebar-bottom"><Files size={16} /><button className="text-button" onClick={() => void addFiles()} disabled={busy || pendingCommentCount > 0}>Add PDF, Word, or images</button></div>
+          <div className="sidebar-bottom"><Files size={16} /><button className="text-button" onClick={() => void addFiles()} disabled={busy || pendingCommentCount > 0}>{t("Add PDF, Word, or images")}</button></div>
         </div>}
         </div>}
-        <div className="sidebar-rail" role="toolbar" aria-label="PDF tools" aria-orientation="vertical">
-          <button className="sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'} aria-expanded={!sidebarCollapsed}>{sidebarCollapsed ? <ChevronLeft size={19} /> : <ChevronRight size={19} />}</button>
-          <button className={activeTool === 'comments' ? 'active' : ''} onClick={() => selectTool('comments')} aria-label="Comments" title="Comments" aria-pressed={activeTool === 'comments'}><MessageSquare size={18} />{conversationComments.length > 0 && <span className="sidebar-rail-count">{conversationComments.length}</span>}</button>
-          <button className={activeTool === 'pages' ? 'active' : ''} onClick={() => selectTool('pages')} aria-label="Pages" title="Pages" aria-pressed={activeTool === 'pages'}><FileText size={18} /></button>
-          <button className={activeTool === 'edit' ? 'active' : ''} onClick={() => selectTool('edit')} aria-label="Edit" title="Edit" aria-pressed={activeTool === 'edit'}><Pencil size={18} /></button>
-          <button className={activeTool === 'draw' ? 'active' : ''} onClick={() => selectTool('draw')} aria-label="Draw" title="Draw" aria-pressed={activeTool === 'draw'}><Paintbrush size={18} /></button>
+        <div className="sidebar-rail" role="toolbar" aria-label={t("PDF tools")} aria-orientation="vertical">
+          <button className="sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarCollapsed ? t("Show sidebar") : t("Hide sidebar")} title={sidebarCollapsed ? t("Show sidebar") : t("Hide sidebar")} aria-expanded={!sidebarCollapsed}>{sidebarCollapsed ? <ChevronLeft size={19} /> : <ChevronRight size={19} />}</button>
+          <button className={activeTool === 'comments' ? 'active' : ''} onClick={() => selectTool('comments')} aria-label={t("Comments")} title={t("Comments")} aria-pressed={activeTool === 'comments'}><MessageSquare size={18} />{conversationComments.length > 0 && <span className="sidebar-rail-count">{conversationComments.length}</span>}</button>
+          <button className={activeTool === 'pages' ? 'active' : ''} onClick={() => selectTool('pages')} aria-label={t("Pages")} title={t("Pages")} aria-pressed={activeTool === 'pages'}><FileText size={18} /></button>
+          <button className={activeTool === 'edit' ? 'active' : ''} onClick={() => selectTool('edit')} aria-label={t("Edit")} title={t("Edit")} aria-pressed={activeTool === 'edit'}><Pencil size={18} /></button>
+          <button className={activeTool === 'draw' ? 'active' : ''} onClick={() => selectTool('draw')} aria-label={t("Draw")} title={t("Draw")} aria-pressed={activeTool === 'draw'}><Paintbrush size={18} /></button>
           <span className="sidebar-rail-divider" aria-hidden="true" />
-          <button className={activeTool === 'sign' ? 'active' : ''} onClick={() => selectTool('sign')} aria-label="Sign tool" title="Sign" aria-pressed={activeTool === 'sign'}><PenLine size={18} /></button>
-          <button className={activeTool === 'compress' ? 'active' : ''} onClick={() => selectTool('compress')} disabled={placedSignatures.length > 0} aria-label="Compress tool" title={placedSignatures.length ? 'Confirm signatures first' : 'Compress'} aria-pressed={activeTool === 'compress'}><Shrink size={18} /></button>
-          <button className={activeTool === 'files' ? 'active' : ''} onClick={() => selectTool('files')} disabled={placedSignatures.length > 0} aria-label="Add files tool" title={placedSignatures.length ? 'Confirm signatures first' : 'Add files'} aria-pressed={activeTool === 'files'}><Files size={18} /></button>
+          <button className={activeTool === 'sign' ? 'active' : ''} onClick={() => selectTool('sign')} aria-label={t("Sign tool")} title={t("Sign")} aria-pressed={activeTool === 'sign'}><PenLine size={18} /></button>
+          <button className={activeTool === 'compress' ? 'active' : ''} onClick={() => selectTool('compress')} disabled={placedSignatures.length > 0} aria-label={t("Compress tool")} title={placedSignatures.length ? t("Confirm signatures first") : t("Compress")} aria-pressed={activeTool === 'compress'}><Shrink size={18} /></button>
+          <button className={activeTool === 'files' ? 'active' : ''} onClick={() => selectTool('files')} disabled={placedSignatures.length > 0} aria-label={t("Add files tool")} title={placedSignatures.length ? t("Confirm signatures first") : t("Add files")} aria-pressed={activeTool === 'files'}><Files size={18} /></button>
           {!pageGridOpen && <ReaderControls key={source.path} page={pageNumber} total={effectivePages.length} zoomLabel={zoomValue} disabled={!document}
             onPage={scrollToPage} onZoom={adjustZoom} onFit={()=>changeZoom('fit')}/>}
         </div>
@@ -2486,87 +2486,92 @@ export default function App() {
 
     {compressionOpen && <div className="modal-backdrop" onMouseDown={event => { if (!busy && event.target === event.currentTarget) setCompressionOpen(false); }}>
       <div className="settings-modal feature-modal compression-dialog" role="dialog" aria-modal="true" aria-labelledby="compression-title">
-        <div className="modal-head"><div className="modal-icon"><Shrink size={21} /></div><button onClick={() => setCompressionOpen(false)} disabled={busy} aria-label="Close compression"><X size={19} /></button></div>
-        <h2 id="compression-title">{compressionResult ? 'Compressed copy saved' : 'Compress PDF'}</h2>
-        {compressionResult ? <><p role="status">{compressionResult}</p><div className="modal-actions"><button className="button primary" onClick={() => setCompressionOpen(false)}>Done</button></div></> : <>
-          <div className="compression-modes" role="group" aria-label="Copy type">
+        <div className="modal-head"><div className="modal-icon"><Shrink size={21} /></div><button onClick={() => setCompressionOpen(false)} disabled={busy} aria-label={t("Close compression")}><X size={19} /></button></div>
+        <h2 id="compression-title">{compressionResult ? t("Compressed copy saved") : t("Compress PDF")}</h2>
+        {compressionResult ? <><p role="status">{compressionResult}</p><div className="modal-actions"><button className="button primary" onClick={() => setCompressionOpen(false)}>{t("Done")}</button></div></> : <>
+          <div className="compression-modes" role="group" aria-label={t("Copy type")}>
             <button aria-pressed={compressionMode === 'editable'} disabled={busy} onClick={() => { setCompressionMode('editable'); setCompressionError(''); }}>
-              <Pencil size={15} />Editable copy
+              <Pencil size={15} />{t("Editable copy")}
             </button>
             <button aria-pressed={compressionMode === 'delivery'} disabled={busy} onClick={() => { setCompressionMode('delivery'); setCompressionError(''); }}>
-              <ArrowDownToLine size={15} />Delivery copy
+              <ArrowDownToLine size={15} />{t("Delivery copy")}
             </button>
           </div>
           <p className="compression-mode-detail">{compressionMode === 'editable'
-            ? 'Keeps editing data and metadata for future revisions.'
-            : 'Removes recognized design-source data and document metadata from the copy. Keep the original for future design revisions.'}</p>
-          <h3 className="compression-quality">Image quality</h3>
-          <div className="compression-options" role="group" aria-label="Compression preset">{COMPRESSION_PRESETS.map(preset =>
+            ? t("Keeps editing data and metadata for future revisions.")
+            : t("Removes recognized design-source data and document metadata from the copy. Keep the original for future design revisions.")}</p>
+          <h3 className="compression-quality">{t("Image quality")}</h3>
+          <div className="compression-options" role="group" aria-label={t("Compression preset")}>{COMPRESSION_PRESETS.map(preset =>
             <button key={preset.level} aria-pressed={compressionChoice === preset.level} disabled={busy}
               onClick={() => { setCompressionChoice(preset.level); setCompressionError(''); }}>
               <img src={`./compression-${preset.level}.jpg`} alt="" />
-              <strong>{preset.label}</strong><span>{preset.description}</span>
-              <b className="preset-estimate" aria-label={sizeEstimate ? `Estimated file size ${formatFileSize(sizeEstimate.sizes[preset.level])}` : undefined}>{sizeEstimate ? `≈ ${formatFileSize(sizeEstimate.sizes[preset.level])}` : sizeEstimate === null ? 'Estimate unavailable' : 'Estimating…'}</b>
+              <strong>{t(preset.label)}</strong><span>{t(preset.description)}</span>
+              <b className="preset-estimate" aria-label={sizeEstimate ? t("Estimated file size {0}", formatFileSize(sizeEstimate.sizes[preset.level])) : undefined}>{sizeEstimate ? `≈ ${formatFileSize(sizeEstimate.sizes[preset.level])}` : sizeEstimate === null ? t("Estimate unavailable") : t("Estimating…")}</b>
             </button>)}</div>
-          <p className="compression-note">Text, vectors, links, forms and comments stay in the PDF.</p>
-          <p className="compression-size-note">Current file · {formatFileSize(estimateInput?.length ?? 0)}{sizeEstimate && ` · Estimated from ${sizeEstimate.pages} sample ${sizeEstimate.pages === 1 ? 'page' : 'pages'}`}. Unsaved edits can change the final size.</p>
+          <p className="compression-note">{t("Text, vectors, links, forms and comments stay in the PDF.")}</p>
+          <p className="compression-size-note">{t("Current file ·")} {formatFileSize(estimateInput?.length ?? 0)}{sizeEstimate && ' · ' + (sizeEstimate.pages === 1 ? t('Estimated from one sample page') : t('Estimated from {0} sample pages', sizeEstimate.pages))}{t(". Unsaved edits can change the final size.")}</p>
           {compressionError && <p className="compression-error" role="alert">{compressionError}</p>}
           {busy && compressionProgress && <p className="compression-running" role="status"><span className="inline-spinner" />{compressionProgress}</p>}
-          <div className="modal-actions"><button className="button subtle" disabled={busy} onClick={() => setCompressionOpen(false)}>Cancel</button><button className="button primary" disabled={busy} onClick={() => void saveCompressedCopy()}><Save size={16} />Save compressed copy…</button></div>
+          <div className="modal-actions"><button className="button subtle" disabled={busy} onClick={() => setCompressionOpen(false)}>{t("Cancel")}</button><button className="button primary" disabled={busy} onClick={() => void saveCompressedCopy()}><Save size={16} />{t("Save compressed copy…")}</button></div>
         </>}
       </div></div>}
-    {signatureOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSignatureOpen(false); }}><div className="settings-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="signature-title"><div className="modal-head"><div className="modal-icon"><PenLine size={21} /></div><button onClick={() => setSignatureOpen(false)} aria-label="Close signature"><X size={19} /></button></div><h2 id="signature-title">Add signature</h2><p>Draw below or import a PNG, JPEG, WebP, or SVG. Your signatures stay on this computer.</p><canvas className="signature-canvas" ref={signatureCanvasRef} width={1500} height={510}
+    {signatureOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSignatureOpen(false); }}><div className="settings-modal feature-modal" role="dialog" aria-modal="true" aria-labelledby="signature-title"><div className="modal-head"><div className="modal-icon"><PenLine size={21} /></div><button onClick={() => setSignatureOpen(false)} aria-label={t("Close signature")}><X size={19} /></button></div><h2 id="signature-title">{t("Add signature")}</h2><p>{t("Draw below or import a PNG, JPEG, WebP, or SVG. Your signatures stay on this computer.")}</p><canvas className="signature-canvas" ref={signatureCanvasRef} width={1500} height={510}
       onPointerDown={(event) => signaturePointer(event, true)} onPointerMove={(event) => signaturePointer(event, false)} onPointerUp={finishSignature} onPointerCancel={finishSignature} />
-      <div className="signature-controls"><button className={signatureInk === '#172333' ? 'active' : ''} onClick={() => setSignatureInk('#172333')}>Black</button><button className={signatureInk === '#204fb3' ? 'active' : ''} onClick={() => setSignatureInk('#204fb3')}>Blue</button><button onClick={() => { signatureCanvasRef.current?.getContext('2d')?.clearRect(0, 0, 1500, 510); signatureStrokesRef.current = []; setNewSignature(null); }}>Clear</button><button onClick={() => signatureImportRef.current?.click()}>Import image or SVG</button><input ref={signatureImportRef} type="file" hidden accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" onChange={(event) => { void importSignatureFile(event.target.files?.[0]); event.target.value = ''; }} /></div>
-      {newSignature && <div className="signature-preview"><span>Preview</span><img src={newSignature.dataUrl} alt="New signature preview" /></div>}
-      <label htmlFor="signature-name">Name</label><input id="signature-name" value={newSignatureName} maxLength={40} onChange={(event) => setNewSignatureName(event.target.value)} placeholder="My signature" />
-      <div className="modal-actions"><button className="button subtle" onClick={() => setSignatureOpen(false)}>Cancel</button><button className="button primary" disabled={!newSignature} onClick={useSignature}>Save signature</button></div></div></div>}
+      <div className="signature-controls"><button className={signatureInk === '#172333' ? 'active' : ''} onClick={() => setSignatureInk('#172333')}>{t("Black")}</button><button className={signatureInk === '#204fb3' ? 'active' : ''} onClick={() => setSignatureInk('#204fb3')}>{t("Blue")}</button><button onClick={() => { signatureCanvasRef.current?.getContext('2d')?.clearRect(0, 0, 1500, 510); signatureStrokesRef.current = []; setNewSignature(null); }}>{t("Clear")}</button><button onClick={() => signatureImportRef.current?.click()}>{t("Import image or SVG")}</button><input ref={signatureImportRef} type="file" hidden accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml" onChange={(event) => { void importSignatureFile(event.target.files?.[0]); event.target.value = ''; }} /></div>
+      {newSignature && <div className="signature-preview"><span>{t("Preview")}</span><img src={newSignature.dataUrl} alt={t("New signature preview")} /></div>}
+      <label htmlFor="signature-name">{t("Name")}</label><input id="signature-name" value={newSignatureName} maxLength={40} onChange={(event) => setNewSignatureName(event.target.value)} placeholder={t("My signature")} />
+      <div className="modal-actions"><button className="button subtle" onClick={() => setSignatureOpen(false)}>{t("Cancel")}</button><button className="button primary" disabled={!newSignature} onClick={useSignature}>{t("Save signature")}</button></div></div></div>}
     {pendingSignatureRemoval && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingSignatureRemoval(null); }}><div className="settings-modal confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="remove-signature-title" aria-describedby="remove-signature-description">
-      <h2 id="remove-signature-title">Remove signature?</h2>
+      <h2 id="remove-signature-title">{t("Remove signature?")}</h2>
       <p id="remove-signature-description">{pendingSignatureRemoval.kind === 'saved'
-        ? `Remove “${pendingSignatureRemoval.name ?? 'this signature'}” from your saved signatures? Signatures already placed in the PDF will stay.`
-        : 'Remove this placed signature from the current PDF? It has not been saved yet.'}</p>
-      <div className="modal-actions"><button className="button subtle" autoFocus onClick={() => setPendingSignatureRemoval(null)}>Cancel</button><button className="button danger" onClick={confirmSignatureRemoval}>Remove signature</button></div>
+        ? t("Remove “{0}” from your saved signatures? Signatures already placed in the PDF will stay.", pendingSignatureRemoval.name ?? 'this signature')
+        : t("Remove this placed signature from the current PDF? It has not been saved yet.")}</p>
+      <div className="modal-actions"><button className="button subtle" autoFocus onClick={() => setPendingSignatureRemoval(null)}>{t("Cancel")}</button><button className="button danger" onClick={confirmSignatureRemoval}>{t("Remove signature")}</button></div>
     </div></div>}
     {pendingSignatureDiscard && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setPendingSignatureDiscard(false); }}><div className="settings-modal confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-signatures-title" aria-describedby="discard-signatures-description">
-      <h2 id="discard-signatures-title">Discard pending signatures?</h2>
-      <p id="discard-signatures-description">Remove {placedSignatures.length} {placedSignatures.length === 1 ? 'signature' : 'signatures'} placed since the last save? Your saved signature list stays on this computer.</p>
-      <div className="modal-actions"><button className="button subtle" autoFocus onClick={() => setPendingSignatureDiscard(false)}>Keep signatures</button><button className="button danger" onClick={discardPendingSignatures}>Discard signatures</button></div>
+      <h2 id="discard-signatures-title">{t("Discard pending signatures?")}</h2>
+      <p id="discard-signatures-description">{t("Remove")} {placedSignatures.length} {placedSignatures.length === 1 ? t("signature") : t("signatures")} {t("placed since the last save? Your saved signature list stays on this computer.")}</p>
+      <div className="modal-actions"><button className="button subtle" autoFocus onClick={() => setPendingSignatureDiscard(false)}>{t("Keep signatures")}</button><button className="button danger" onClick={discardPendingSignatures}>{t("Discard signatures")}</button></div>
     </div></div>}
     {aboutOpen && <AboutDialog updates={updates} busy={busy || preparingInstall || installing} onClose={() => setAboutOpen(false)} />}
     {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
       <div className="settings-modal application-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-        <div className="modal-head"><div className="modal-icon"><Settings2 size={21} /></div><button onClick={() => setSettingsOpen(false)} aria-label="Close settings"><X size={19} /></button></div>
-        <h2 id="settings-title">Settings</h2>
-        <h3>Comment author</h3><p>This name appears on comments you add to PDF files. It is saved only on this computer.</p>
-        <label htmlFor="author-name">Your name</label><input id="author-name" autoFocus value={authorInput} onChange={(event) => setAuthorInput(event.target.value)}
-          onKeyDown={(event) => { if (event.key === 'Enter') void saveSettings(); }} placeholder="Enter your name" maxLength={80} />
+        <div className="modal-head"><div className="modal-icon"><Settings2 size={21} /></div><button onClick={() => setSettingsOpen(false)} aria-label={t("Close settings")}><X size={19} /></button></div>
+        <h2 id="settings-title">{t("Settings")}</h2>
+        <label htmlFor="application-language">{t("Language")}</label>
+        <select id="application-language" value={languageState.preference}
+          onChange={e => void window.aster.setLanguage(e.target.value as LanguageState['preference']).catch(cause => setError(messageOf(cause)))}>
+          <option value="system">{t("System default")}</option><option value="ar" lang="ar">العربية</option><option value="en" lang="en">English</option>
+        </select>
+        <h3>{t("Comment author")}</h3><p>{t("This name appears on comments you add to PDF files. It is saved only on this computer.")}</p>
+        <label htmlFor="author-name">{t("Your name")}</label><input id="author-name" autoFocus value={authorInput} onChange={(event) => setAuthorInput(event.target.value)}
+          onKeyDown={(event) => { if (event.key === 'Enter') void saveSettings(); }} placeholder={t("Enter your name")} maxLength={80} />
         <UpdateSettings updates={updates} onInstall={() => void restartAndInstall()} busy={busy || preparingInstall || installing} installError={installError} />
-        <div className="modal-actions"><button className="button subtle" onClick={() => setSettingsOpen(false)}>Close</button>
-          <button className="button primary" onClick={() => void saveSettings()} disabled={!authorInput.trim()}>Save settings</button></div>
+        <div className="modal-actions"><button className="button subtle" onClick={() => setSettingsOpen(false)}>{t("Close")}</button>
+          <button className="button primary" onClick={() => void saveSettings()} disabled={!authorInput.trim()}>{t("Save settings")}</button></div>
       </div>
     </div>}
     {(preparingInstall || installing) && <div className="modal-backdrop update-install-backdrop"><div className="settings-modal" role="alertdialog" aria-modal="true" aria-labelledby="install-title">
-      <h2 id="install-title">{preparingInstall ? 'Saving before restart…' : 'Restarting to install…'}</h2>
-      <p role="status"><span className="inline-spinner" /> {preparingInstall ? 'Please wait while your PDF changes are saved.' : 'Your changes are saved. AsterPDF will reopen after the update.'}</p>
+      <h2 id="install-title">{preparingInstall ? t("Saving before restart…") : t("Restarting to install…")}</h2>
+      <p role="status"><span className="inline-spinner" /> {preparingInstall ? t("Please wait while your PDF changes are saved.") : t("Your changes are saved. AsterPDF will reopen after the update.")}</p>
     </div></div>}
     {wordExportResult && <div className="word-export-notice" role="status">
-      <div><strong>Saved {wordExportResult.name}</strong>
-        <p>{wordExportResult.pages} source pages · {wordExportResult.tables} editable tables.
-          {' '}{wordExportResult.kind === 'data' ? 'Review extraction notes before using the figures.' : 'Review the converted layout before use.'}</p>
+      <div><strong>{t("Saved")} {wordExportResult.name}</strong>
+        <p>{wordExportResult.pages} {t("source pages ·")} {wordExportResult.tables} {t("editable tables.")}
+          {' '}{wordExportResult.kind === 'data' ? t("Review extraction notes before using the figures.") : t("Review the converted layout before use.")}</p>
         {wordExportResult.warnings.map((warning, index) => <p key={index}>{warning}</p>)}
       </div>
-      <button className="icon-button" aria-label="Dismiss Word export result" onClick={() => setWordExportResult(null)}><X size={17} /></button>
+      <button className="icon-button" aria-label={t("Dismiss Word export result")} onClick={() => setWordExportResult(null)}><X size={17} /></button>
     </div>}
     <SaveFeedback message={discardRequestId ? null : openingMessage || (saveMessage ? (wordExporting ? saveMessage : compressionProgress || saveMessage) : null)}
-      title={openingMessage ? 'Opening your PDF' : printing ? 'Preparing print preview' : wordExporting === 'data' ? 'Extracting PDF data' : wordExporting ? 'Converting to Word' : 'Saving your PDF'} />
+      title={openingMessage ? t("Opening your PDF") : printing ? t("Preparing print preview") : wordExporting === 'data' ? t("Extracting PDF data") : wordExporting ? t("Converting to Word") : t("Saving your PDF")} />
     {printPages && source && <PrintPreview pages={printPages} initialPage={pageNumber} name={source.path.split(/[\\/]/).pop() || 'Document'}
       onFinish={print => { setPrintPages(null); printDecision.current?.(print); printDecision.current = null; }} />}
     {discardRequestId && <div className="modal-backdrop discard-backdrop"><div className="settings-modal discard-modal" role="alertdialog" aria-modal="true" aria-labelledby="discard-title" aria-describedby="discard-description">
       <div className="discard-icon"><TriangleAlert size={23} /></div>
-      <h2 id="discard-title">Discard unsaved changes?</h2>
-      <p id="discard-description">Your changes to this PDF have not been saved. Save them before leaving this document if you want to keep them.</p>
-      <div className="discard-actions"><button className="button confirm-keep" autoFocus onClick={() => answerDiscard(false)}><Check size={17} />Keep editing</button><button className="button danger" onClick={() => answerDiscard(true)}><Trash2 size={16} />Discard changes</button></div>
+      <h2 id="discard-title">{t("Discard unsaved changes?")}</h2>
+      <p id="discard-description">{t("Your changes to this PDF have not been saved. Save them before leaving this document if you want to keep them.")}</p>
+      <div className="discard-actions"><button className="button confirm-keep" autoFocus onClick={() => answerDiscard(false)}><Check size={17} />{t("Keep editing")}</button><button className="button danger" onClick={() => answerDiscard(true)}><Trash2 size={16} />{t("Discard changes")}</button></div>
     </div></div>}
     {presenting && document && <PresentationView pdf={document} pages={effectivePages} initialPage={pageNumber}
       objects={visibleOverlays} signatures={placedSignatures} fonts={installedFonts} onExit={exitPresentation} />}

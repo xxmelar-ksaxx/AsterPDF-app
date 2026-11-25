@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import FlowTextField from './FlowTextField';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PageViewport } from 'pdfjs-dist';
@@ -210,7 +211,7 @@ export default function OriginalTextEditor({ edit, viewport, canvas, fonts, onCh
           textDecoration:[appearance.underline && 'underline',appearance.strikeThrough && 'line-through'].filter(Boolean).join(' ') || 'none',
           color:`rgba(${edit.color.slice(0,3).join(',')}, ${edit.color[3]/255})`}} /> : !mask ? <textarea ref={multilineInput} className="original-text-editable added-text-multiline" aria-label={label} aria-multiline="true"
         value={inputView.text} spellCheck={false} wrap={frameWidth === undefined ? 'off' : 'soft'}
-        title="Enter for a paragraph · Shift+Enter for a line break · Ctrl/Cmd+Enter to finish"
+        title={t("Enter for a paragraph · Shift+Enter for a line break · Ctrl/Cmd+Enter to finish")}
         onDragStart={(event) => event.preventDefault()}
         style={{ top: -ascent - (lineHeight - ascent - descent) / 2,
           width: frameWidth ?? Math.max(size * .6, ...lines.map((line) => line.width)) + 2,

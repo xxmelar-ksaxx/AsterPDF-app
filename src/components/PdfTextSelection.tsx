@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useRef, useState } from 'react';
 import { TextLayer, type PDFDocumentProxy, type PageViewport } from 'pdfjs-dist';
 import type { TextMarkupSelection } from '../pdf/comments';
@@ -232,6 +233,6 @@ export default function PdfTextSelection({ pdf, sourcePage, page, viewport, mark
         onClickMarkup(event.clientX - origin.left, event.clientY - origin.top);
       }
     }} />
-    {empty && marking && <span className="markup-no-text" role="status">No selectable text on this page</span>}
+    {empty && marking && <span className="markup-no-text" role="status">{t("No selectable text on this page")}</span>}
   </>;
 }

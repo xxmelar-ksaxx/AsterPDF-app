@@ -88,7 +88,7 @@ function createDocumentController(tab) {
   };
 function confirmDiscard() {
   if (saving || writing) {
-    dialog.showMessageBoxSync(tab.owner.window, { type: 'info', message: 'AsterPDF is saving the PDF.', detail: 'Please wait for the save to finish.' });
+    dialog.showMessageBoxSync(tab.owner.window, { type: 'info', message: uiText('AsterPDF is saving the PDF.'), detail: uiText('Please wait for the save to finish.') });
     return Promise.resolve(false);
   }
   if (!dirty) return Promise.resolve(true);
@@ -118,7 +118,7 @@ async function readFile(filePath) {
 
 async function selectFiles(append = false) {
   const result = await dialog.showOpenDialog(tab.owner.window, {
-    title: append ? 'Add files to PDF' : 'Open a file',
+    title: uiText(append ? 'Add files to PDF' : 'Open a file'),
     properties: ['openFile', 'multiSelections'],
     filters: [{ name: 'PDF, Word and image files', extensions: ['pdf', 'docx', 'png', 'jpg', 'jpeg', 'webp'] }]
   });
@@ -170,7 +170,7 @@ async function savePdf(rawBytes, saveAs, expectedPath) {
       ? path.join(path.dirname(currentPath), `${path.parse(currentPath).name}${path.extname(currentPath).toLowerCase() === '.pdf' ? '-copy' : ''}.pdf`)
       : 'AsterPDF.pdf';
     const result = await dialog.showSaveDialog(tab.owner.window, {
-      title: 'Save PDF',
+      title: uiText('Save PDF'),
       defaultPath: suggested,
       filters: [{ name: 'PDF files', extensions: ['pdf'] }]
     });
@@ -189,7 +189,7 @@ async function prepareCompressedSave(expectedPath) {
     ? path.join(path.dirname(currentPath), `${path.parse(currentPath).name}-compressed.pdf`)
     : 'AsterPDF-compressed.pdf';
   const result = await dialog.showSaveDialog(tab.owner.window, {
-    title: 'Save compressed PDF', defaultPath: suggested,
+    title: uiText('Save compressed PDF'), defaultPath: suggested,
     filters: [{ name: 'PDF files', extensions: ['pdf'] }]
   });
   if (result.canceled || !result.filePath) return null;
@@ -440,8 +440,42 @@ async function sameFile(first, second) {
   } catch { return false; }
 }
 
-app.whenReady().then(() => {
+const arabic = require('./ar.json');
+function uiText(key) { return languageState().language === 'ar' ? arabic[key] || key : key; }
+const { resolveLanguage, menuLanguage } = require('./language.cjs');
+let languagePreference = 'system';
+let installMenu;
+function languageState() {
+  return { preference: languagePreference, language: resolveLanguage(languagePreference, app.getPreferredSystemLanguages()) };
+}
+
+app.whenReady().then(async () => {
   if (!primaryInstance) return;
+  const languageFile = path.join(app.getPath('userData'), 'language.json');
+  try {
+    const saved = JSON.parse(await fs.readFile(languageFile, 'utf8'));
+    if (['ar', 'en'].includes(saved)) languagePreference = saved;
+  } catch { /* First launch uses the system preference. */ }
+  ipcMain.handle('language:get', event => { if (!appOrigin(event)) throw new Error('Untrusted window'); return languageState(); });
+  let pendingLanguage = Promise.resolve();
+  ipcMain.handle('language:set', (event, preference) => {
+    requireApp(event);
+    if (!['ar', 'en', 'system'].includes(preference)) throw new Error('Unknown language.');
+    const save = pendingLanguage.then(async () => {
+      await fs.mkdir(path.dirname(languageFile), { recursive: true });
+      await fs.writeFile(languageFile + '.tmp', JSON.stringify(preference), { mode: 0o600 });
+      await fs.rename(languageFile + '.tmp', languageFile);
+      languagePreference = preference;
+      installMenu();
+      const state = languageState();
+      for (const contents of [...BrowserWindow.getAllWindows().map(w => w.webContents), ...workspace.documents.map(tab => tab.contents)]) {
+        if (!contents.isDestroyed()) contents.send('language:changed', state);
+      }
+      return state;
+    });
+    pendingLanguage = save.catch(() => {});
+    return save;
+  });
   recentStore = createRecentStore(app.getPath('userData'));
   updateInstaller = createUpdateInstaller({ updater: require('electron-updater').autoUpdater,
     isPackaged: app.isPackaged, onChange: publishUpdate });
@@ -474,7 +508,7 @@ app.whenReady().then(() => {
     getUpdateStatus: updateState, installing: () => updateInstaller?.getState().phase === 'installing' });
   workspace.register(ipcMain);
   const send = channel => workspace.sendMenu(channel);
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
+  installMenu = () => Menu.setApplicationMenu(Menu.buildFromTemplate(menuLanguage([
     {
       label: 'File', submenu: [
         { label: 'New Tab', accelerator: 'CmdOrCtrl+T', click: () => workspace.newDocumentTab() },
@@ -503,7 +537,8 @@ app.whenReady().then(() => {
     { label: 'About', ...(process.platform === 'darwin'
       ? { submenu: [{ label: 'About AsterPDF', click: () => send('menu:about') }] }
       : { click: () => send('menu:about') }) }
-  ]));
+  ], languageState().language)));
+  installMenu();
   workspace.createWindow();
   for (const filePath of pendingLaunchFiles.splice(0)) enqueueExternalPdf(filePath);
   void updateService.start();

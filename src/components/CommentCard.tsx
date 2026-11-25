@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useId, useRef, useState, type Ref } from 'react';
 import { Check, MoreHorizontal, Pencil, Reply, Trash2, X } from 'lucide-react';
 import type { PdfComment } from '../pdf/comments';
@@ -33,10 +34,10 @@ export default function CommentCard({ comment, selected, label, date, saving, pe
   }, [editing, editingText, onSave, onCancel]);
   return <div ref={cardRef} data-comment-id={comment.id} className={`comment-entry${selected ? ' selected' : ''}`}>
     <div className="comment-card-header">
-      <button className="comment-jump comment-author-jump" onClick={onSelect} aria-label={`Go to comment by ${comment.author} on page ${comment.page}`}>
+      <button className="comment-jump comment-author-jump" onClick={onSelect} aria-label={t("Go to comment by {0} on page {1}", comment.author, comment.page)}>
         <span className="comment-meta"><span className="avatar">{comment.author.charAt(0).toUpperCase()}</span><span className="comment-author">{comment.author}</span></span>
       </button>
-      <span className="comment-page">p. {comment.page}</span>
+      <span className="comment-page">{t("p.")} {comment.page}</span>
       <div className="comment-menu-anchor" ref={menuRef} onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setMenuOpen(false);
       }} onKeyDown={(event) => {
@@ -44,12 +45,12 @@ export default function CommentCard({ comment, selected, label, date, saving, pe
           event.preventDefault(); event.stopPropagation(); setMenuOpen(false); menuButtonRef.current?.focus();
         }
       }}>
-        <button ref={menuButtonRef} className="icon-button comment-menu-toggle" aria-label={`Options for comment by ${comment.author}`} title="Comment options"
+        <button ref={menuButtonRef} className="icon-button comment-menu-toggle" aria-label={t("Options for comment by {0}", comment.author)} title={t("Comment options")}
           aria-expanded={menuOpen} aria-controls={menuOpen ? menuId : undefined} disabled={disabled || editing || confirmDelete}
           onClick={() => setMenuOpen(open => !open)}><MoreHorizontal size={18} /></button>
         {menuOpen && <div className="comment-options" id={menuId}>
-          <button autoFocus disabled={disabled} onClick={() => { setMenuOpen(false); onEdit(); }}><Pencil size={15} />Edit</button>
-          <button className="comment-delete" disabled={disabled} onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}><Trash2 size={15} />Delete</button>
+          <button autoFocus disabled={disabled} onClick={() => { setMenuOpen(false); onEdit(); }}><Pencil size={15} />{t("Edit")}</button>
+          <button className="comment-delete" disabled={disabled} onClick={() => { setMenuOpen(false); setConfirmDelete(true); }}><Trash2 size={15} />{t("Delete")}</button>
         </div>}
       </div>
     </div>
@@ -57,19 +58,19 @@ export default function CommentCard({ comment, selected, label, date, saving, pe
     {editing && <div className="comment-edit" onBlur={(event) => {
       if (!event.currentTarget.contains(event.relatedTarget as Node | null) && editingText.trim()) onSave();
     }}>
-      <CommentEditor label="Edit comment" value={editingText} bold={editingBold} disabled={disabled}
+      <CommentEditor label={t("Edit comment")} value={editingText} bold={editingBold} disabled={disabled}
         onChange={onTextChange} onKeyDown={(event) => {
           event.stopPropagation();
           if (event.nativeEvent.isComposing) return;
           if (event.key === 'Escape') { event.preventDefault(); onCancel(); }
           else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey) && editingText.trim()) { event.preventDefault(); onSave(); }
         }} />
-      <div className="comment-edit-actions"><button className="icon-button" title="Cancel edit" aria-label="Cancel comment edit" onClick={onCancel}><X size={16} /></button>
-        <button className="icon-button comment-save" title="Save changes" aria-label="Save comment changes" disabled={disabled || !editingText.trim()} onClick={onSave}><Check size={17} /></button></div>
+      <div className="comment-edit-actions"><button className="icon-button" title={t("Cancel edit")} aria-label={t("Cancel comment edit")} onClick={onCancel}><X size={16} /></button>
+        <button className="icon-button comment-save" title={t("Save changes")} aria-label={t("Save comment changes")} disabled={disabled || !editingText.trim()} onClick={onSave}><Check size={17} /></button></div>
     </div>}
-    {confirmDelete && <div className="comment-delete-confirm"><span>Delete this comment?</span><button autoFocus className="text-button" onClick={() => { setConfirmDelete(false); menuButtonRef.current?.focus(); }}>Cancel</button>
-      <button className="text-button comment-delete" disabled={disabled} onClick={() => { setConfirmDelete(false); onDelete(); }}>Delete</button></div>}
-    {!editing && <button className="text-button comment-reply-action" disabled={disabled} onClick={onReply}><Reply size={14} />Reply</button>}
-    <div className="comment-bottom"><span role="status">{saving ? 'Saving…' : pending ? 'Unsaved' : ''}</span><span className="comment-date">{date}</span></div>
+    {confirmDelete && <div className="comment-delete-confirm"><span>{t("Delete this comment?")}</span><button autoFocus className="text-button" onClick={() => { setConfirmDelete(false); menuButtonRef.current?.focus(); }}>{t("Cancel")}</button>
+      <button className="text-button comment-delete" disabled={disabled} onClick={() => { setConfirmDelete(false); onDelete(); }}>{t("Delete")}</button></div>}
+    {!editing && <button className="text-button comment-reply-action" disabled={disabled} onClick={onReply}><Reply size={14} />{t("Reply")}</button>}
+    <div className="comment-bottom"><span role="status">{saving ? t("Saving…") : pending ? t("Unsaved") : ''}</span><span className="comment-date">{date}</span></div>
   </div>;
 }

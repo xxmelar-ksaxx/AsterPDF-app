@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useRef, useState, type PointerEvent, type MouseEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Copy, Scissors, Trash2 } from 'lucide-react';
@@ -68,13 +69,13 @@ export default function useEditSelectionDrag({selection,pageId,viewport,stage,ov
   const click=(event:MouseEvent<HTMLDivElement>)=>{if(suppressClick.current){suppressClick.current=false;event.preventDefault();event.stopPropagation();}};
   const x=Math.min(...boxes.map(b=>b.x)),y=Math.min(...boxes.map(b=>b.y));
   const right=Math.max(...boxes.map(b=>b.x+b.width)),bottom=Math.max(...boxes.map(b=>b.y+b.height));
-  const frame=selection.length>1&&boxes.length&&viewport?<svg className="edit-selection-frame" width={viewport.width} height={viewport.height} aria-label="Selected objects" style={{transform:`translate(${offset?.x||0}px,${offset?.y||0}px)`}}>
+  const frame=selection.length>1&&boxes.length&&viewport?<svg className="edit-selection-frame" width={viewport.width} height={viewport.height} aria-label={t("Selected objects")} style={{transform:`translate(${offset?.x||0}px,${offset?.y||0}px)`}}>
     <rect x={x-4} y={y-4} width={right-x+8} height={bottom-y+8}/>
   </svg>:null;
-  const popup=menu?createPortal(<div className="image-context-menu edit-selection-menu" role="menu" aria-label="Selection actions" style={{left:menu.x,top:menu.y}}>
-    <button role="menuitem" onClick={()=>{onCopy();setMenu(null);}}><Copy size={15}/>Copy selection</button>
-    <button role="menuitem" onClick={()=>{onCopy(true);setMenu(null);}}><Scissors size={15}/>Cut selection</button>
-    <button role="menuitem" onClick={()=>{onDelete();setMenu(null);}}><Trash2 size={15}/>Delete selection</button>
+  const popup=menu?createPortal(<div className="image-context-menu edit-selection-menu" role="menu" aria-label={t("Selection actions")} style={{left:menu.x,top:menu.y}}>
+    <button role="menuitem" onClick={()=>{onCopy();setMenu(null);}}><Copy size={15}/>{t("Copy selection")}</button>
+    <button role="menuitem" onClick={()=>{onCopy(true);setMenu(null);}}><Scissors size={15}/>{t("Cut selection")}</button>
+    <button role="menuitem" onClick={()=>{onDelete();setMenu(null);}}><Trash2 size={15}/>{t("Delete selection")}</button>
   </div>,document.body):null;
   return {down,move,up,cancel,context,click,frame,popup};
 }

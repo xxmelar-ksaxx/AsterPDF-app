@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useRef, useState, type MouseEvent, type PointerEvent, type RefObject } from 'react';
 import type { EditSelection } from '../types';
 
@@ -61,7 +62,7 @@ export default function useMarqueeSelection({enabled,stage,width,height,candidat
   };
   const click=(event:MouseEvent<HTMLDivElement>)=>{if(!suppressClick.current)return false;suppressClick.current=false;event.preventDefault();event.stopPropagation();return true;};
   const pointerCancel=()=>{if(!gesture.current)return false;suppressClick.current=false;cancel();return true;};
-  const visual=box?<svg className="edit-marquee" width={width} height={height} aria-label="Selection box">
+  const visual=box?<svg className="edit-marquee" width={width} height={height} aria-label={t("Selection box")}>
     {hits.map(hit=><rect key={key(hit.selection)} className="edit-marquee-hit" x={hit.x} y={hit.y} width={hit.width} height={hit.height}/>)}
     <rect className="edit-marquee-box" {...box}/>
   </svg>:null;

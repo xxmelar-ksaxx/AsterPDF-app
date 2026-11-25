@@ -1,6 +1,7 @@
 export {};
 
 declare global {
+  type LanguageState = { preference: 'system' | 'ar' | 'en'; language: 'ar' | 'en' };
   type PrinterSettings = { deviceName: string; copies: number; landscape: boolean; color: boolean; pageSize: 'A4' | 'Letter' | 'Legal' | 'A3'; duplexMode: 'simplex' | 'longEdge' | 'shortEdge' };
   type PrintSelection = { settings: PrinterSettings; indices: number[] };
   type WorkspaceState = {
@@ -58,6 +59,9 @@ declare global {
       getRecentPdfs(): Promise<RecentPdf[]>;
       recentAction(filePath: string, action: 'pin' | 'unpin' | 'remove' | 'reveal'): Promise<RecentPdf[]>;
       setRecentPreview(path: string, preview: string): Promise<void>;
+      getLanguage(): Promise<LanguageState>;
+      setLanguage(preference: LanguageState['preference']): Promise<LanguageState>;
+      onLanguageChanged(handler: (state: LanguageState) => void): () => void;
       getSettings(): Promise<{ authorName: string }>;
       getUpdateStatus(): Promise<UpdateStatus>;
       checkForUpdates(): Promise<UpdateStatus>;

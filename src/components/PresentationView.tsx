@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AnnotationMode, type PDFDocumentProxy, type PageViewport } from 'pdfjs-dist';
 import type { PlannedPage } from '../pdf/page-plan';
@@ -96,7 +97,7 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
   const inkScale = slide ? slide.viewport.width / 1000 : 1;
   const inkViewBox = slide ? `${-(bounds.width - slide.viewport.width) / 2 / inkScale} ${-(bounds.height - slide.viewport.height) / 2 / inkScale} ${bounds.width / inkScale} ${bounds.height / inkScale}` : '';
   if (slide && !pageInk.current.has(slide.page.id)) pageInk.current.set(slide.page.id, []);
-  return <dialog ref={dialog} className={`presentation-view${cursorVisible ? ' cursor-visible' : ''}${laserEnabled ? ' laser-enabled' : ''}`} aria-label="PDF presentation" tabIndex={-1}
+  return <dialog ref={dialog} className={`presentation-view${cursorVisible ? ' cursor-visible' : ''}${laserEnabled ? ' laser-enabled' : ''}`} aria-label={t("PDF presentation")} tabIndex={-1}
     onCancel={event => { event.preventDefault(); onExit(); }}
     onClick={() => { if (!laserEnabled) advance(1); }} onContextMenu={event => { event.preventDefault(); if (!laserEnabled) advance(-1); }}
     onPointerLeave={() => { if (laser.current) laser.current.style.visibility = 'hidden'; }}
@@ -120,7 +121,7 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
           color="#000000" lineWidth={1} drawStyle={{}} fontSize={16} fontChoice="helvetica" textAppearance={{}}
           onAdd={noop} onUpdate={noop} onDelete={noop} onSelect={noop} />
         {signatures.filter(signature => signature.pageId === slide.page.id).map(signature => <img key={signature.id}
-          className="presentation-signature" src={signature.dataUrl} alt="Signature" draggable={false}
+          className="presentation-signature" src={signature.dataUrl} alt={t("Signature")} draggable={false}
           style={{ left: `${signature.x * 100}%`, top: `${signature.y * 100}%`, width: `${signature.width * 100}%`, height: `${signature.height * 100}%` }} />)}
       </div>}
       {slide && objects.filter(object => object.kind === 'video' && !object.hidden && object.pageId === slide.page.id).map(object =>
@@ -128,7 +129,7 @@ export default function PresentationView({ pdf, pages, initialPage, objects, sig
     </div>
     {slide && <PresentationInk key={slide.page.id} enabled={laserEnabled} paths={pageInk.current.get(slide.page.id)!} viewBox={inkViewBox} />}
     <span ref={laser} className="presentation-laser" hidden={!laserEnabled} aria-hidden="true" />
-    <span className="presentation-announcement" aria-live="polite">Page {slide ? slide.index + 1 : index + 1} of {pages.length}. Use arrow keys to navigate. Laser pointer {laserEnabled ? 'on' : 'off'}; press L to toggle. Hold the left mouse button to draw; right-click to clear this page's drawings. Drawings remain on their pages until cleared or the presentation ends. Escape exits presentation.</span>
+    <span className="presentation-announcement" aria-live="polite">{t("Page")} {slide ? slide.index + 1 : index + 1} {t("of")} {pages.length}{t(". Use arrow keys to navigate. Laser pointer")} {laserEnabled ? t("on") : t("off")}{t("; press L to toggle. Hold the left mouse button to draw; right-click to clear this page's drawings. Drawings remain on their pages until cleared or the presentation ends. Escape exits presentation.")}</span>
     {error && <p className="presentation-error" role="alert">{error}</p>}
   </dialog>;
 }

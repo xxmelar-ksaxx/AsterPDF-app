@@ -83,6 +83,13 @@ embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-tex
   getRecentPdfs: () => ipcRenderer.invoke('recent:list'),
   recentAction: (filePath, action) => ipcRenderer.invoke('recent:action', filePath, action),
   setRecentPreview: (filePath, preview) => ipcRenderer.invoke('recent:set-preview', filePath, preview),
+  getLanguage: () => ipcRenderer.invoke('language:get'),
+  setLanguage: preference => ipcRenderer.invoke('language:set', preference),
+  onLanguageChanged: handler => {
+    const listener = (_event, state) => handler(state);
+    ipcRenderer.on('language:changed', listener);
+    return () => ipcRenderer.removeListener('language:changed', listener);
+  },
   getSettings: () => ipcRenderer.invoke('settings:get'),
   getUpdateStatus: () => ipcRenderer.invoke('updates:status'),
   checkForUpdates: () => ipcRenderer.invoke('updates:check'),

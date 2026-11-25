@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useRef, useState } from 'react';
 import { Play, X } from 'lucide-react';
 import type { OverlayObject } from '../pdf/overlays';
@@ -32,9 +33,9 @@ export default function VideoPlayer({ object, width, height }: { object: Overlay
     {started && url && <video ref={video} src={url} poster={object.image} controls={open} playsInline preload="metadata" hidden={!open}
       aria-label={object.name || 'Embedded video'} onPlay={() => setOpen(true)}
       onError={() => { setOpen(false); setError('This video cannot be played on this device.'); }} />}
-    {!open && <button className="video-play" aria-label={`Play ${object.name || 'video'}`} title="Play video"
+    {!open && <button className="video-play" aria-label={t("Play {0}", object.name || 'video')} title={t("Play video")}
       onClick={() => { if (!url) { setError('The embedded video is unavailable.'); return; } setError(''); setStarted(true); setOpen(true); }}><Play size={26} fill="currentColor" /></button>}
-    {open && <button className="video-close" aria-label="Stop video" title="Stop video" onClick={() => { video.current?.pause(); setOpen(false); }}><X size={16} /></button>}
+    {open && <button className="video-close" aria-label={t("Stop video")} title={t("Stop video")} onClick={() => { video.current?.pause(); setOpen(false); }}><X size={16} /></button>}
     {error && <span className="video-error" role="alert">{error}</span>}
   </div>;
 }

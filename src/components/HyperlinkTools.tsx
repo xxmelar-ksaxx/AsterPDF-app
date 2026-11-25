@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useRef, useState } from 'react';
 import { Copy, Link2, TextSelect, X } from 'lucide-react';
 import { normalizeLink } from '../pdf/links';
@@ -13,12 +14,12 @@ export function HyperlinkMenu({ x, y, selection, onAdd, onSelectText, onClose }:
     document.addEventListener('pointerdown', outside); document.addEventListener('keydown', key);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', key); };
   }, [onClose]);
-  return <div ref={root} className="hyperlink-menu" role="menu" aria-label="Text options"
+  return <div ref={root} className="hyperlink-menu" role="menu" aria-label={t("Text options")}
     style={{ left: Math.max(8, Math.min(x, window.innerWidth - 220)), top: Math.max(8, Math.min(y, window.innerHeight - 150)) }}
     onContextMenu={event => event.preventDefault()}>
-    <button role="menuitem" autoFocus disabled={!selection.length} onClick={onAdd}><Link2 size={16} />Add hyperlink</button>
-    <button role="menuitem" disabled={!selection.length} onClick={() => { void navigator.clipboard.writeText(selection.map(item => item.text).join('\n')).then(onClose).catch(() => {}); }}><Copy size={16} />Copy text</button>
-    <button role="menuitem" onClick={onSelectText}><TextSelect size={16} />Select PDF text</button>
+    <button role="menuitem" autoFocus disabled={!selection.length} onClick={onAdd}><Link2 size={16} />{t("Add hyperlink")}</button>
+    <button role="menuitem" disabled={!selection.length} onClick={() => { void navigator.clipboard.writeText(selection.map(item => item.text).join('\n')).then(onClose).catch(() => {}); }}><Copy size={16} />{t("Copy text")}</button>
+    <button role="menuitem" onClick={onSelectText}><TextSelect size={16} />{t("Select PDF text")}</button>
   </div>;
 }
 
@@ -38,12 +39,12 @@ export function HyperlinkDialog({ selection, onSave, onClose }: {
       catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
       finally { setSaving(false); }
     }}>
-    <div className="modal-head"><Link2 size={22} /><button type="button" disabled={saving} aria-label="Close hyperlink dialog" onClick={onClose}><X size={18} /></button></div>
-    <h2 id="hyperlink-title">Add hyperlink</h2><p className="hyperlink-selected" dir="auto">{text}</p>
-    <label htmlFor="hyperlink-url">Link destination</label><input id="hyperlink-url" autoFocus value={url} disabled={saving}
+    <div className="modal-head"><Link2 size={22} /><button type="button" disabled={saving} aria-label={t("Close hyperlink dialog")} onClick={onClose}><X size={18} /></button></div>
+    <h2 id="hyperlink-title">{t("Add hyperlink")}</h2><p className="hyperlink-selected" dir="auto">{text}</p>
+    <label htmlFor="hyperlink-url">{t("Link destination")}</label><input id="hyperlink-url" autoFocus value={url} disabled={saving}
       placeholder="https://example.com" autoComplete="off" spellCheck={false} onChange={event => setUrl(event.target.value)} />
     {error && <p className="hyperlink-error" role="alert">{error}</p>}
-    <div className="modal-actions"><button type="button" className="button outline" onClick={onClose} disabled={saving}>Cancel</button>
-      <button className="button primary" type="submit" disabled={saving || !url.trim()}>{saving ? 'Adding…' : 'Add link'}</button></div>
+    <div className="modal-actions"><button type="button" className="button outline" onClick={onClose} disabled={saving}>{t("Cancel")}</button>
+      <button className="button primary" type="submit" disabled={saving || !url.trim()}>{saving ? t("Adding…") : t("Add link")}</button></div>
   </form></div>;
 }

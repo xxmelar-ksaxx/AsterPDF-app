@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { Pipette } from 'lucide-react';
@@ -86,24 +87,24 @@ export default function ColorPicker({ value, recent, onChange, label = 'Text and
     finally { setSampling(false); }
   };
   return <div className="color-picker" data-added-text-controls data-comment-color={commentId}>
-    <button ref={trigger} className="color-picker-trigger" aria-label={label} title={`Color ${value}`}
+    <button ref={trigger} className="color-picker-trigger" aria-label={label} title={t("Color {0}", value)}
       aria-haspopup="dialog" aria-expanded={open} onClick={() => { if (open) finishChoice(); setOpen(!open); setError(''); }}>
       <span style={{ background: value }} />
     </button>
-    {open && createPortal(<div ref={menu} className="color-picker-menu" style={position} role="dialog" aria-label="Choose color"
+    {open && createPortal(<div ref={menu} className="color-picker-menu" style={position} role="dialog" aria-label={t("Choose color")}
       data-added-text-controls data-comment-color={commentId} onKeyDown={(event) => {
         event.stopPropagation();
         if (event.key === 'Escape') { event.preventDefault(); finishChoice(); setOpen(false); trigger.current?.focus(); }
       }}>
-      <h3>Recent colors</h3>
+      <h3>{t("Recent colors")}</h3>
       <div className="recent-color-grid">
         {recent.slice(0, 10).map((color) => <button key={color} className={`color-swatch${color === value ? ' active' : ''}`}
-          style={{ background: color }} aria-label={`Recent color ${color}`} title={color} onClick={() => choose(color)} />)}
-        {!recent.length && <p>Colors you use will appear here.</p>}
+          style={{ background: color }} aria-label={t("Recent color {0}", color)} title={color} onClick={() => choose(color)} />)}
+        {!recent.length && <p>{t("Colors you use will appear here.")}</p>}
       </div>
-      <h3>Custom color</h3>
+      <h3>{t("Custom color")}</h3>
       <div className="color-spectrum" style={{ backgroundColor: `hsl(${hsv.h} 100% 50%)` }} tabIndex={0}
-        role="slider" aria-label="Saturation and brightness" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(hsv.s * 100)}
+        role="slider" aria-label={t("Saturation and brightness")} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(hsv.s * 100)}
         aria-valuetext={`${Math.round(hsv.s * 100)}% saturation, ${Math.round(hsv.v * 100)}% brightness`}
         onPointerDown={(event) => { if (event.button !== 0) return; event.preventDefault(); event.currentTarget.focus(); event.currentTarget.setPointerCapture(event.pointerId); point(event); }}
         onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) point(event); }}
@@ -116,18 +117,18 @@ export default function ColorPicker({ value, recent, onChange, label = 'Text and
         }} onKeyUp={(event) => { if (event.key.startsWith('Arrow')) finishChoice(); }}>
         <span style={{ left: `${hsv.s * 100}%`, top: `${(1 - hsv.v) * 100}%` }} />
       </div>
-      <input className="color-hue" type="range" min="0" max="359" aria-label="Hue" value={hsv.h}
+      <input className="color-hue" type="range" min="0" max="359" aria-label={t("Hue")} value={hsv.h}
         onChange={(event) => adjust({ ...hsv, h: Number(event.target.value) })}
         onPointerUp={finishChoice} onKeyUp={finishChoice} />
-      <div className="color-hex-row"><label>Hex<input aria-label="Hex color" value={hex} maxLength={7} spellCheck={false}
+      <div className="color-hex-row"><label>Hex<input aria-label={t("Hex color")} value={hex} maxLength={7} spellCheck={false}
         onChange={(event) => { const next = event.target.value; setHex(next); setError('');
           if (/^#?[0-9a-f]{6}$/i.test(next)) choose('#' + next.replace(/^#/, ''), false);
         }} onBlur={commitHex}
         onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitHex(); } }} /></label>
-        <button className="icon-button" aria-label="Pick color from screen" title={EyeDropper ? 'Pick color from screen' : 'Screen color picking is unavailable'}
+        <button className="icon-button" aria-label={t("Pick color from screen")} title={EyeDropper ? t("Pick color from screen") : t("Screen color picking is unavailable")}
           disabled={!EyeDropper || sampling} onClick={() => void sample()}><Pipette size={18} /></button>
       </div>
-      {sampling && <p role="status">Click a screen color. Esc to cancel.</p>}
+      {sampling && <p role="status">{t("Click a screen color. Esc to cancel.")}</p>}
       {error && <p className="color-picker-error" role="alert">{error}</p>}
     </div>, document.body)}
   </div>;

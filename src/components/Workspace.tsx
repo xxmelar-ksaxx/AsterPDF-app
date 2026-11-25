@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useRef, useState } from 'react';
 import { FileText, Home, Plus, X, AppWindow, ExternalLink, Download } from 'lucide-react';
 
@@ -37,8 +38,8 @@ export default function Workspace() {
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
   }, []);
-  return <nav className={`document-tabs-bar${state.dragging ? ' is-dragging' : ''}`} aria-label="Documents">
-    <button className="workspace-brand" aria-label="Home - Recently opened PDFs" title="Home - Recently opened PDFs" onClick={() => window.aster.workspaceAction('home')}><img src="./icon.png" alt="" /><span>Aster<span className="brand-pdf">PDF</span></span></button>
+  return <nav className={`document-tabs-bar${state.dragging ? ' is-dragging' : ''}`} aria-label={t("Documents")}>
+    <button className="workspace-brand" aria-label={t("Home - Recently opened PDFs")} title={t("Home - Recently opened PDFs")} onClick={() => window.aster.workspaceAction('home')}><img src="./icon.png" alt="" /><span>Aster<span className="brand-pdf">PDF</span></span></button>
     <div className="document-tabs" role="tablist" ref={strip} onWheel={event => { if (strip.current) strip.current.scrollLeft += event.deltaY; }}>
       {state.tabs.map((tab, index) => <div key={tab.id} data-tab-id={tab.id}
         className={`document-tab${tab.id === state.activeId ? ' active' : ''}${dropIndex === index ? ' drop-before' : ''}${dropIndex === state.tabs.length && index === state.tabs.length - 1 ? ' drop-after' : ''}`}
@@ -67,16 +68,16 @@ export default function Workspace() {
         <button className="tab-select" role="tab" aria-selected={tab.id === state.activeId} title={tab.path || 'Recently opened files'}
           onClick={event => { if (event.detail === 0) window.aster.workspaceAction('select', tab.id); }}>
           {tab.busy ? <span className="inline-spinner" /> : tab.path ? <FileText size={14} /> : <Home size={14} />}
-          <span className="tab-name">{tab.crashed ? `${tab.name} (stopped)` : tab.name}</span>
-          {tab.dirty && <span className="tab-dirty" aria-label="Unsaved changes" />}
+          <span className="tab-name">{tab.crashed ? t("{0} (stopped)", tab.name) : tab.path ? tab.name : t('Home')}</span>
+          {tab.dirty && <span className="tab-dirty" aria-label={t("Unsaved changes")} />}
         </button>
-        <button className="tab-detach" aria-label={`Move ${tab.name} to a new window`} title="Move to a new window" onClick={() => window.aster.workspaceAction('detach', tab.id)}><ExternalLink size={12} /></button>
-        <button className="tab-close" aria-label={`Close ${tab.name}`} onClick={() => window.aster.workspaceAction('close', tab.id)}><X size={14} /></button>
+        <button className="tab-detach" aria-label={t("Move {0} to a new window", tab.name)} title={t("Move to a new window")} onClick={() => window.aster.workspaceAction('detach', tab.id)}><ExternalLink size={12} /></button>
+        <button className="tab-close" aria-label={t("Close {0}", tab.name)} onClick={() => window.aster.workspaceAction('close', tab.id)}><X size={14} /></button>
       </div>)}
     </div>
-    <button className="workspace-button" aria-label="New tab" title="New tab (Ctrl/Cmd+T)" onClick={() => window.aster.workspaceAction('new-tab')}><Plus size={17} /></button>
-    <button className="workspace-button" aria-label="New window" title="New window (Ctrl/Cmd+Shift+N)" onClick={() => window.aster.workspaceAction('new-window')}><AppWindow size={16} /></button>
-    {(state.update?.available || state.update?.transfer.phase === 'ready') && <button className={`workspace-button workspace-update${state.update.transfer.phase === 'downloading' ? ' downloading' : ''}`} aria-label="Update AsterPDF" title={state.update.transfer.phase === 'downloading' ? `Downloading ${Math.floor(state.update.transfer.percent || 0)}%` : state.update.transfer.phase === 'ready' ? 'Restart and install update' : 'Update available'} onClick={() => window.aster.workspaceAction('update')}><Download size={18} /></button>}
+    <button className="workspace-button" aria-label={t("New tab")} title={t("New tab (Ctrl/Cmd+T)")} onClick={() => window.aster.workspaceAction('new-tab')}><Plus size={17} /></button>
+    <button className="workspace-button" aria-label={t("New window")} title={t("New window (Ctrl/Cmd+Shift+N)")} onClick={() => window.aster.workspaceAction('new-window')}><AppWindow size={16} /></button>
+    {(state.update?.available || state.update?.transfer.phase === 'ready') && <button className={`workspace-button workspace-update${state.update.transfer.phase === 'downloading' ? ' downloading' : ''}`} aria-label={t("Update AsterPDF")} title={state.update.transfer.phase === 'downloading' ? t("Downloading {0}%", Math.floor(state.update.transfer.percent || 0)) : state.update.transfer.phase === 'ready' ? t("Restart and install update") : t("Update available")} onClick={() => window.aster.workspaceAction('update')}><Download size={18} /></button>}
     {error && <span role="alert">{error}</span>}
   </nav>;
 }

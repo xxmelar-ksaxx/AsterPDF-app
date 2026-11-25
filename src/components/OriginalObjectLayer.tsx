@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { ImagePlus, Trash2 } from 'lucide-react';
@@ -87,13 +88,13 @@ export default function OriginalObjectLayer({enabled,busy,getSourceBytes,pageId,
     setMenu({object,x:Math.max(8,Math.min(innerWidth-205,event.clientX)),y:Math.max(8,Math.min(innerHeight-95,event.clientY))});
   };
   return <>
-    <svg className="original-object-layer" width={viewport.width} height={viewport.height} aria-label="Original PDF objects"
+    <svg className="original-object-layer" width={viewport.width} height={viewport.height} aria-label={t("Original PDF objects")}
       onPointerMove={move} onPointerUp={end} onPointerCancel={()=>{drag.current=null;setPreview(null);livePreview.cancel();}} onDragStart={event=>event.preventDefault()}>
       {visibleObjects.map(object=>{
         const b=objectBox(object,viewport);
-        return <g key={object.id} data-original-object={object.id} data-object-kind={object.kind} aria-label={`Original ${label(object).toLowerCase()}`}
+        return <g key={object.id} data-original-object={object.id} data-object-kind={object.kind} aria-label={t("Original {0}", label(object).toLowerCase())}
           onPointerEnter={()=>{if(!busy)livePreview.warm(Number(object.id));}} onPointerDown={event=>begin(event,object)} onContextMenu={event=>context(event,object)}>
-          <title>{object.kind==='group'?'Grouped artwork · move and resize as one object':label(object)}</title>
+          <title>{object.kind==='group'?t("Grouped artwork · move and resize as one object"):label(object)}</title>
           {object.shape?<path className="original-object-hit" d={object.shape} transform={`matrix(${viewport.transform.join(' ')}) matrix(${transformFor(transforms,pageIndex,Number(object.id)).join(' ')})`}
             style={{pointerEvents:object.fill?'all':'stroke'}} fill={object.fill?'transparent':'none'} stroke="transparent" strokeWidth={Math.max(object.strokeWidth,6/viewport.scale)} />:
             <rect className="original-object-hit" {...b} fill="transparent" />}
@@ -101,7 +102,7 @@ export default function OriginalObjectLayer({enabled,busy,getSourceBytes,pageId,
       })}
       {visibleObjects.filter(o=>selections.some(s=>s.kind==='native'&&s.pageId===pageId&&s.index===Number(o.id))).map(o=><rect key={`selected-${o.id}`} data-selected-original={o.id} {...objectBox(o,viewport)} className="multi-object-outline" />)}
     </svg>
-    {selected&&box&&frame&&selections.length<2&&<svg className="original-object-frame" width={viewport.width} height={viewport.height} aria-label="Selected original object"
+    {selected&&box&&frame&&selections.length<2&&<svg className="original-object-frame" width={viewport.width} height={viewport.height} aria-label={t("Selected original object")}
       onPointerMove={move} onPointerUp={end} onPointerCancel={()=>{drag.current=null;setPreview(null);livePreview.cancel();}}>
       <rect {...frame} className="original-object-outline" onPointerDown={event=>begin(event,selected)} onContextMenu={event=>context(event,selected)} />
       {(['nw','n','ne','e','se','s','sw','w'] as ResizeHandle[]).map(handle=>{
@@ -111,11 +112,11 @@ export default function OriginalObjectLayer({enabled,busy,getSourceBytes,pageId,
           onPointerDown={event=>begin(event,selected,handle)} />;
       })}
     </svg>}
-    {menu&&createPortal(<div className="image-context-menu" data-original-object-menu role="menu" aria-label="Original object actions" style={{left:menu.x,top:menu.y}}>
-      {menu.object.kind==='image'&&<button role="menuitem" onClick={()=>{replacement.current=menu.object;setMenu(null);input.current?.click();}}><ImagePlus size={15}/>Replace image…</button>}
-      <button role="menuitem" onClick={()=>{void onChange(target(menu.object),{type:'delete'});setMenu(null);}}><Trash2 size={15}/>Delete {label(menu.object).toLowerCase()}</button>
+    {menu&&createPortal(<div className="image-context-menu" data-original-object-menu role="menu" aria-label={t("Original object actions")} style={{left:menu.x,top:menu.y}}>
+      {menu.object.kind==='image'&&<button role="menuitem" onClick={()=>{replacement.current=menu.object;setMenu(null);input.current?.click();}}><ImagePlus size={15}/>{t("Replace image…")}</button>}
+      <button role="menuitem" onClick={()=>{void onChange(target(menu.object),{type:'delete'});setMenu(null);}}><Trash2 size={15}/>{t("Delete")} {label(menu.object).toLowerCase()}</button>
     </div>,document.body)}
-    <input ref={input} hidden type="file" accept="image/png,image/jpeg,image/webp" aria-label="Replace original image" onChange={async event=>{
+    <input ref={input} hidden type="file" accept="image/png,image/jpeg,image/webp" aria-label={t("Replace original image")} onChange={async event=>{
       const file=event.target.files?.[0],object=replacement.current;event.target.value='';if(!file||!object)return;
       try{
         const bitmap=await createImageBitmap(file);

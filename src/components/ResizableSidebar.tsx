@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
 const DEFAULT_WIDTH = 352;
@@ -43,10 +44,10 @@ export default function ResizableSidebar({ collapsed, children }: { collapsed: b
   }, [collapsed]);
 
   return <aside ref={sidebar} className={`sidebar${collapsed ? ' collapsed' : ''}${resizing ? ' resizing' : ''}`}
-    style={collapsed ? undefined : { width, minWidth: width }} aria-label="Document sidebar">
-    {!collapsed && <div className="sidebar-resize" role="separator" aria-label="Resize feature sidebar" aria-orientation="vertical"
+    style={collapsed ? undefined : { width, minWidth: width }} aria-label={t("Document sidebar")}>
+    {!collapsed && <div className="sidebar-resize" role="separator" aria-label={t("Resize feature sidebar")} aria-orientation="vertical"
       aria-valuemin={MIN_WIDTH} aria-valuemax={maxWidth} aria-valuenow={width} aria-valuetext={`${width} pixels`} tabIndex={0}
-      title="Drag to resize · Double-click to reset"
+      title={t("Drag to resize · Double-click to reset")}
       onPointerDown={event => {
         if (event.button !== 0 || !event.isPrimary) return;
         event.preventDefault(); event.stopPropagation();

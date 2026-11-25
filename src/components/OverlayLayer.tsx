@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { onFinishInlineEdit } from '../finish-inline-edit';
@@ -280,7 +281,7 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
     return <image href={object.image} x={x} y={y} width={w} height={h} preserveAspectRatio="none" />;
   };
   return <><svg ref={layer} className={`overlay-layer${tool === 'select' ? ' overlay-select' : ''}${tool === 'image' ? ' overlay-image' : ''}${tool === 'text' ? ' overlay-text' : ''}${tool && ['pen', 'rectangle', 'ellipse', 'line'].includes(tool) ? ' overlay-drawing' : ''}${tool ? ' overlay-active' : ''}`}
-    width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label="Editable PDF objects"
+    width={width} height={height} viewBox={`0 0 ${width} ${height}`} aria-label={t("Editable PDF objects")}
     onPointerDown={begin} onPointerMove={move} onPointerUp={end}
     onPointerLeave={() => setImageCursor(null)} onDragStart={(event) => event.preventDefault()}
     onPointerCancel={() => { gesture.current = null; setPreview(null); }}>
@@ -305,7 +306,7 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
           : <rect x={shown.x * width} y={shown.y * height} width={Math.max(16, shown.width * width)} height={Math.max(16, shown.height * height)}
             fill="transparent" stroke={selectedIds.includes(object.id) || selectedId === object.id ? '#5c922c' : 'transparent'} strokeDasharray="5 3" strokeWidth="2" />)}
         {!object.locked && !readOnly && selectedIds.length < 2 && editing?.object.id !== object.id && selectedId === object.id && (tool === 'select' || (object.kind === 'text' && tool === 'text')) && <g className="image-resize-frame">
-          <title>{object.kind === 'text' ? 'Drag an edge or corner to resize the text container without changing font size.' : 'Drag to move. Drag an edge or corner to resize. Hold Shift to keep proportions.'}</title>
+          <title>{object.kind === 'text' ? t("Drag an edge or corner to resize the text container without changing font size.") : t("Drag to move. Drag an edge or corner to resize. Hold Shift to keep proportions.")}</title>
           {(['n', 'e', 's', 'w'] as const).map((handle) => <rect key={`edge-${handle}`} className={`image-resize-edge resize-${handle}`}
             x={(shown.x + (handle === 'e' ? shown.width : 0)) * width - 4}
             y={(shown.y + (handle === 's' ? shown.height : 0)) * height - 4}
@@ -331,7 +332,7 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
                 gesture.current = { kind: 'radius', start: point(event, true), original: object, corner };
                 layer.current?.setPointerCapture(event.pointerId);
               }}>
-              <title>{`Drag to change ${['top-left', 'top-right', 'bottom-right', 'bottom-left'][corner]} radius. Hold Shift for all corners.`}</title>
+              <title>{t("Drag to change {0} radius. Hold Shift for all corners.", ['top-left', 'top-right', 'bottom-right', 'bottom-left'][corner])}</title>
               <circle r="9" fill="transparent" /><circle className="draw-radius-dot" r="4" />
             </g>;
           })}
@@ -346,16 +347,16 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
   </svg>
     {showVideoPlayers && objects.filter(object => object.kind === 'video' && !object.hidden).map(object =>
       <VideoPlayer key={object.id} object={preview?.id === object.id ? preview : object} width={width} height={height} />)}
-    {imageMenu && createPortal(<div className="image-context-menu" role="menu" aria-label="Object actions"
+    {imageMenu && createPortal(<div className="image-context-menu" role="menu" aria-label={t("Object actions")}
       style={{ left: imageMenu.x, top: imageMenu.y }} onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => { if (event.key === 'Escape' || event.key === 'Tab') { setImageMenu(null); if (event.key === 'Escape') event.preventDefault(); } }}>
-      <button role="menuitem" autoFocus onClick={() => { onDelete(imageMenu.id); setImageMenu(null); }}><Trash2 size={15} />Delete {({ image: 'image', video: 'video' } as Record<string, string>)[objects.find(object => object.id === imageMenu.id)?.kind || ''] || 'object'}</button>
+      <button role="menuitem" autoFocus onClick={() => { onDelete(imageMenu.id); setImageMenu(null); }}><Trash2 size={15} />{t("Delete")} {({ image: 'image', video: 'video' } as Record<string, string>)[objects.find(object => object.id === imageMenu.id)?.kind || ''] || 'object'}</button>
     </div>, document.body)}
     {editing && (() => {
       const object = editing.object, size = textSize(object);
       const x = object.x * width, y = object.y * height + size * scale;
       const origin = viewport.convertToPdfPoint(x, y), right = viewport.convertToPdfPoint(x + scale, y), up = viewport.convertToPdfPoint(x, y - scale);
-      return <OriginalTextEditor key={object.id} initialCaret={editing.caret} mask={false} label={paragraphDraft ? "Edit PDF paragraph" : "Edit text on page"} canvas={null} viewport={viewport} fonts={fonts}
+      return <OriginalTextEditor key={object.id} initialCaret={editing.caret} mask={false} label={paragraphDraft ? t("Edit PDF paragraph") : t("Edit text on page")} canvas={null} viewport={viewport} fonts={fonts}
         appearance={object} frameWidth={object.textSizing && object.textSizing !== 'auto' ? object.width * width : undefined}
         edit={{ index: -1, text: object.text || '', value: editing.value, box: [0, 0, 0, 0], fontName: '', fontChoice: object.fontChoice || 'helvetica',
           fontSize: size, color: [1, 3, 5].map((offset) => Number.parseInt(object.color.slice(offset, offset + 2), 16)).concat(Math.round(255 * (object.opacity ?? 1))),

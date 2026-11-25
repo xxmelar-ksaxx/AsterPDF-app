@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { joinParagraphFrames } from './join-paragraph-frames';
 import { detectParagraphs, type Paragraph } from '../pdf/paragraphs';
 import useMarqueeSelection, { type SelectionCandidate } from './useMarqueeSelection';
@@ -417,7 +418,7 @@ export default function PdfPage({
   };
 
   return <div className="page-sheet" data-page-number={pageNumber} ref={setSheet}>
-    <span className="page-label">Page {pageNumber}</span>
+    <span className="page-label">{t("Page")} {pageNumber}</span>
     <div className={`page-stage ${placing || placingSignature ? 'is-placing' : ''}${editingOriginal ? ' is-editing-text' : ''}`} ref={stageRef} onClick={choosePoint} onClickCapture={event=>{if(!marquee.click(event))groupDrag.click(event);}} onPointerDownCapture={event=>{if(!marquee.down(event))groupDrag.down(event);}} onPointerMoveCapture={event=>{if(!marquee.move(event))groupDrag.move(event);}} onPointerUpCapture={event=>{if(!marquee.up(event))groupDrag.up(event);}} onPointerCancelCapture={()=>{if(!marquee.cancel())groupDrag.cancel();}} onLostPointerCapture={()=>marquee.cancel()}
       onContextMenuCapture={event => {
         if(groupDrag.context(event))return;
@@ -435,11 +436,11 @@ export default function PdfPage({
       {activeViewport && <OriginalObjectLayer enabled={near && editActive && overlayTool === 'select' && !selectingLinks} busy={objectEditingBusy}
         getSourceBytes={getSourceBytes} pageId={pageId} pageIndex={sourcePageNumber-1} viewport={activeViewport}
         selections={editSelection} onObjectsChange={setOriginalObjects} selection={originalObjectSelection} onSelect={onSelectOriginalObject} onChange={onEditOriginalObject} onError={onError} livePreview={livePreview} transforms={originalTransforms} />}
-      {inspectOriginalText && activeViewport && <div className="original-text-layer" aria-label="Original PDF text">
+      {inspectOriginalText && activeViewport && <div className="original-text-layer" aria-label={t("Original PDF text")}>
         {paragraphMode ? paragraphBlocks.map(block => {
           const frame = block.object;
           return <button key={blockKey(block)} className="paragraph-hit" type="button"
-            aria-label={`Edit paragraph: ${frame.text}`} title="Edit this text block" aria-busy={preparingParagraph === blockKey(block)}
+            aria-label={t("Edit paragraph: {0}", frame.text)} title={t("Edit this text block")} aria-busy={preparingParagraph === blockKey(block)}
             style={{left:frame.x*width, top:frame.y*height, width:frame.width*width, height:frame.height*height}}
             onPointerEnter={() => {const last=block.sources.at(-1); if (last && !paragraphDraft && !objectEditingBusy) livePreview.warmScene(last.index,withoutParagraph(block));}}
             onPointerLeave={livePreview.stopWarming} disabled={objectEditingBusy || Boolean(paragraphDraft)}
@@ -455,7 +456,7 @@ export default function PdfPage({
           const left = Math.min(a[0], b[0]) + (offset?.dx || 0); const top = Math.min(a[1], b[1]) + (offset?.dy || 0);
           const boxWidth = Math.max(12, Math.abs(a[0] - b[0])); const boxHeight = Math.max(12, Math.abs(a[1] - b[1]));
           return <svg key={object.index} data-original-text-index={object.index} className={`original-text-frames${editingOriginal?.index === object.index ? ' is-editing' : ''}`} width={width} height={height}
-            aria-label={`Original text frame: ${object.text}`} onPointerEnter={()=>{if(!objectEditingBusy)livePreview.warm(object.index);}}>
+            aria-label={t("Original text frame: {0}", object.text)} onPointerEnter={()=>{if(!objectEditingBusy)livePreview.warm(object.index);}}>
             <TextFrame x={left} y={top} width={boxWidth} height={boxHeight} selected={editingOriginal?.index === object.index || offset !== null || editSelection.some(s => s.kind === 'native' && s.pageId === pageId && s.index === object.index)}
               onInteriorClick={(event) => { event.stopPropagation(); if (event.ctrlKey || event.metaKey) { onSelectNativeText({kind:'native',pageId,pageIndex:sourcePageNumber-1,index:object.index,box:object.box,text:object.text},true); return; } const next = { ...object, value: object.text, fontChoice: 'original' as const };
                 editingOriginalRef.current = next; setEditingOriginal(next);
@@ -499,7 +500,7 @@ export default function PdfPage({
         objects={paragraphDraft?.overlayIds ? overlays.filter(item=>!paragraphDraft.overlayIds!.includes(item.id)) : overlays}
         selectedIds={editSelection.filter(s=>s.kind==='overlay').map(s=>s.id)} selectedId={selectedOverlayId} onAdd={onAddOverlay} onUpdate={onUpdateOverlay} onDelete={onDeleteOverlay} onSelect={onSelectOverlay} />}
       {groupDrag.frame}{groupDrag.popup}{marquee.visual}
-      {near && !ready && <span className="page-rendering">Rendering page {pageNumber}…</span>}
+      {near && !ready && <span className="page-rendering">{t("Rendering page")} {pageNumber}…</span>}
       {activeViewport && comments.filter(comment => markupKind(comment.kind) && comment.quadPoints?.length).map(comment =>
         <CommentMarkup key={`markup-${comment.id}`} comment={comment} viewport={activeViewport} selected={selectedId === comment.id}
           onSelect={() => onSelectComment(comment.id)} />)}
@@ -538,8 +539,8 @@ export default function PdfPage({
           const bounds = stageRef.current!.getBoundingClientRect(); setSignatureMenu({ id: signature.id,
             x: Math.max(0, Math.min(width - 140, event.clientX - bounds.left)),
             y: Math.max(0, Math.min(height - 40, event.clientY - bounds.top)) }); }}>
-        <img src={signature.dataUrl} alt="Pending signature" draggable={false} />
-        {selectedSignatureId === signature.id && <span className="signature-resize" role="button" aria-label="Resize signature"
+        <img src={signature.dataUrl} alt={t("Pending signature")} draggable={false} />
+        {selectedSignatureId === signature.id && <span className="signature-resize" role="button" aria-label={t("Resize signature")}
           onPointerDown={(event) => { event.stopPropagation(); dragRef.current = { id: signature.id, mode: 'resize', startX: event.clientX, startY: event.clientY, placement: signature };
             event.currentTarget.parentElement?.setPointerCapture(event.pointerId); }} />}
       </div>)}
@@ -549,7 +550,7 @@ export default function PdfPage({
           style={{ left: box.left, top: box.top, width: box.width, height: box.height }} />;
       })()}
       {signatureMenu && <div className="signature-context-menu" style={{ left: signatureMenu.x, top: signatureMenu.y }}>
-        <button onClick={(event) => { event.stopPropagation(); onDeleteSignature(signatureMenu.id); setSignatureMenu(null); }}>Delete signature</button>
+        <button onClick={(event) => { event.stopPropagation(); onDeleteSignature(signatureMenu.id); setSignatureMenu(null); }}>{t("Delete signature")}</button>
       </div>}
     </div>
   </div>;

@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { ArrowRight, MessageSquare, Reply, Trash2, X } from 'lucide-react';
@@ -60,7 +61,7 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
   const close = () => { onClose(); pinRef.current?.focus({ preventScroll: true }); };
   return <>
     <button ref={pinRef} className={`comment-pin ${selected ? 'selected' : ''} ${comment.draft ? 'draft' : ''}${comment.quadPoints?.length ? ' markup-anchor' : ''}`}
-      style={{ left, top }} aria-label={isMarkup && !hasComment ? `${comment.kind} options on page ${comment.page}` : `Comment by ${comment.author} on page ${comment.page}`}
+      style={{ left, top }} aria-label={isMarkup && !hasComment ? t("{0} options on page {1}", t(comment.kind), comment.page) : t("Comment by {0} on page {1}", comment.author, comment.page)}
       aria-expanded={open} aria-controls={open ? popupId : undefined} aria-haspopup="dialog"
       onClick={(event) => { event.stopPropagation(); onSelect(); }}>
       <MessageSquare size={14} fill="currentColor" />
@@ -74,10 +75,10 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
       }}>
       <div className="comment-popup-header">
         {(!isMarkup || hasComment) && <span className="avatar">{comment.author.charAt(0).toUpperCase()}</span>}
-        <strong id={titleId} className="comment-author">{isMarkup && !hasComment ? `${comment.kind} options` : comment.author}</strong>
-        <span className="comment-page">p. {comment.page}</span>
-        {(!isMarkup || hasComment) && <button className="icon-button" title="Open in comments" aria-label="Open sidebar and show this comment" onClick={onOpenSidebar}><ArrowRight size={17} /></button>}
-        <button className="icon-button" title="Close comment" aria-label="Close comment" onClick={close}><X size={17} /></button>
+        <strong id={titleId} className="comment-author">{isMarkup && !hasComment ? t("{0} options", t(comment.kind)) : comment.author}</strong>
+        <span className="comment-page">{t("p.")} {comment.page}</span>
+        {(!isMarkup || hasComment) && <button className="icon-button" title={t("Open in comments")} aria-label={t("Open sidebar and show this comment")} onClick={onOpenSidebar}><ArrowRight size={17} /></button>}
+        <button className="icon-button" title={t("Close comment")} aria-label={t("Close comment")} onClick={close}><X size={17} /></button>
       </div>
       {(!isMarkup || hasComment) && <div className="comment-popup-body">
         <CommentBody text={comment.text || (isMarkup ? comment.kind : '(Empty note)')} bold={comment.bold} />
@@ -85,14 +86,14 @@ export default function CommentPin({ comment, left, top, selected, open, viewerR
           {comment.replies.map(reply => <div key={reply.id} className="comment-popup-reply"><strong>{reply.author}</strong><CommentBody text={reply.text} bold={reply.bold} /></div>)}
         </div>}
       </div>}
-      {(!isMarkup || hasComment) && <button className="text-button comment-reply-action" disabled={colorDisabled} onClick={onReply}><Reply size={15} />Reply</button>}
+      {(!isMarkup || hasComment) && <button className="text-button comment-reply-action" disabled={colorDisabled} onClick={onReply}><Reply size={15} />{t("Reply")}</button>}
       {markupKind(comment.kind) && comment.quadPoints?.length && <div className="comment-markup-color">
-        <span>{comment.kind === 'Caret' ? 'Insertion' : comment.kind === 'Strikeout' ? 'Removal' : comment.kind === 'Underline' ? 'Replacement' : 'Highlight'} color</span>
+        <span>{comment.kind === 'Caret' ? t("Insertion") : comment.kind === 'Strikeout' ? t("Removal") : comment.kind === 'Underline' ? t("Replacement") : t("Highlight")} {t("color")}</span>
         {!colorDisabled && <ColorPicker commentId={comment.id} value={comment.color ?? MARKUP_COLORS[comment.kind]} recent={recentColors}
-          label="Change markup color" onChange={onColor} />}
-        <button className="icon-button" title={hasComment ? 'Edit comment' : 'Add comment'} aria-label={hasComment ? 'Edit markup comment' : 'Add comment to markup'}
+          label={t("Change markup color")} onChange={onColor} />}
+        <button className="icon-button" title={hasComment ? t("Edit comment") : t("Add comment")} aria-label={hasComment ? t("Edit markup comment") : t("Add comment to markup")}
           disabled={colorDisabled} onClick={onAddComment}><MessageSquare size={17} /></button>
-        <button className="icon-button" title="Delete markup" aria-label="Delete markup" disabled={colorDisabled} onClick={onDelete}><Trash2 size={17} /></button>
+        <button className="icon-button" title={t("Delete markup")} aria-label={t("Delete markup")} disabled={colorDisabled} onClick={onDelete}><Trash2 size={17} /></button>
       </div>}
     </div>, document.body)}
   </>;
