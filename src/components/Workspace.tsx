@@ -72,7 +72,8 @@ export default function Workspace() {
           {tab.dirty && <span className="tab-dirty" aria-label={t("Unsaved changes")} />}
         </button>
         <button className="tab-detach" aria-label={t("Move {0} to a new window", tab.name)} title={t("Move to a new window")} onClick={() => window.aster.workspaceAction('detach', tab.id)}><ExternalLink size={12} /></button>
-        <button className="tab-close" aria-label={t("Close {0}", tab.name)} onClick={() => window.aster.workspaceAction('close', tab.id)}><X size={14} /></button>
+        {(state.tabs.length > 1 || tab.path || tab.crashed) &&
+          <button className="tab-close" aria-label={t("Close {0}", tab.name)} onClick={() => window.aster.workspaceAction('close', tab.id)}><X size={14} /></button>}
       </div>)}
     </div>
     <button className="workspace-button" aria-label={t("New tab")} title={t("New tab (Ctrl/Cmd+T)")} onClick={() => window.aster.workspaceAction('new-tab')}><Plus size={17} /></button>

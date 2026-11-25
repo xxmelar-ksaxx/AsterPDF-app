@@ -32,7 +32,7 @@ export function justifyTextLine(line: TextLine, width: number, measure: (text: s
   const levels = bidi.getEmbeddingLevels(line.text, rtl ? 'rtl' : 'ltr');
   const ranks = new Map(bidi.getReorderedIndices(line.text, levels).map((index, rank) => [index, rank]));
   const displayed = smart ? stretchArabicWords(words.map((word) => word[0]), width - line.width, measure) : words.map((word) => word[0]);
-  const runs = words.map((word, index) => ({ text: displayed[index], width: measure(displayed[index]), x: 0,
+  const runs = words.map((word, index) => ({ text: displayed[index], sourceOffset: word.index!, width: measure(displayed[index]), x: 0,
     rank: Math.min(...Array.from({ length: word[0].length }, (_, index) => ranks.get(word.index! + index) ?? 0)) }))
     .sort((a, b) => a.rank - b.rank);
   const gap = Math.max(0, (width - runs.reduce((total, run) => total + run.width, 0)) / (runs.length - 1));

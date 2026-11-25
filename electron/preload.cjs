@@ -110,7 +110,7 @@ embedShapedText: (bytes, placements) => ipcRenderer.invoke('pdf:embed-shaped-tex
   },
   answerDiscardRequest: (id, discard) => ipcRenderer.send('pdf:confirm-discard-result', id, discard),
   onMenu: (channel, handler) => {
-    if (!['menu:home', 'menu:update', 'menu:open', 'menu:save', 'menu:save-as', 'menu:print', 'menu:settings', 'menu:about', 'menu:undo', 'menu:redo', 'menu:pdf-to-word', 'menu:pdf-to-data'].includes(channel)) return () => {};
+    if (!['menu:home', 'menu:update', 'menu:open', 'menu:save', 'menu:save-as', 'menu:print', 'menu:find', 'menu:settings', 'menu:about', 'menu:undo', 'menu:redo', 'menu:pdf-to-word', 'menu:pdf-to-data'].includes(channel)) return () => {};
     const listener = () => handler();
     ipcRenderer.on(channel, listener);
     return () => ipcRenderer.removeListener(channel, listener);

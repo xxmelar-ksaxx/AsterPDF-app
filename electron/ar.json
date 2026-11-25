@@ -603,5 +603,16 @@
   "larger": "أكبر",
   "same size": "الحجم نفسه",
   "Installing AsterPDF {0}…": "جارٍ تثبيت AsterPDF {0}…",
-  "Waiting for AsterPDF to reopen…": "بانتظار فتح AsterPDF مجددًا…"
+  "Waiting for AsterPDF to reopen…": "بانتظار فتح AsterPDF مجددًا…",
+  "Find in document": "بحث في المستند",
+  "Match case": "مطابقة حالة الأحرف",
+  "Whole words": "كلمات كاملة",
+  "Previous match": "النتيجة السابقة",
+  "Next match": "النتيجة التالية",
+  "Close search": "إغلاق البحث",
+  "Searching…": "جارٍ البحث…",
+  "No matches": "لا توجد نتائج",
+  "{0} of {1}": "{0} من {1}",
+  " · Some pages unavailable": " · تعذّر البحث في بعض الصفحات",
+  "No searchable text": "لا يوجد نص قابل للبحث"
 }

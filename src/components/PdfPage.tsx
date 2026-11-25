@@ -18,6 +18,8 @@ import TextFrame from './TextFrame';
 import CommentPin from './CommentPin';
 import CommentMarkup, { markupAtPoint } from './CommentMarkup';
 import PdfTextSelection, { registerSelectionPage, selectedPdfText } from './PdfTextSelection';
+import SearchHighlights from './SearchHighlights';
+import type { SearchHit } from '../pdf/search';
 import PdfLinks from './PdfLinks';
 import type { TextMarkupSelection } from '../pdf/comments';
 import type { ColorCommand, FontCommand, FontSelection, InstalledFont } from './FontPicker';
@@ -40,6 +42,10 @@ export function pageScale(size: PageSize, zoom: Zoom, viewerWidth: number): numb
 }
 
 type Props = {
+  searchHits?: SearchHit[];
+  searchActive?: SearchHit;
+  searchOverlayText: Map<string, string>;
+  onRevealFind: (hit: SearchHit, marker: HTMLElement) => void;
   document: PDFDocumentProxy;
   onRenderSettled?: (document: PDFDocumentProxy, page: number) => void;
   getSourceBytes: () => Uint8Array;
@@ -124,7 +130,7 @@ type Props = {
 };
 
 export default function PdfPage({
-  paragraphRequest, onRequestHandled, paragraphMode, onReplaceParagraph, editSelection, onSelectEditObjects, onSelectNativeText, onMoveEditSelection, onCopyEditSelection, onDeleteEditSelection, document, getSourceBytes, originalTransforms, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
+  searchHits, searchActive, searchOverlayText, onRevealFind, paragraphRequest, onRequestHandled, paragraphMode, onReplaceParagraph, editSelection, onSelectEditObjects, onSelectNativeText, onMoveEditSelection, onCopyEditSelection, onDeleteEditSelection, document, getSourceBytes, originalTransforms, inspectOriginalText, objectEditingBusy, originalObjectSelection, onSelectOriginalObject, onEditOriginalObject, onCommitOriginalText, onMoveOriginalText, onFontEditChange, fontCommand, colorCommand, installedFonts, pageNumber, sourcePageNumber, rotation, size, zoom, viewerWidth, viewerRef, comments, selectedId,
   popupCommentId, onCloseComment, onOpenCommentSidebar, commentsActive, markingText, insertingText, onMark, selectingLinks, editActive, onLinkMenu, onNavigateLink, onCommentColor, onAddMarkupComment, onDeleteMarkup, onReplyComment, recentColors, commentEditingDisabled,
   placing, pendingPoint, pageId, signatures, selectedSignatureId, placingSignature,
   registerPage, onMeasure, onPlace, onSelectComment, onAddSignature, onUpdateSignature, onSelectSignature, onDeleteSignature,
@@ -504,6 +510,8 @@ export default function PdfPage({
       {activeViewport && comments.filter(comment => markupKind(comment.kind) && comment.quadPoints?.length).map(comment =>
         <CommentMarkup key={`markup-${comment.id}`} comment={comment} viewport={activeViewport} selected={selectedId === comment.id}
           onSelect={() => onSelectComment(comment.id)} />)}
+      {near && ready && activeViewport && searchHits && <SearchHighlights pdf={document} sourcePage={sourcePageNumber}
+        viewport={activeViewport} hits={searchHits} active={searchActive} overlayText={searchOverlayText} reveal={onRevealFind}/>}
       {near && ready && activeViewport && (commentsActive || selectingLinks) && !placing && <PdfTextSelection pdf={document} sourcePage={sourcePageNumber} page={pageNumber}
         viewport={activeViewport} marking={markingText} inserting={insertingText} onMark={onMark} onError={onError} onClickMarkup={(x, y) => {
           const comment = markupAtPoint(comments, activeViewport, x, y);

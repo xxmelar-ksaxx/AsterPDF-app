@@ -2,15 +2,18 @@ import { languageState, t } from './i18n';
 import { compressPdf } from './pdf/compress-client';
 import type { CompressionEstimate, CompressionLevel, CompressionMode } from './pdf/compression';
 import { printPdf } from './pdf/print';
+import DocumentFindBar from './components/DocumentFindBar';
+import { useDocumentSearch } from './components/useDocumentSearch';
+import type { SearchHit } from './pdf/search';
 import PrintPreview from './components/PrintPreview';
 import ParagraphSpacing from './components/ParagraphSpacing';
 import HomeView from './components/HomeView';
 import ReaderControls from './components/ReaderControls';
 import { flushSync } from 'react-dom';
 import { videoBlob } from './pdf/video-assets';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  TextCursorInput, Pilcrow, ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
+  Search, TextCursorInput, Pilcrow, ArrowDownToLine, ChevronLeft, ChevronRight, CircleHelp, FilePlus2, FileText,
   FolderOpen, MessageSquare, Minus, Plus, Save, Settings2, X, Presentation,
   ArrowUp, ArrowDown, Check, Copy, Trash2, RotateCcw, RotateCw, PenLine, Files, Shrink, Undo2, Redo2, Maximize2, GripVertical, TriangleAlert,
   Pencil, Paintbrush, Eraser, Square, Circle, MousePointer2, Type, ImagePlus, Video, PanelRight,
@@ -60,7 +63,7 @@ import { finishInlineEdits } from './finish-inline-edit';
 pdfjs.GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
 
 type SidebarTab = 'comments' | 'pages' | 'draw';
-type ActiveTool = SidebarTab | 'edit' | 'draw' | 'sign' | 'compress' | 'files';
+type ActiveTool = SidebarTab | 'edit' | 'draw' | 'sign' | 'compress' | 'files' | 'search';
 const DEFAULT_PAGE_SIZE: PageSize = { width: 612, height: 792 };
 const EMPTY_COMMENTS: PdfComment[] = [];
 const MAX_HISTORY_BYTES = 128 * 1024 * 1024;
@@ -154,6 +157,9 @@ export default function App() {
   const [zoom, setZoom] = useState<Zoom>('fit');
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('comments');
   const [activeTool, setActiveTool] = useState<ActiveTool>('comments');
+  const [compactFind, setCompactFind] = useState(false);
+  const [findFocus, setFindFocus] = useState(0);
+  const pendingFind = useRef<SearchHit | undefined>(undefined);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [pageGridOpen, setPageGridOpen] = useState(false);
   const [gridDragOver, setGridDragOver] = useState<number | null>(null);
@@ -519,6 +525,25 @@ export default function App() {
   }, [document]);
 
   const effectivePages = useMemo(() => document ? (pagePlan ?? initialPagePlan(document.numPages)) : [], [document, pagePlan]);
+  const findOpen = !pageGridOpen && !presenting && (activeTool === 'search' || compactFind);
+  const find = useDocumentSearch(document, effectivePages, overlays, findOpen, pageNumber);
+  const searchOverlayText = useMemo(() => new Map(overlays.filter(o => o.kind === 'text').map(o => [o.id, o.text ?? ''])), [overlays]);
+  useEffect(() => { setCompactFind(false); find.setQuery(''); }, [source?.path]);
+  useLayoutEffect(() => {
+    pendingFind.current = find.hit;
+    if (!find.activePage || !findOpen) return;
+    const sheet = pageRefs.current.get(find.activePage);
+    const viewer = viewerRef.current;
+    if (!sheet || !viewer) return;
+    const box = sheet.getBoundingClientRect(), view = viewer.getBoundingClientRect();
+    if (box.bottom <= view.top || box.top >= view.bottom)
+      viewer.scrollTop += box.top - view.top;
+  }, [find.hit, find.activePage, findOpen]);
+  const revealFindHit = useCallback((hit: SearchHit, marker: HTMLElement) => {
+    if (pendingFind.current !== hit) return;
+    pendingFind.current = undefined;
+    marker.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+  }, []);
   const visibleComments = useMemo(() => pagePlan
     ? pagePlan.flatMap((page, index) => [...comments, ...savedSessionComments].filter((comment) => comment.page === page.sourceIndex + 1)
       .map((comment) => ({ ...comment, id: `${page.id}:${comment.id}`, replyTo: comment.replyTo ? `${page.id}:${comment.replyTo}` : undefined, page: index + 1 })))
@@ -1747,12 +1772,14 @@ export default function App() {
     if (busy) return;
     // Text-selection and page-thumbnail tools need the updated native layout.
     // This is an in-memory preparation at a tool boundary, never a disk save.
-    if (tool === 'comments' || tool === 'pages') {
+    if (tool === 'comments' || tool === 'pages' || tool === 'search') {
       try { await materializeTransforms(); }
       catch (cause) { setError(`Could not prepare this tool: ${messageOf(cause)}`); return; }
     }
     if (pageGridOpen) setPageGridOpen(false);
     setSelectedOverlayId(null); setDrawPreview(null);
+    setCompactFind(false);
+    if (tool === 'search') setFindFocus(value => value + 1);
     setActiveTool(tool);
     setSignatureMenuOpen(false);
     if (tool !== 'comments') setPlacing(false);
@@ -1765,6 +1792,35 @@ export default function App() {
     } else setSidebarCollapsed(true);
   };
 
+  function closeFind() {
+    setCompactFind(false);
+    if (activeTool === 'search') setActiveTool('comments');
+    viewerRef.current?.focus({ preventScroll: true });
+  }
+  const openCompactFind = useEffectEvent(async () => {
+    if (!document || busy || presenting || window.document.querySelector('[aria-modal="true"],dialog[open]')) return;
+    try {
+      if (!findOpen && transforms.length) await materializeTransforms();
+      setPageGridOpen(false);
+      if (activeTool !== 'search') setCompactFind(true);
+      setFindFocus(value => value + 1);
+    } catch (cause) { setError(messageOf(cause)); }
+  });
+  const handleFindKey = useEffectEvent((event: KeyboardEvent) => {
+    if (event.isComposing || !document || busy || presenting || window.document.querySelector('[aria-modal="true"],dialog[open]')) return;
+    if ((event.ctrlKey || event.metaKey) && !event.shiftKey && !event.altKey &&
+        (event.code === 'KeyF' || event.key.toLowerCase() === 'f')) {
+      event.preventDefault(); void openCompactFind();
+    } else if (event.key === 'Escape' && findOpen) {
+      event.preventDefault(); event.stopImmediatePropagation(); closeFind();
+    }
+  });
+  useEffect(() => {
+    const keyboard = (event: KeyboardEvent) => handleFindKey(event);
+    const unsubscribe = window.aster.onMenu('menu:find', () => void openCompactFind());
+    window.addEventListener('keydown', keyboard, true);
+    return () => { unsubscribe(); window.removeEventListener('keydown', keyboard, true); };
+  }, []);
   const openNewSignature = () => {
     setSignatureMenuOpen(false);
     setNewSignature(null);
@@ -2232,7 +2288,7 @@ export default function App() {
       <section className="viewer-column">
         <div className={`viewer-toolbar${activeTool === 'edit' || activeTool === 'draw' ? ' has-edit-tools' : ''}`}>
           {pageGridOpen && <div className="grid-toolbar-heading"><button className="button outline" onClick={() => closePageGrid()} aria-label={t("Return to PDF view")}><ChevronLeft size={16} />{t("PDF view")}</button><span>{effectivePages.length} {effectivePages.length === 1 ? t("page") : t("pages")}</span></div>}
-          {placedSignatures.length > 0 ? <div className="signature-review" role="group" aria-label={t("Pending signatures")}>
+          {activeTool === 'search' ? <DocumentFindBar search={find} compact={false} focusRequest={findFocus} close={closeFind} /> : placedSignatures.length > 0 ? <div className="signature-review" role="group" aria-label={t("Pending signatures")}>
             <span className="signature-review-label" role="status">{placedSignatures.length} {placedSignatures.length === 1 ? t("signature") : t("signatures")} {t("pending · confirm to comment")}</span>
             <button className="button signature-confirm-action" onClick={() => void save()} disabled={busy} title={t("Confirm and save signatures")} aria-label={t("Confirm and save signatures")}><Check size={18} /><span>{t("Confirm")}</span></button>
             <button className="button signature-discard-action" onClick={() => setPendingSignatureDiscard(true)} disabled={busy} title={t("Discard pending signatures")} aria-label={t("Discard pending signatures")}><X size={18} /><span>{t("Discard")}</span></button>
@@ -2355,6 +2411,7 @@ export default function App() {
           <input ref={overlayImageRef} type="file" hidden accept="image/png,image/jpeg,image/webp" onChange={(event) => { void importOverlayImage(event.target.files?.[0]); event.target.value = ''; }} />
         </div>}
         </div>
+        {compactFind && findOpen && activeTool !== 'search' && <DocumentFindBar search={find} compact focusRequest={findFocus} close={closeFind} />}
         {pageGridOpen ? <div className="page-grid-scroll">
           <div className="page-grid-intro"><div><h2>{t("Organize pages")}</h2><p>{t("Drag a page to reorder it. Select pages to use the actions above.")}</p></div><span>{selectedPages.size ? t("{0} selected", selectedPages.size) : t("{0} pages", effectivePages.length)}</span></div>
           <div className="page-grid" aria-label={t("Pages grid")}>{effectivePages.map((planned, index) => <article key={planned.id} className={`page-grid-card${selectedPages.has(index) ? ' selected' : ''}${gridDragOver === index ? ' drag-target' : ''}`} draggable={!busy && !pendingCommentCount}
@@ -2366,12 +2423,14 @@ export default function App() {
             <button className="page-grid-preview" aria-label={t("Select page {0} preview", index + 1)} aria-pressed={selectedPages.has(index)} onClick={() => setSelectedPages((previous) => { const next = new Set(previous); if (next.has(index)) next.delete(index); else next.add(index); return next; })}>{document && <PageThumbnail document={document} page={planned.sourceIndex + 1} rotation={planned.turns * 90} size="large" />}</button>
             <div className="page-grid-card-foot"><span>{pagePlan ? t("Original page {0}", planned.sourceIndex + 1) : t("Drag to reorder")}</span><button onClick={() => closePageGrid(index + 1)} aria-label={t("View page {0} in PDF", index + 1)}>{t("View page")} <ChevronRight size={14} /></button></div>
           </article>)}</div>
-        </div> : <div className="viewer-scroll" ref={viewerRef}>
+        </div> : <div className="viewer-scroll" tabIndex={-1} ref={viewerRef}>
           <div className="page-wrap">
             {!document && <div className="loading-page">{t("Opening PDF…")}</div>}
             {document && effectivePages.map((planned, index) => {
               const page = index + 1;
               return <PdfPage key={planned.id} document={document} pageNumber={page} sourcePageNumber={planned.sourceIndex + 1} rotation={planned.turns * 90}
+                searchHits={findOpen ? find.byPage.get(page)?.hits : undefined} searchActive={find.activePage === page ? find.hit : undefined}
+                searchOverlayText={searchOverlayText} onRevealFind={revealFindHit}
                 paragraphRequest={paragraphRequest?.pageId === planned.id ? paragraphRequest : null} onRequestHandled={() => setParagraphRequest(null)}
                 paragraphMode={activeTool === 'edit' && overlayTool === 'paragraph'} onReplaceParagraph={replaceParagraph} onRenderSettled={pageRendered}
                 getSourceBytes={getSourceBytes} originalTransforms={visibleTransforms} inspectOriginalText={!selectingLinks && !pendingCommentCount && activeTool === 'edit' && (overlayTool === 'select' || overlayTool === 'paragraph') && (fontsStatus === 'ready' || fontsStatus === 'error')} onCommitOriginalText={commitOriginalText} onMoveOriginalText={moveOriginalText}
@@ -2468,6 +2527,8 @@ export default function App() {
         </div>}
         <div className="sidebar-rail" role="toolbar" aria-label={t("PDF tools")} aria-orientation="vertical">
           <button className="sidebar-toggle" onClick={toggleSidebar} aria-label={sidebarCollapsed ? t("Show sidebar") : t("Hide sidebar")} title={sidebarCollapsed ? t("Show sidebar") : t("Hide sidebar")} aria-expanded={!sidebarCollapsed}>{sidebarCollapsed ? <ChevronLeft size={19} /> : <ChevronRight size={19} />}</button>
+          <button disabled={!document || busy} className={activeTool === 'search' ? 'active' : ''} onClick={() => void selectTool('search')}
+            aria-label={t('Find in document')} title={t('Find in document')} aria-pressed={activeTool === 'search'}><Search size={18}/></button>
           <button className={activeTool === 'comments' ? 'active' : ''} onClick={() => selectTool('comments')} aria-label={t("Comments")} title={t("Comments")} aria-pressed={activeTool === 'comments'}><MessageSquare size={18} />{conversationComments.length > 0 && <span className="sidebar-rail-count">{conversationComments.length}</span>}</button>
           <button className={activeTool === 'pages' ? 'active' : ''} onClick={() => selectTool('pages')} aria-label={t("Pages")} title={t("Pages")} aria-pressed={activeTool === 'pages'}><FileText size={18} /></button>
           <button className={activeTool === 'edit' ? 'active' : ''} onClick={() => selectTool('edit')} aria-label={t("Edit")} title={t("Edit")} aria-pressed={activeTool === 'edit'}><Pencil size={18} /></button>

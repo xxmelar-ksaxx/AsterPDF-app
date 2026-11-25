@@ -542,6 +542,8 @@ app.whenReady().then(async () => {
       ]
     },
     { label: 'Edit', submenu: [
+      { label: 'Find in document', accelerator: 'CmdOrCtrl+F', click: () => send('menu:find') },
+      { type: 'separator' },
       { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: () => send('menu:undo') },
       { label: 'Redo', accelerator: 'CmdOrCtrl+Shift+Z', click: () => send('menu:redo') },
       { type: 'separator' }, { role: 'cut' }, { role: 'copy' }, { role: 'paste' }, { role: 'selectAll' }

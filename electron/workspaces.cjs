@@ -80,7 +80,7 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
     const owner = tab.owner, index = owner.tabs.indexOf(tab);
     owner.window.contentView.removeChildView(tab.view);
     owner.tabs.splice(index, 1); dispose(tab);
-    if (!owner.tabs.length) { owner.approved = true; owner.window.close(); return; }
+    if (!owner.tabs.length) { newTab(owner); return; }
     if (owner.activeId === tab.id) activate(owner.tabs[Math.min(index, owner.tabs.length - 1)]);
     else publish(owner);
   }
@@ -104,6 +104,7 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
   }
   async function closeTab(tab) {
     if (tab.owner.closing || closingAll || savingAll || installing()) return;
+    if (tab.owner.tabs.length === 1 && !tab.controller.currentPath && !tab.pendingPath && !tab.crashed) return;
     const owner = tab.owner; owner.closing = true;
     try { if (await approve([tab])) remove(tab); }
     finally { owner.closing = false; }

@@ -268,15 +268,23 @@ export default function OverlayLayer({ pageId, width, height, scale, tool, drawA
       const align = object.textAlign === 'justify' || object.textAlign === 'smart-justify' ? style.arabic ? 'right' : 'left' : object.textAlign || 'left';
       const { lines } = textOverlayLayout(object, width / scale, fonts);
       const textX = x + (align === 'center' ? w / 2 : align === 'right' ? w : 0);
+      let nextOffset = 0;
+      const source = object.text ?? '';
+      const lineOffsets = lines.map(line => {
+        const start = source.indexOf(line.text, nextOffset);
+        if (start < 0) return nextOffset;
+        nextOffset = start + line.text.length;
+        return start;
+      });
       return <text fill={object.color} xmlSpace="preserve"
         fontSize={textSize(object) * scale} fontFamily={style.family} fontWeight={style.fontWeight} fontStyle={style.fontStyle}
         textDecoration={[object.underline && 'underline', object.strikeThrough && 'line-through'].filter(Boolean).join(' ') || 'none'}
         direction={style.arabic ? 'rtl' : 'ltr'} textAnchor={align === 'center' ? 'middle' : (align === 'right') !== style.arabic ? 'end' : 'start'}>
         {lines.map((line, index) => line.runs ? line.runs.map((run, runIndex) => {
           const rtl = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff]/u.test(run.text);
-          return <tspan key={`${index}-${runIndex}`} x={x + run.x * scale} y={y + (textSize(object) + line.offsetY) * scale}
+          return <tspan data-text-offset={lineOffsets[index] + run.sourceOffset} key={`${index}-${runIndex}`} x={x + run.x * scale} y={y + (textSize(object) + line.offsetY) * scale}
             direction={rtl ? 'rtl' : 'ltr'} textAnchor={rtl ? 'end' : 'start'}>{run.text}</tspan>;
-        }) : <tspan key={index} x={textX} y={y + (textSize(object) + line.offsetY) * scale}>{line.text}</tspan>)}</text>;
+        }) : <tspan data-text-offset={lineOffsets[index]} key={index} x={textX} y={y + (textSize(object) + line.offsetY) * scale}>{line.text}</tspan>)}</text>;
     }
     return <image href={object.image} x={x} y={y} width={w} height={h} preserveAspectRatio="none" />;
   };

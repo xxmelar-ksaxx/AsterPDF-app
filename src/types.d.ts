@@ -73,7 +73,7 @@ declare global {
       setSaving(value: boolean): void;
       onDiscardRequest(handler: (id: string) => void): () => void;
       answerDiscardRequest(id: string, discard: boolean): void;
-      onMenu(channel: 'menu:home' | 'menu:update' | 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:print' | 'menu:settings' | 'menu:about' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word' | 'menu:pdf-to-data', handler: () => void): () => void;
+      onMenu(channel: 'menu:home' | 'menu:update' | 'menu:open' | 'menu:save' | 'menu:save-as' | 'menu:print' | 'menu:find' | 'menu:settings' | 'menu:about' | 'menu:undo' | 'menu:redo' | 'menu:pdf-to-word' | 'menu:pdf-to-data', handler: () => void): () => void;
     };
   }
 }
