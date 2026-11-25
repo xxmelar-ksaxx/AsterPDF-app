@@ -21,7 +21,8 @@ protocol.registerSchemesAsPrivileged([
 
 let editClipboard = null, editClipboardToken = '';
 const EDIT_CLIPBOARD_FORMAT = 'electron application/osclipboard;format="AsterPDF.Objects"';
-let recentStore, updateService, updateInstaller, workspace;
+let recentStore, updateService, updateInstaller, workspace, installProgress;
+let installRequested = false;
 const updateState = () => ({ ...updateService.getState(), transfer: updateInstaller.getState() });
 const publishUpdate = () => { workspace?.refresh(); for (const tab of workspace?.documents || []) if (!tab.contents.isDestroyed()) tab.contents.send('updates:changed', updateState()); };
 const MAX_FILE_BYTES = 1024 * 1024 * 1024;
@@ -386,8 +387,21 @@ documentIpc.handle('pdf:embed-shaped-text', (event, bytes, placements) => {
     // document work is still outstanding, even if this IPC is called directly.
     if (dirty || saving || writing || preparedCompressedSave || discardPrompt || closePromptRunning)
       throw new Error('Save your changes and wait for the save to finish before installing.');
-    await workspace.saveAll();
-    updateInstaller.install();
+    if (installRequested || updateInstaller.getState().phase !== 'ready') throw new Error('The update is not ready to install.');
+    installRequested = true;
+    try {
+      await workspace.saveAll();
+      const version = updateInstaller.getState().version;
+      const indicator = await installProgress.show(uiText('Installing AsterPDF {0}…').replace('{0}', version),
+        uiText('Waiting for AsterPDF to reopen…'), languageState().language === 'ar').catch(() => false);
+      if (workspace.documents.some(doc => doc.controller.dirty || doc.controller.saving || doc.controller.writing)) {
+        throw new Error('Save your changes and wait for the save to finish before installing.');
+      }
+      updateInstaller.install(indicator);
+    } catch (error) {
+      await installProgress.clear().catch(() => {});
+      throw error;
+    } finally { installRequested = false; }
   });
   documentIpc.on('pdf:set-dirty', (event, value) => { if (appOrigin(event)) { dirty = value === true; workspace.publish(tab.owner); } });
   documentIpc.on('pdf:set-saving', (event, value) => { if (appOrigin(event)) { saving = value === true; workspace.publish(tab.owner); } });
@@ -477,8 +491,12 @@ app.whenReady().then(async () => {
     return save;
   });
   recentStore = createRecentStore(app.getPath('userData'));
+  installProgress = require('./install-progress.cjs').createInstallProgress(app.getPath('userData'));
   updateInstaller = createUpdateInstaller({ updater: require('electron-updater').autoUpdater,
-    isPackaged: app.isPackaged, onChange: publishUpdate });
+    isPackaged: app.isPackaged, onChange: () => {
+      if (updateInstaller?.getState().phase === 'error') void installProgress.clear().catch(() => {});
+      publishUpdate();
+    } });
   updateService = createUpdateService({ userDataPath: app.getPath('userData'), currentVersion: app.getVersion(),
     arch: updateArchitecture(process.platform, process.arch, app.runningUnderARM64Translation),
     openExternal: (url) => shell.openExternal(url),
@@ -539,7 +557,7 @@ app.whenReady().then(async () => {
       : { click: () => send('menu:about') }) }
   ], languageState().language)));
   installMenu();
-  workspace.createWindow();
+  workspace.createWindow().window.once('ready-to-show', () => { void installProgress.clear().catch(() => {}); });
   for (const filePath of pendingLaunchFiles.splice(0)) enqueueExternalPdf(filePath);
   void updateService.start();
   powerMonitor.on('resume', () => { void updateService.check(false); });
@@ -547,7 +565,7 @@ app.whenReady().then(async () => {
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
 app.on('before-quit', event => {
-  if (!workspace || workspace.quitting || !workspace.documents.length) return;
+  if (!workspace || workspace.quitting || !workspace.documents.length || updateInstaller?.getState().phase === 'installing') return;
   event.preventDefault();
   void workspace.quit().then(approved => { if (approved) app.quit(); }).catch(error => console.error('Could not close workspace:', error));
 });

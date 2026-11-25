@@ -620,3 +620,6 @@ html[dir=rtl] :is(.home-view,.settings-modal,.sidebar,.print-preview,.about-dial
 html[dir=rtl] :is(.viewer-scroll,.page-stage,.signature-canvas,.presentation-view,.document-tabs-bar,.color-picker){direction:ltr}
 html[dir=rtl] :is(.workspace,.sidebar){direction:ltr}
 html[dir=rtl] :is(.sidebar-content,.sidebar-rail,.viewer-toolbar,.viewer-footer){direction:rtl}
+.about-updates .update-settings{margin:0;padding:0;border:0}
+.about-updates .update-settings-actions{justify-content:center;flex-wrap:wrap}
+.about-updates progress,.update-install-backdrop progress{width:100%;accent-color:#719631}

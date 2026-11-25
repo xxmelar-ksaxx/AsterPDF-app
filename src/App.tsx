@@ -967,7 +967,8 @@ export default function App() {
       setError('Please wait for this document to finish its current operation.');
       return false;
     }
-    setAboutOpen(false); setSettingsOpen(false); setLinkSelection(null);
+    if (mode === 'close') { setAboutOpen(false); setSettingsOpen(false); }
+    setLinkSelection(null);
     await finishInlineEdits();
     // Flush text edits and their dirty notification before the main process
     // decides whether this tab needs an unsaved-changes prompt.
@@ -2533,7 +2534,8 @@ export default function App() {
       <p id="discard-signatures-description">{t("Remove")} {placedSignatures.length} {placedSignatures.length === 1 ? t("signature") : t("signatures")} {t("placed since the last save? Your saved signature list stays on this computer.")}</p>
       <div className="modal-actions"><button className="button subtle" autoFocus onClick={() => setPendingSignatureDiscard(false)}>{t("Keep signatures")}</button><button className="button danger" onClick={discardPendingSignatures}>{t("Discard signatures")}</button></div>
     </div></div>}
-    {aboutOpen && <AboutDialog updates={updates} busy={busy || preparingInstall || installing} onClose={() => setAboutOpen(false)} />}
+    {aboutOpen && <AboutDialog onInstall={() => void restartAndInstall()} installError={installError}
+      installStage={preparingInstall ? t("Saving before restart…") : installing ? t("Restarting to install…") : undefined} updates={updates} busy={busy || preparingInstall || installing} onClose={() => setAboutOpen(false)} />}
     {settingsOpen && <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
       <div className="settings-modal application-settings" role="dialog" aria-modal="true" aria-labelledby="settings-title">
         <div className="modal-head"><div className="modal-icon"><Settings2 size={21} /></div><button onClick={() => setSettingsOpen(false)} aria-label={t("Close settings")}><X size={19} /></button></div>
@@ -2553,7 +2555,7 @@ export default function App() {
     </div>}
     {(preparingInstall || installing) && <div className="modal-backdrop update-install-backdrop"><div className="settings-modal" role="alertdialog" aria-modal="true" aria-labelledby="install-title">
       <h2 id="install-title">{preparingInstall ? t("Saving before restart…") : t("Restarting to install…")}</h2>
-      <p role="status"><span className="inline-spinner" /> {preparingInstall ? t("Please wait while your PDF changes are saved.") : t("Your changes are saved. AsterPDF will reopen after the update.")}</p>
+      <progress aria-labelledby="install-title" /><p role="status">{preparingInstall ? t("Please wait while your PDF changes are saved.") : t("Your changes are saved. AsterPDF will reopen after the update.")}</p>
     </div></div>}
     {wordExportResult && <div className="word-export-notice" role="status">
       <div><strong>{t("Saved")} {wordExportResult.name}</strong>

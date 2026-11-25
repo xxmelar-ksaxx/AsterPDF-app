@@ -56,10 +56,10 @@ function createUpdateInstaller({ updater, isPackaged, onChange = () => {} }) {
       })().finally(() => { pending = null; });
       return pending;
     },
-    install() {
+    install(silent = true) {
       if (state.phase !== 'ready') throw new Error('Download the update before installing it.');
       publish({ phase: 'installing', error: null });
-      try { updater.quitAndInstall(true, true); }
+      try { updater.quitAndInstall(silent, true); }
       catch (cause) { fail(cause); }
     }
   };

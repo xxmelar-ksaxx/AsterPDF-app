@@ -601,5 +601,7 @@
   "Estimated from one sample page": "تقدير مبني على عينة من صفحة واحدة",
   "smaller": "أصغر",
   "larger": "أكبر",
-  "same size": "الحجم نفسه"
+  "same size": "الحجم نفسه",
+  "Installing AsterPDF {0}…": "جارٍ تثبيت AsterPDF {0}…",
+  "Waiting for AsterPDF to reopen…": "بانتظار فتح AsterPDF مجددًا…"
 }

@@ -165,7 +165,7 @@ function createWorkspaces({ createController, trusted, sameFile, onEmpty, instal
     });
     window.once('ready-to-show', () => window.show());
     window.on('close', event => {
-      if (owner.approved || quitting) return;
+      if (owner.approved || quitting || installing()) return;
       event.preventDefault(); void closeWindow(owner);
     });
     window.on('closed', () => {
